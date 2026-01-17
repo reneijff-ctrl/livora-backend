@@ -1,0 +1,48 @@
+### 1. Login
+# This request gets the accessToken and refreshToken cookies.
+# CSRF is ignored for /auth/login.
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}
+
+### 2. Get CSRF Token
+# Before calling protected POST endpoints like /auth/refresh, we need the CSRF token.
+# Most GET requests will trigger the server to send the XSRF-TOKEN cookie.
+GET http://localhost:8080/api/user/csrf
+
+> {%
+    client.global.set("xsrf_token", client.cookies.get("XSRF-TOKEN"));
+%}
+
+### 3. Get My Profile
+# This request uses the accessToken cookie.
+# We use /api/user/me as identified in UserController.
+GET http://localhost:8080/api/user/me
+
+> {%
+    client.test("Fetch profile successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}
+
+### 4. Refresh Token
+# This request uses the refreshToken cookie.
+# CSRF is ENABLED for /auth/refresh, so we must provide X-XSRF-TOKEN.
+POST http://localhost:8080/auth/refresh
+X-XSRF-TOKEN: {{xsrf_token}}
+
+> {%
+    client.test("Refresh successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}

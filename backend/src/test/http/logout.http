@@ -1,0 +1,7 @@
+POST http://localhost:8080/auth/logout
+
+> {%
+    client.test("Logout successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}

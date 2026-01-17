@@ -1,0 +1,2 @@
+GET http://localhost:8080/api/premium/content
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0QHRlc3QubmwiLCJyb2xlIjoiUFJFTUlVTSIsImlhdCI6MTc2ODQ5MDE3NCwiZXhwIjoxNzY4NDkwMTg0fQ.TP574CLtlZqhobS14vSzjy9BLXOxw9Byl_rB1_7JLOw

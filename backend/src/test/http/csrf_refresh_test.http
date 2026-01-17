@@ -1,0 +1,64 @@
+### 1. Login to receive access + refresh cookies + CSRF cookie
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+        client.assert(client.cookies.get("XSRF-TOKEN") !== undefined, "CSRF cookie not received");
+        client.assert(client.cookies.get("accessToken") !== undefined, "Access token cookie not received");
+        client.assert(client.cookies.get("refreshToken") !== undefined, "Refresh token cookie not received");
+    });
+    // Save the initial refresh token to test invalidation later
+    client.global.set("old_refresh_token", client.cookies.get("refreshToken"));
+    // Capture CSRF token from cookie for subsequent requests
+    client.global.set("xsrf_token", client.cookies.get("XSRF-TOKEN"));
+%}
+
+### 2. POST /auth/refresh WITHOUT CSRF header (Expect 403)
+POST http://localhost:8080/auth/refresh
+
+> {%
+    client.test("Refresh denied without CSRF", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden without CSRF header");
+    });
+%}
+
+### 3. POST /auth/refresh WITH CSRF header (Expect 200)
+POST http://localhost:8080/auth/refresh
+X-XSRF-TOKEN: {{xsrf_token}}
+
+> {%
+    client.test("Refresh successful with CSRF", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+        client.assert(client.cookies.get("accessToken") !== undefined, "New access token cookie not issued");
+        client.assert(client.cookies.get("refreshToken") !== undefined, "New refresh token cookie not issued");
+        client.assert(client.cookies.get("refreshToken") !== client.global.get("old_refresh_token"), "Refresh token was not rotated");
+    });
+    // Update CSRF token if it changed, and save the NEW rotated refresh token
+    client.global.set("xsrf_token", client.cookies.get("XSRF-TOKEN"));
+    client.global.set("new_refresh_token", client.cookies.get("refreshToken"));
+%}
+
+### 4. Verify old refresh token is invalidated (Expect 401)
+# Note: Since the HTTP client auto-manages cookies, we'd need to manually send the old token if we wanted to test this purely via the refresh endpoint,
+# but the rotateRefreshToken logic in the backend marks the old one as revoked.
+# To test reuse detection specifically, we'd need to swap the cookie back or use a tool that allows manual cookie override.
+# In IntelliJ, we can try to "force" the old token if the server allows it via body/header, but our controller reads from Cookie.
+# However, the requirement is to verify it is invalidated. 
+# If we run a request that uses the old token value, it should fail.
+
+POST http://localhost:8080/auth/refresh
+X-XSRF-TOKEN: {{xsrf_token}}
+Cookie: refreshToken={{old_refresh_token}}
+
+> {%
+    client.test("Old refresh token is invalidated", function() {
+        client.assert(response.status === 401, "Expected 401 Unauthorized for revoked token");
+    });
+%}

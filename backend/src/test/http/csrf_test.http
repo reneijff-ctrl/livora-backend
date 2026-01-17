@@ -1,0 +1,48 @@
+### Login to get cookies (including XSRF-TOKEN)
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}
+
+### Try to update profile WITHOUT CSRF token (Expected 403)
+POST http://localhost:8080/api/user/profile
+Content-Type: application/json
+
+{
+  "bio": "Hacker"
+}
+
+> {%
+    client.test("Access denied without CSRF", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden without CSRF token");
+    });
+%}
+
+### Update profile WITH CSRF token (Expected 200)
+# @xsrf_token = {{XSRF-TOKEN}}
+POST http://localhost:8080/api/user/profile
+Content-Type: application/json
+X-XSRF-TOKEN: {{xsrf_token}}
+
+{
+  "bio": "Legitimate user"
+}
+
+< {%
+    client.global.set("xsrf_token", client.cookies.get("XSRF-TOKEN"));
+%}
+
+> {%
+    client.test("Profile updated successfully with CSRF", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}

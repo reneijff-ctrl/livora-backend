@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<body>
+
+<h2>Beveiligde pagina</h2>
+<button onclick="test()">Test beveiligde API</button>
+<p id="out"></p>
+
+<script>
+    async function test() {
+        const res = await fetch("/api/secure", {});
+
+        document.getElementById("out").innerText =
+            await res.text();
+    }
+</script>
+
+</body>
+</html>

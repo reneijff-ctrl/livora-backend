@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>JoinLivora – Login</title>
+
+    <style>
+        body {
+            background: #0f0f0f;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .card {
+            background: #1b1b1b;
+            padding: 40px;
+            border-radius: 12px;
+            width: 360px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.6);
+        }
+
+        h1 {
+            text-align: center;
+            color: #ff4fd8;
+            margin-bottom: 20px;
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 14px;
+            border-radius: 8px;
+            border: none;
+            font-size: 15px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 8px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .register {
+            background: #ff4fd8;
+            color: #000;
+        }
+
+        .login {
+            background: #4fd8ff;
+            color: #000;
+        }
+
+        .message {
+            margin-top: 15px;
+            text-align: center;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>JoinLivora</h1>
+
+    <input id="email" type="email" placeholder="Email">
+    <input id="password" type="password" placeholder="Wachtwoord">
+
+    <button class="register" onclick="register()">Registreren</button>
+    <button class="login" onclick="login()">Inloggen</button>
+
+    <div id="message" class="message"></div>
+</div>
+
+<script>
+    const API_BASE = "/api/auth";
+
+    function showMessage(text, success = true) {
+        const el = document.getElementById("message");
+        el.innerText = text;
+        el.style.color = success ? "#7CFC98" : "#ff6b6b";
+    }
+
+    async function register() {
+        const email = document.getElementById("email").value;
+        const password = document.getElementById("password").value;
+
+        try {
+            const response = await fetch(API_BASE + "/register", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ email, password })
+            });
+
+            const text = await response.text();
+
+            if (response.ok) {
+                showMessage(text, true);
+            } else {
+                showMessage(text, false);
+            }
+        } catch (e) {
+            showMessage("Server niet bereikbaar", false);
+        }
+    }
+
+    async function login() {
+        const email = document.getElementById("email").value;
+        const password = document.getElementById("password").value;
+
+        try {
+            const response = await fetch(API_BASE + "/login", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ email, password })
+            });
+
+            const text = await response.text();
+
+            if (response.ok) {
+                showMessage(text, true);
+            } else {
+                showMessage(text, false);
+            }
+        } catch (e) {
+            showMessage("Server niet bereikbaar", false);
+        }
+    }
+</script>
+
+</body>
+</html>

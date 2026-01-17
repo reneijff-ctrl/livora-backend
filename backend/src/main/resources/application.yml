@@ -1,0 +1,135 @@
+spring:
+  application:
+    name: joinlivora-backend
+  profiles:
+    active: dev
+  
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/joinlivora}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-timeout: 30000
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      auto-commit: true
+      initialization-fail-timeout: 1 # Fail fast if DB unreachable
+
+  jpa:
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+        connection:
+          provider_disables_autocommit: true
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      repositories:
+        enabled: true
+      # password: ${REDIS_PASSWORD:}
+
+  cache:
+    type: redis
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+logging:
+  level:
+    org.springframework.data.repository.config.RepositoryConfigurationDelegate: WARN
+    org.springframework.data.redis.repository.configuration.RedisRepositoryConfigurationExtension: WARN
+
+server:
+  port: 8080
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: when_authorized
+  otlp:
+    metrics:
+      export:
+        enabled: false
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration: 3600
+    refresh-token-expiration: 604800
+
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_dev_fallback}
+  premium-plan-id: ${STRIPE_PREMIUM_PLAN_ID:price_12345}
+  success-url: ${FRONTEND_SUCCESS_URL:${FRONTEND_URL:http://localhost:3000}/payment/success}
+  cancel-url: ${FRONTEND_CANCEL_URL:${FRONTEND_URL:http://localhost:3000}/payment/cancel}
+
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+  management:
+    health:
+      redis:
+        enabled: false
+    endpoints:
+      web:
+        exposure:
+          include: health,metrics,prometheus
+  data:
+    redis:
+      repositories:
+        enabled: false
+  cache:
+    type: none
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration, org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  sql:
+    init:
+      mode: never
+  stripe:
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET}
+  h2:
+    console:
+      enabled: false
+  springdoc:
+    api-docs:
+      enabled: false
+    swagger-ui:
+      enabled: false

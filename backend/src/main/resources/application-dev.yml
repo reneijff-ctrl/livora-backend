@@ -1,0 +1,3 @@
+security:
+  cookie:
+    secure: false

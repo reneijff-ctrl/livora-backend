@@ -1,0 +1,36 @@
+### Simulate Stripe Webhook: checkout.session.completed
+# Note: In a real environment, Stripe-Signature validation will fail unless 
+# the endpointSecret matches the one used to generate the header.
+# This test is primarily for verifying endpoint accessibility and payload structure.
+
+POST http://localhost:8080/api/payments/webhook/stripe
+Content-Type: application/json
+Stripe-Signature: t=1611234567,v1=6a328965649987f2e123456789abcdef0123456789abcdef0123456789abcdef
+
+{
+  "id": "evt_12345",
+  "object": "event",
+  "api_version": "2023-10-16",
+  "created": 1611234567,
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "id": "cs_test_a1",
+      "object": "checkout.session",
+      "customer_email": "test@test.com",
+      "subscription": "sub_12345",
+      "payment_intent": "pi_12345",
+      "amount_total": 2000,
+      "currency": "eur",
+      "status": "complete"
+    }
+  }
+}
+
+> {%
+    client.test("Webhook received", function() {
+        // We expect 400 if signature fails, or 200 if signature is valid or ignored for testing
+        // Given our SecurityConfig, it's permitAll(), but the Controller validates the signature.
+        client.log("Response: " + response.body);
+    });
+%}

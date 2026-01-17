@@ -1,0 +1,7 @@
+POST http://localhost:8080/auth/refresh
+
+> {%
+    client.test("Token refreshed successfully", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}

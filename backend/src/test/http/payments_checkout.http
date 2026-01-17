@@ -1,0 +1,31 @@
+### 1. Login to get authentication cookies
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+%}
+
+### 2. Create Stripe Checkout Session
+# Requires authentication (handled by cookies from step 1)
+POST http://localhost:8080/api/payments/checkout
+Content-Type: application/json
+
+{
+  "planId": "price_12345"
+}
+
+> {%
+    client.test("Checkout session created", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+        client.assert(response.body.redirectUrl.startsWith("https://checkout.stripe.com"), "Should return a Stripe checkout URL");
+        client.log("Redirect URL: " + response.body.redirectUrl);
+    });
+%}

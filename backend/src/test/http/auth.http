@@ -1,0 +1,39 @@
+### Register
+POST http://localhost:8080/auth/register
+Content-Type: application/json
+
+{
+  "email": "newuser@test.com",
+  "password": "Password123!"
+}
+
+### Login
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "newuser@test.com",
+  "password": "Password123!"
+}
+
+> {%
+    client.global.set("jwt", response.body.accessToken);
+    client.global.set("refreshToken", response.body.refreshToken);
+%}
+
+### Refresh Token
+POST http://localhost:8080/auth/refresh
+Content-Type: application/json
+
+{}
+
+### Get Current User (Me)
+GET http://localhost:8080/auth/me
+Authorization: Bearer {{jwt}}
+
+### Get Current User (Unauthenticated)
+GET http://localhost:8080/auth/me
+
+> {%
+    // Cookies are handled automatically by the HTTP client
+%}

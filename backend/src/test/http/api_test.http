@@ -1,0 +1,17 @@
+### Test Protected API
+GET http://localhost:8080/api/user/me
+
+> {%
+    client.test("API call successful", function() {
+        client.assert(response.status === 200, "Should be authenticated");
+    });
+%}
+
+### Test after logout (should fail)
+GET http://localhost:8080/api/user/me
+
+> {%
+    client.test("API call fails after logout", function() {
+        client.assert(response.status === 401, "Should be unauthorized");
+    });
+%}

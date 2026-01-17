@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Register | Livora</title>
+</head>
+<body>
+
+<h2>Register</h2>
+
+<input type="email" id="email" placeholder="Email"><br><br>
+<input type="password" id="password" placeholder="Wachtwoord"><br><br>
+
+<button onclick="register()">Registreren</button>
+
+<p id="result"></p>
+
+<script>
+    function register() {
+        fetch("http://localhost:8080/api/auth/register", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                email: document.getElementById("email").value,
+                password: document.getElementById("password").value
+            })
+        })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById("result").innerText = "Registratie gelukt!";
+            })
+            .catch(err => {
+                document.getElementById("result").innerText = "Fout bij registreren";
+            });
+    }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,90 @@
+### Test 1: Login in Dev (Verifies cookies present and Secure=false)
+# @name loginDev
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+
+    client.test("Cookies are present and Secure is false in Dev", function() {
+        var accessCookie = response.headers.values("Set-Cookie").find(c => c.includes("accessToken"));
+        var refreshCookie = response.headers.values("Set-Cookie").find(c => c.includes("refreshToken"));
+        var xsrfCookie = response.headers.values("Set-Cookie").find(c => c.includes("XSRF-TOKEN"));
+
+        client.assert(accessCookie !== undefined, "accessToken cookie missing");
+        client.assert(refreshCookie !== undefined, "refreshToken cookie missing");
+        client.assert(xsrfCookie !== undefined, "XSRF-TOKEN cookie missing");
+
+        // In Dev, Secure should be false (or missing from header string if default)
+        client.assert(!accessCookie.toLowerCase().includes("secure"), "accessToken should not be Secure in Dev");
+        client.assert(!refreshCookie.toLowerCase().includes("secure"), "refreshToken should not be Secure in Dev");
+        client.assert(!xsrfCookie.toLowerCase().includes("secure"), "XSRF-TOKEN should not be Secure in Dev");
+    });
+
+    client.test("CSRF cookie is readable by frontend", function() {
+        var xsrfCookie = response.headers.values("Set-Cookie").find(c => c.includes("XSRF-TOKEN"));
+        client.assert(!xsrfCookie.toLowerCase().includes("httponly"), "XSRF-TOKEN must NOT be HttpOnly");
+    });
+
+    client.global.set("xsrf_token", client.cookies.get("XSRF-TOKEN"));
+%}
+
+### Test 2: Refresh in Dev (Simulates cross-site refresh with SameSite=None)
+# @name refreshDev
+POST http://localhost:8080/auth/refresh
+X-XSRF-TOKEN: {{xsrf_token}}
+
+> {%
+    client.test("Refresh successful in Dev", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+
+    client.test("Refresh cookie has SameSite=None", function() {
+        var refreshCookie = response.headers.values("Set-Cookie").find(c => c.includes("refreshToken"));
+        client.assert(refreshCookie.toLowerCase().includes("samesite=none"), "refreshToken must have SameSite=None");
+    });
+%}
+
+### Test 3: Verify refresh cookie not sent outside /auth/refresh
+# @name verifyPathScoping
+GET http://localhost:8080/api/user/me
+
+> {%
+    client.test("API request successful", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+
+    // Note: IntelliJ HTTP Client handles cookies automatically. 
+    // We can't easily inspect which cookies WERE sent in the request from the script,
+    // but the server logic ensures refreshToken path is /auth/refresh.
+%}
+
+### Test 4: Simulated Prod Profile (Requires manual profile switch in application.properties or ENV)
+### To run this test, set spring.profiles.active=prod in the backend.
+# @name loginProd
+POST http://localhost:8080/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@test.com",
+  "password": "password"
+}
+
+> {%
+    client.test("Login successful in Prod simulation", function() {
+        // This might fail if the server is not actually running in prod profile
+        if (response.status === 200) {
+            var accessCookie = response.headers.values("Set-Cookie").find(c => c.includes("accessToken"));
+            client.assert(accessCookie.toLowerCase().includes("secure"), "Cookies MUST be Secure in Prod");
+        } else {
+            client.log("Skipping Prod check: Server not in Prod profile or login failed");
+        }
+    });
+%}

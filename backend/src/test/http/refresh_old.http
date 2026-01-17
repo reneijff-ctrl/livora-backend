@@ -1,0 +1,7 @@
+POST http://localhost:8080/auth/refresh
+Content-Type: application/json
+
+{}
+
+# Note: Testing old token reuse with cookies requires manual cookie manipulation 
+# or a more complex test script. This endpoint now expects cookies.

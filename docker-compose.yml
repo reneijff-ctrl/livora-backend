@@ -1,0 +1,83 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-livora-backend}
+    build: ./backend
+    container_name: livora-backend
+    restart: always
+    expose:
+      - "8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - DB_URL=${DB_URL:-jdbc:postgresql://postgres:5432/joinlivora}
+      - DB_USERNAME=${DB_USERNAME:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - JWT_SECRET=${JWT_SECRET}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - FRONTEND_URL=${FRONTEND_URL:-https://joinlivora.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - livora-network
+
+  nginx:
+    image: nginx:stable-alpine
+    container_name: livora-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certbot/conf:/etc/letsencrypt:ro
+      - ./nginx/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend
+    networks:
+      - livora-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: livora-postgres
+    restart: always
+    environment:
+      - POSTGRES_DB=joinlivora
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - livora-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: livora-redis
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - livora-network
+
+networks:
+  livora-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+    <springProfile name="!prod">
+        <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod">
+        <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+                <providers>
+                    <timestamp>
+                        <timeZone>UTC</timeZone>
+                    </timestamp>
+                    <logLevel/>
+                    <loggerName/>
+                    <threadName/>
+                    <message>
+                        <maskingPattern>(?i)password["\s:=]+([^"\s&amp;,]+)</maskingPattern>
+                        <maskingPattern>(?i)token["\s:=]+([^"\s&amp;,]+)</maskingPattern>
+                        <maskingPattern>(?i)cookie["\s:=]+([^"\s&amp;,]+)</maskingPattern>
+                        <maskingPattern>(?i)authorization["\s:=]+([^"\s&amp;,]+)</maskingPattern>
+                        <maskingPattern>(?i)secret["\s:=]+([^"\s&amp;,]+)</maskingPattern>
+                        <maskingPattern>(eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)</maskingPattern>
+                    </message>
+                    <mdc>
+                        <excludeMdcKeyName>requestId</excludeMdcKeyName>
+                        <excludeMdcKeyName>userId</excludeMdcKeyName>
+                    </mdc>
+                    <arguments/>
+                    <stackTrace/>
+                    <pattern>
+                        <pattern>
+                            {
+                            "requestId": "%mdc{requestId}",
+                            "userId": "%mdc{userId}",
+                            "endpoint": "%mdc{endpoint}",
+                            "httpStatus": "%mdc{httpStatus}"
+                            }
+                        </pattern>
+                    </pattern>
+                </providers>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="JSON_CONSOLE"/>
+        </root>
+        
+        <logger name="com.joinlivora.backend" level="INFO"/>
+        <logger name="org.springframework.security" level="WARN"/>
+    </springProfile>
+</configuration>

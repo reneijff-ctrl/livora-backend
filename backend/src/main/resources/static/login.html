@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Livora Login</title>
+</head>
+<body>
+
+<h2>Login</h2>
+
+<input id="email" placeholder="email"><br>
+<input id="password" type="password" placeholder="password"><br>
+<button onclick="login()">Login</button>
+
+<p id="result"></p>
+
+<script>
+    async function login() {
+        const res = await fetch("/auth/login", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+                email: document.getElementById("email").value,
+                password: document.getElementById("password").value
+            })
+        });
+
+        if (!res.ok) {
+            document.getElementById("result").innerText = "❌ Login mislukt";
+            return;
+        }
+
+        const data = await res.json();
+        document.getElementById("result").innerText = "✅ Login gelukt";
+    }
+</script>
+
+</body>
+</html>

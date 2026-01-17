@@ -1,0 +1,6 @@
+POST http://localhost:8080/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "5a4a4c76-0db9-4421-bda0-7f9610f04724"
+}

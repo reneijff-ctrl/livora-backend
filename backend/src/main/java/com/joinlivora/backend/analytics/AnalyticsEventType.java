@@ -1,0 +1,13 @@
+package com.joinlivora.backend.analytics;
+
+public enum AnalyticsEventType {
+    VISIT,
+    USER_REGISTERED,
+    USER_LOGIN_SUCCESS,
+    USER_LOGIN_FAILED,
+    SUBSCRIPTION_STARTED,
+    SUBSCRIPTION_CANCELED,
+    PAYMENT_SUCCEEDED,
+    PAYMENT_FAILED,
+    EXPERIMENT_ASSIGNED
+}

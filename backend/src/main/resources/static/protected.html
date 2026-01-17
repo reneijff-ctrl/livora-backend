@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>Protected | Livora</title>
+</head>
+<body>
+
+<h2>Beveiligde pagina</h2>
+
+<button onclick="loadProtected()">Test beveiligde API</button>
+
+<p id="result"></p>
+
+<script>
+    function loadProtected() {
+        fetch("http://localhost:8080/api/protected", {
+            method: "GET"
+        })
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error("Geen toegang");
+                }
+                return res.text();
+            })
+            .then(data => {
+                document.getElementById("result").innerText = data;
+            })
+            .catch(err => {
+                document.getElementById("result").innerText = "❌ Geen toegang (niet ingelogd)";
+            });
+    }
+</script>
+
+</body>
+</html>
