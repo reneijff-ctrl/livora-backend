@@ -18,8 +18,8 @@ export interface Payout {
 }
 
 const payoutService = {
-  async startOnboarding(): Promise<{ redirectUrl: string }> {
-    const response = await apiClient.post<{ redirectUrl: string }>('/api/creator/connect/start');
+  async startOnboarding(): Promise<{ onboardingUrl: string }> {
+    const response = await apiClient.post<{ onboardingUrl: string }>('/api/creator/payouts/onboard');
     return response.data;
   },
 
@@ -28,10 +28,6 @@ const payoutService = {
     return response.data;
   },
 
-  async requestPayout(tokens: number): Promise<Payout> {
-    const response = await apiClient.post<Payout>('/api/creator/payouts/request', { tokens });
-    return response.data;
-  },
 
   async getPayoutHistory(): Promise<Payout[]> {
     const response = await apiClient.get<Payout[]>('/api/creator/payouts/history');

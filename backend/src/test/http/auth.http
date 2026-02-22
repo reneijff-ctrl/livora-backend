@@ -25,7 +25,9 @@ Content-Type: application/json
 POST http://localhost:8080/auth/refresh
 Content-Type: application/json
 
-{}
+{
+  "refreshToken": "{{refreshToken}}"
+}
 
 ### Get Current User (Me)
 GET http://localhost:8080/auth/me

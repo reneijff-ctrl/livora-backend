@@ -1,10 +1,16 @@
 package com.joinlivora.backend.token;
 
-import com.joinlivora.backend.payment.dto.CheckoutResponse;
+import com.joinlivora.backend.monetization.TipService;
+import com.joinlivora.backend.monetization.dto.TipResult;
+import com.joinlivora.backend.token.dto.TokenTipRequest;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import com.joinlivora.backend.payment.PaymentService;
+import com.joinlivora.backend.payment.dto.CheckoutResponse;
+import com.joinlivora.backend.wallet.*;
+import com.joinlivora.backend.util.RequestUtil;
 import com.stripe.exception.StripeException;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -26,6 +32,8 @@ public class TokenController {
     private final UserService userService;
     private final PaymentService paymentService;
     private final TokenPackageRepository tokenPackageRepository;
+    private final TipService tipService;
+    private final com.joinlivora.backend.streaming.StreamRoomRepository streamRoomRepository;
 
     @GetMapping("/packages")
     public ResponseEntity<List<TokenPackage>> getPackages() {
@@ -35,12 +43,12 @@ public class TokenController {
     @GetMapping("/balance")
     public ResponseEntity<Map<String, Long>> getBalance(@AuthenticationPrincipal UserDetails userDetails) {
         User user = userService.getByEmail(userDetails.getUsername());
-        TokenBalance balance = tokenService.getBalance(user);
+        UserWallet balance = tokenService.getBalance(user);
         return ResponseEntity.ok(Map.of("balance", balance.getBalance()));
     }
 
     @GetMapping("/transactions")
-    public ResponseEntity<List<TokenTransaction>> getTransactions(@AuthenticationPrincipal UserDetails userDetails) {
+    public ResponseEntity<List<WalletTransaction>> getTransactions(@AuthenticationPrincipal UserDetails userDetails) {
         User user = userService.getByEmail(userDetails.getUsername());
         return ResponseEntity.ok(tokenService.getTransactionHistory(user));
     }
@@ -48,8 +56,9 @@ public class TokenController {
     @PostMapping("/checkout")
     public ResponseEntity<CheckoutResponse> createCheckoutSession(
             @AuthenticationPrincipal UserDetails userDetails,
-            @RequestBody Map<String, String> payload
-    ) {
+            @RequestBody Map<String, String> payload,
+            HttpServletRequest request
+    ) throws com.stripe.exception.StripeException {
         String packageIdStr = payload.get("packageId");
         if (packageIdStr == null) {
             return ResponseEntity.badRequest().build();
@@ -59,37 +68,55 @@ public class TokenController {
         TokenPackage tokenPackage = tokenPackageRepository.findByActiveTrueAndId(packageId)
                 .orElseThrow(() -> new RuntimeException("Token package not found"));
 
-        log.info("SECURITY: Token checkout requested for user: {} package: {}", userDetails.getUsername(), packageId);
+        log.info("SECURITY: Token checkout requested for creator: {} package: {}", userDetails.getUsername(), packageId);
         User user = userService.getByEmail(userDetails.getUsername());
+        String ipAddress = RequestUtil.getClientIP(request);
+        String country = RequestUtil.getClientCountry(request);
+        String userAgent = RequestUtil.getUserAgent(request);
+        String fingerprint = RequestUtil.getDeviceFingerprint(request);
 
-        try {
-            String checkoutUrl = paymentService.createTokenCheckoutSession(user, tokenPackage.getStripePriceId(), packageId);
-            return ResponseEntity.ok(new CheckoutResponse(checkoutUrl));
-        } catch (StripeException e) {
-            log.error("SECURITY: Failed to create Stripe token checkout session", e);
-            return ResponseEntity.internalServerError().build();
-        }
+        String checkoutUrl = paymentService.createTokenCheckoutSession(user, tokenPackage.getStripePriceId(), packageId, ipAddress, country, userAgent, fingerprint);
+        return ResponseEntity.ok(new CheckoutResponse(checkoutUrl));
     }
 
     @PostMapping("/tip")
-    public ResponseEntity<Map<String, String>> sendTip(
+    public ResponseEntity<?> sendTip(
             @AuthenticationPrincipal UserDetails userDetails,
-            @RequestBody Map<String, Object> payload
+            @RequestBody TokenTipRequest tipRequest,
+            HttpServletRequest request
     ) {
-        String roomIdStr = (String) payload.get("roomId");
-        Number amountNum = (Number) payload.get("amount");
-        
-        if (roomIdStr == null || amountNum == null) {
-            return ResponseEntity.badRequest().build();
+        if (tipRequest.getAmount() == null || tipRequest.getAmount() <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Amount must be greater than 0"));
         }
 
-        UUID roomId = UUID.fromString(roomIdStr);
-        long amount = amountNum.longValue();
+        Long creatorUserId = tipRequest.getCreatorId();
+        if (creatorUserId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Creator ID is required"));
+        }
+
+        UUID roomId = streamRoomRepository.findByCreator_Id(creatorUserId)
+                .map(com.joinlivora.backend.streaming.StreamRoom::getId)
+                .orElse(null);
+
+        if (roomId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Creator does not have an active stream room"));
+        }
 
         User user = userService.getByEmail(userDetails.getUsername());
+        String ipAddress = RequestUtil.getClientIP(request);
+        String fingerprint = RequestUtil.getDeviceFingerprint(request);
+
         try {
-            tokenService.sendTip(user, roomId, amount);
-            return ResponseEntity.ok(Map.of("message", "Tip sent successfully"));
+            TipResult result = tipService.sendTokenTip(
+                    user,
+                    roomId,
+                    tipRequest.getAmount().longValue(),
+                    tipRequest.getMessage(),
+                    tipRequest.getClientRequestId(),
+                    ipAddress,
+                    fingerprint
+            );
+            return ResponseEntity.ok(result);
         } catch (Exception e) {
             log.error("TOKEN: Tip failed", e);
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

@@ -1,71 +1,59 @@
 services:
-  backend:
+  livora-backend:
     image: ${BACKEND_IMAGE:-livora-backend}
     build: ./backend
-    container_name: livora-backend
-    restart: always
-    expose:
-      - "8080"
+    ports:
+      - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=prod
-      - DB_URL=${DB_URL:-jdbc:postgresql://postgres:5432/joinlivora}
-      - DB_USERNAME=${DB_USERNAME:-postgres}
-      - DB_PASSWORD=${DB_PASSWORD}
-      - REDIS_HOST=${REDIS_HOST:-redis}
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_URL=${DB_URL:-jdbc:postgresql://livora-postgres:5432/livora}
+      - DB_USERNAME=${DB_USERNAME:-livora}
+      - DB_PASSWORD=${DB_PASSWORD:-livora}
+      - REDIS_HOST=${REDIS_HOST:-livora-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - MANAGEMENT_HEALTH_REDIS_ENABLED=false
       - JWT_SECRET=${JWT_SECRET}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - FRONTEND_URL=${FRONTEND_URL:-https://joinlivora.com}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - livora-network
-
   nginx:
-    image: nginx:stable-alpine
+    image: tiangolo/nginx-rtmp
     container_name: livora-nginx
     restart: always
     ports:
       - "80:80"
       - "443:443"
+      - "1935:1935"
     volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certbot/conf:/etc/letsencrypt:ro
       - ./nginx/certbot/www:/var/www/certbot:ro
+      - hls_data:/var/www/hls
     depends_on:
-      - backend
+      - livora-backend
     networks:
       - livora-network
 
-  postgres:
+  livora-postgres:
     image: postgres:16-alpine
     container_name: livora-postgres
     restart: always
     environment:
-      - POSTGRES_DB=joinlivora
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=livora
+      - POSTGRES_USER=livora
+      - POSTGRES_PASSWORD=livora
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U livora -d livora"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - livora-network
 
-  redis:
+  livora-redis:
     image: redis:7-alpine
     container_name: livora-redis
     restart: always
@@ -81,3 +69,4 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  hls_data:

@@ -10,7 +10,10 @@ RUN mvn package -DskipTests
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-# Run as non-root user for security
+# Install curl for healthcheck
+RUN apk add --no-cache curl
+
+# Run as non-root creator for security
 RUN addgroup -S livora && adduser -S livora -G livora
 COPY --from=build /app/target/*.jar app.jar
 RUN chown livora:livora app.jar
@@ -23,6 +26,6 @@ ENV JAVA_OPTS="-XX:+UseParallelGC -XX:MaxRAMPercentage=75.0 -XX:MinRAMPercentage
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
-  CMD wget -q --spider http://localhost:8080/actuator/health || exit 1
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
 
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -Dspring.profiles.active=${SPRING_PROFILES_ACTIVE:-prod} -jar app.jar"]

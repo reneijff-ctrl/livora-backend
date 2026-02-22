@@ -9,14 +9,14 @@ export interface ContentItem {
   thumbnailUrl: string;
   mediaUrl?: string | null;
   accessLevel: ContentAccessLevel;
-  creatorId: number;
+  userId: number;
   creatorEmail: string;
   createdAt: string;
 }
 
 const contentService = {
   async getPublicContent(): Promise<ContentItem[]> {
-    const response = await apiClient.get<ContentItem[]>('/api/content/public');
+    const response = await apiClient.get<ContentItem[]>('/api/auth/content/public');
     return response.data;
   },
 

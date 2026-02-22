@@ -10,6 +10,12 @@ import java.util.UUID;
 public interface ContentRepository extends JpaRepository<Content, UUID> {
     List<Content> findByDisabledFalse();
     List<Content> findByAccessLevelAndDisabledFalse(ContentAccessLevel accessLevel);
-    List<Content> findByCreatorId(Long creatorId);
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "creator")
+    List<Content> findByAccessLevelAndDisabledFalseAndCreatorShadowbannedFalse(ContentAccessLevel accessLevel);
+    List<Content> findByCreator_Id(Long creatorId);
     List<Content> findByAccessLevelInAndDisabledFalse(List<ContentAccessLevel> accessLevels);
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "creator")
+    List<Content> findByAccessLevelInAndDisabledFalseAndCreatorShadowbannedFalse(List<ContentAccessLevel> accessLevels);
+
+    long countByCreator(com.joinlivora.backend.user.User creator);
 }

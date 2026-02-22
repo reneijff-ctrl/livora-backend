@@ -1,4 +1,4 @@
-CREATE TABLE stripe_accounts (
+CREATE TABLE IF NOT EXISTS stripe_accounts (
     id UUID PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     stripe_account_id VARCHAR(255) UNIQUE,
@@ -9,10 +9,10 @@ CREATE TABLE stripe_accounts (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE INDEX idx_stripe_account_user ON stripe_accounts(user_id);
-CREATE INDEX idx_stripe_account_id ON stripe_accounts(stripe_account_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_account_user ON stripe_accounts(user_id);
+CREATE INDEX IF NOT EXISTS idx_stripe_account_id ON stripe_accounts(stripe_account_id);
 
-CREATE TABLE payouts (
+CREATE TABLE IF NOT EXISTS payouts (
     id UUID PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id),
     token_amount BIGINT NOT NULL,
@@ -24,5 +24,5 @@ CREATE TABLE payouts (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
-CREATE INDEX idx_payout_user ON payouts(user_id);
-CREATE INDEX idx_payout_status ON payouts(status);
+CREATE INDEX IF NOT EXISTS idx_payout_user ON payouts(user_id);
+CREATE INDEX IF NOT EXISTS idx_payout_status ON payouts(status);

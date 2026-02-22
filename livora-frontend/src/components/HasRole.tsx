@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../auth/useAuth';
-import { User } from '../auth/AuthContext';
+import { User } from '../types';
 
 interface HasRoleProps {
   children: React.ReactNode;
@@ -19,14 +19,9 @@ const HasRole: React.FC<HasRoleProps> = ({ children, role, fallback = null }) =>
     return <>{fallback}</>;
   }
 
-  // ADMIN bypass
-  if (user.role === 'ADMIN') {
-    return <>{children}</>;
-  }
-
   const requiredRoles = Array.isArray(role) ? role : [role];
   
-  if (requiredRoles.includes(user.role)) {
+  if (user.role === 'ADMIN' || requiredRoles.includes(user.role)) {
     return <>{children}</>;
   }
 

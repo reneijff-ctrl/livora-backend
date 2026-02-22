@@ -11,14 +11,17 @@ import java.security.Principal;
 import java.util.Map;
 
 @Controller
-@RequiredArgsConstructor
 @Slf4j
 public class WebSocketTestController {
 
     private final SimpMessagingTemplate messagingTemplate;
 
+    public WebSocketTestController(@org.springframework.context.annotation.Lazy SimpMessagingTemplate messagingTemplate) {
+        this.messagingTemplate = messagingTemplate;
+    }
+
     /**
-     * Echo test: Sends a message back to the user who sent it.
+     * Echo test: Sends a message back to the creator who sent it.
      * Destination: /app/test/echo
      */
     @MessageMapping("/test/echo")

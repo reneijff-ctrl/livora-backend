@@ -12,6 +12,8 @@ interface ChatMessage {
   amount: number;
   badgeType?: string;
   createdAt: string;
+  system?: boolean;
+  moderated?: boolean;
 }
 
 interface StreamChatProps {
@@ -26,14 +28,37 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
   const [isPaidMessage, setIsPaidMessage] = useState(false);
   const [paidAmount, setPaidAmount] = useState<number>(minChatTokens > 0 ? minChatTokens : 10);
   const [myBadges, setMyBadges] = useState<UserBadge[]>([]);
+  const [isMuted, setIsMuted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!streamId) return;
 
-    const unsubscribe = webSocketService.subscribe(`/topic/stream/${streamId}/chat`, (msg) => {
+    const unsubscribe = webSocketService.subscribe(`/topic/chat/stream-${streamId}`, (msg) => {
       const data = JSON.parse(msg.body);
-      setMessages((prev) => [...prev, data]);
+      // Backend for stream chat sends the message directly, not wrapped in RealtimeMessage
+      // But system messages from ChatModerationService are ChatMessage wrapped in RealtimeMessage
+      
+      let chatMsg = data;
+      if (data.type === 'chat' && data.chatMessage) {
+        chatMsg = data.chatMessage;
+      }
+
+      if (chatMsg.system) {
+        const content = chatMsg.content || chatMsg.message;
+        showToast(content, 'info');
+        if (content.includes('User muted') && user && content.includes(user.email)) {
+          setIsMuted(true);
+        }
+      }
+      setMessages((prev) => [...prev, chatMsg]);
+    });
+
+    const unsubNotifications = webSocketService.subscribe('/user/queue/notifications', (msg) => {
+      const data = JSON.parse(msg.body);
+      if (data.type === 'DISCONNECT') {
+        showToast(data.payload?.reason || 'Disconnected', 'error');
+      }
     });
 
     const loadBadges = async () => {
@@ -46,7 +71,10 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
     };
     loadBadges();
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      unsubNotifications();
+    };
   }, [streamId]);
 
   useEffect(() => {
@@ -137,7 +165,8 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
             type="text" 
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
-            placeholder="Say something..."
+            placeholder={isMuted ? "You are muted" : "Say something..."}
+            disabled={isMuted}
             style={{ 
               flex: 1, 
               padding: '0.8rem', 
@@ -149,15 +178,17 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
           />
           <button 
             type="submit" 
+            disabled={isMuted}
             style={{ 
               padding: '0 1.5rem', 
               backgroundColor: '#6772e5', 
               color: 'white', 
               border: 'none', 
               borderRadius: '8px', 
-              cursor: 'pointer',
+              cursor: isMuted ? 'not-allowed' : 'pointer',
               fontWeight: 'bold',
-              minHeight: '44px'
+              minHeight: '44px',
+              opacity: isMuted ? 0.5 : 1
             }}
           >
             Send

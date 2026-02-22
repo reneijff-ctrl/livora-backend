@@ -1,19 +1,13 @@
-import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
-import { getCsrfToken } from '../utils/csrf';
+import axios from 'axios';
+import { getAccessToken, clearTokens, getRefreshToken, setAccessToken, setRefreshToken } from '../auth/jwt';
 import { showToast } from '../components/Toast';
-
-// Extend AxiosRequestConfig to support _retry
-declare module 'axios' {
-  export interface AxiosRequestConfig {
-    _retry?: boolean;
-  }
-}
 
 /**
  * Centralized Axios instance for making API requests to the backend.
+ * Configured with withCredentials=true to support cookie-based authentication and CSRF.
  */
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: 'http://localhost:8080',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
@@ -22,145 +16,153 @@ const apiClient = axios.create({
   timeout: 10000,
 });
 
-// In-memory storage for the access token
-let accessToken: string | null = null;
+/**
+ * Public Axios instance. Reuses the primary instance to avoid duplication.
+ */
+export const publicApiClient = apiClient;
 
-export const setAccessToken = (token: string | null) => {
-  accessToken = token;
-};
-
-export const getAccessToken = () => accessToken;
-
-// Request deduplication
-const pendingRequests = new Map<string, Promise<any>>();
-
-const getRequestKey = (config: InternalAxiosRequestConfig) => {
-  return `${config.method}:${config.url}:${JSON.stringify(config.params)}:${JSON.stringify(config.data)}`;
-};
-
-// Wrapper to handle deduplication
-const originalRequest = apiClient.request.bind(apiClient);
-apiClient.request = (config: any) => {
-  const method = config.method?.toUpperCase() || 'GET';
-  if (method === 'GET') {
-    const key = getRequestKey(config as InternalAxiosRequestConfig);
-    if (pendingRequests.has(key)) {
-      return pendingRequests.get(key)!;
-    }
-    const promise = originalRequest(config).finally(() => {
-      pendingRequests.delete(key);
-    });
-    pendingRequests.set(key, promise);
-    return promise;
-  }
-  return originalRequest(config);
-};
-
-// Request interceptor: Attach JWT and CSRF
+// Add request interceptor to attach JWT token
 apiClient.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    // Attach JWT if available
-    if (accessToken) {
-      config.headers['Authorization'] = `Bearer ${accessToken}`;
+  (config) => {
+    const token = getAccessToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-
-    const method = config.method?.toUpperCase();
-    
-    // Spring Security by default expects CSRF token for state-changing methods
-    if (method && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method)) {
-      const csrfToken = getCsrfToken();
-      if (csrfToken) {
-        config.headers['X-XSRF-TOKEN'] = csrfToken;
-      }
-    }
-    
     return config;
   },
-  (error) => Promise.reject(error)
-);
-
-// Response interceptor: Silent refresh logic
-let isRefreshing = false;
-let refreshPromise: Promise<string> | null = null;
-
-apiClient.interceptors.response.use(
-  (response: AxiosResponse) => {
-    return response;
-  },
-  async (error) => {
-    if (!error.response) {
-      showToast('Network error. Please check your connection.', 'error');
-      return Promise.reject(error);
-    }
-
-    const { status, config: requestConfig } = error.response;
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-
-    // 401 Unauthorized -> Silent Refresh
-    if (status === 401) {
-      const url = originalRequest.url || '';
-      if (
-        originalRequest._retry ||
-        url.includes('/auth/refresh') ||
-        url.includes('/auth/login') ||
-        url.includes('/auth/logout')
-      ) {
-        // If refresh fails or login is invalid, we should eventually clear state
-        if (url.includes('/auth/refresh')) {
-          setAccessToken(null);
-          // Force reload to clear all state and redirect to login via AuthContext/Guard
-          window.location.href = '/login';
-        }
-        return Promise.reject(error);
-      }
-
-      originalRequest._retry = true;
-
-      if (!isRefreshing) {
-        isRefreshing = true;
-        refreshPromise = apiClient.post('/auth/refresh')
-          .then(res => {
-            const newToken = res.data.accessToken;
-            setAccessToken(newToken);
-            return newToken;
-          })
-          .finally(() => {
-            isRefreshing = false;
-            refreshPromise = null;
-          });
-      }
-
-      try {
-        const token = await refreshPromise;
-        originalRequest.headers['Authorization'] = `Bearer ${token}`;
-        return apiClient(originalRequest);
-      } catch (refreshError) {
-        setAccessToken(null);
-        return Promise.reject(refreshError);
-      }
-    }
-
-    // 403 Forbidden -> Redirect to Access Denied or Upgrade
-    if (status === 403) {
-      showToast('Access denied. You do not have permission for this action.', 'error');
-      window.location.href = '/403';
-      return Promise.reject(error);
-    }
-
-    // 500 Internal Server Error -> Log and let component handle
-    if (status >= 500) {
-      showToast('A server error occurred. Please try again later.', 'error');
-      console.error('SERVER ERROR:', error.response.data);
-    }
-
-    // 400 Bad Request (Validation errors)
-    if (status === 400) {
-      const message = error.response.data.message || 'Invalid request parameters.';
-      showToast(message, 'error');
-    }
-
+  (error) => {
     return Promise.reject(error);
   }
+);
+
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+
+  failedQueue = [];
+};
+
+/**
+ * Centralized error handler for all API requests.
+ */
+const handleApiError = async (error: any) => {
+  const originalRequest = error.config;
+
+  if (error.response?.status === 401 && !originalRequest._retry) {
+    if (originalRequest.url === '/api/auth/refresh' || originalRequest.url === '/api/auth/login') {
+      clearTokens();
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+      return Promise.reject(error);
+    }
+
+    if (isRefreshing) {
+      return new Promise(function (resolve, reject) {
+        failedQueue.push({ resolve, reject });
+      })
+        .then((token) => {
+          originalRequest.headers['Authorization'] = 'Bearer ' + token;
+          return apiClient(originalRequest);
+        })
+        .catch((err) => {
+          return Promise.reject(err);
+        });
+    }
+
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      try {
+        const response = await axios.post(`${apiClient.defaults.baseURL}/api/auth/refresh`, {
+          refreshToken: refreshToken
+        }, { withCredentials: true });
+
+        const { accessToken, refreshToken: newRefreshToken } = response.data;
+        
+        setAccessToken(accessToken);
+        if (newRefreshToken) {
+          setRefreshToken(newRefreshToken);
+        }
+
+        originalRequest.headers['Authorization'] = 'Bearer ' + accessToken;
+        processQueue(null, accessToken);
+        return apiClient(originalRequest);
+      } catch (refreshError) {
+        processQueue(refreshError, null);
+        clearTokens();
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
+      }
+    }
+  }
+
+  if (error.response) {
+    const { status, data } = error.response;
+    const message = data?.message || data?.error || null;
+    const skipToast = error.config?._skipToast;
+
+    switch (status) {
+      case 401:
+        // Clear auth tokens
+        clearTokens();
+        
+        // Force redirect to login if we are not already there
+        if (window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
+        break;
+      case 400:
+        if (!skipToast) showToast(message || 'Bad request', 'error');
+        break;
+      case 403:
+        if (!skipToast) showToast(message || 'No permission', 'error');
+        break;
+      case 404:
+        if (!skipToast) showToast(message || 'Not found', 'error');
+        break;
+      case 500:
+        if (!skipToast) showToast('An unexpected error occurred. Please try again later.', 'error');
+        break;
+      case 502:
+        // Stripe and other provider errors are surfaced as 502 by the backend
+        if (!skipToast) showToast(message || 'Payment provider error', 'error');
+        break;
+      default:
+        if (!skipToast) showToast(message || 'Request failed', 'error');
+        break;
+    }
+  } else if (error.request) {
+    // The request was made but no response was received
+    console.error('API Network Error:', error.request);
+    // Ensure network errors are visible to users
+    showToast('Network error. Please check your connection and try again.', 'error');
+  } else {
+    // Something happened in setting up the request
+    console.error('API Error:', error.message);
+    showToast('Unexpected error. Please try again.', 'error');
+  }
+  return Promise.reject(error);
+};
+
+// Add response interceptors
+apiClient.interceptors.response.use(
+  (response) => response,
+  handleApiError
 );
 
 export default apiClient;

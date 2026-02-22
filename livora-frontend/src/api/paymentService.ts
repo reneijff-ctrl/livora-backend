@@ -1,5 +1,5 @@
-import apiClient from './apiClient';
-import { SubscriptionStatus } from '../auth/AuthContext';
+import apiClient, { publicApiClient } from './apiClient';
+import { SubscriptionStatus } from '../types';
 
 /**
  * Interface for the checkout session response from the backend.
@@ -33,6 +33,20 @@ export interface Invoice {
 }
 
 /**
+ * Interface for the subscription plan data.
+ */
+export interface SubscriptionPlan {
+  id: string;
+  name: string;
+  price: string;
+  currency: string;
+  interval: string;
+  features: string[];
+  isPopular: boolean;
+  stripePriceId?: string;
+}
+
+/**
  * Payment API service.
  * 
  * Provides methods for:
@@ -47,8 +61,16 @@ const paymentService = {
    * Initiates a Stripe checkout session for a premium subscription.
    * Returns the URL to redirect the user to Stripe Checkout.
    */
-  async createCheckoutSession(): Promise<CheckoutResponse> {
-    const response = await apiClient.post<CheckoutResponse>('/api/payments/checkout');
+  async createCheckoutSession(planId?: string): Promise<CheckoutResponse> {
+    const response = await apiClient.post<CheckoutResponse>('/api/payments/checkout', { planId });
+    return response.data;
+  },
+
+  /**
+   * Fetches the available subscription plans.
+   */
+  async getPlans(): Promise<SubscriptionPlan[]> {
+    const response = await publicApiClient.get<SubscriptionPlan[]>('/api/subscriptions/plans');
     return response.data;
   },
 

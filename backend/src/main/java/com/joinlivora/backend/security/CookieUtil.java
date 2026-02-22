@@ -38,7 +38,7 @@ public class CookieUtil {
         return ResponseCookie.from("refreshToken", token)
                 .httpOnly(true)
                 .secure(secure)
-                .path("/auth/refresh")
+                .path("/api/auth/refresh")
                 .maxAge(durationInSeconds)
                 .sameSite("None")
                 .build();

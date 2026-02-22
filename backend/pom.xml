@@ -25,11 +25,14 @@
 		<relativePath/>
 	</parent>
 
-	<!-- ============================= -->
-	<!-- Java -->
-	<!-- ============================= -->
 	<properties>
 		<java.version>21</java.version>
+		<jjwt.version>0.12.5</jjwt.version>
+		<bucket4j.version>8.10.1</bucket4j.version>
+		<stripe.version>24.16.0</stripe.version>
+		<logstash-logback.version>7.4</logstash-logback.version>
+		<flyway.version>9.22.3</flyway.version>
+		<compiler.warnerr>-Xlint:all</compiler.warnerr>
 	</properties>
 
 	<!-- ============================= -->
@@ -37,16 +40,51 @@
 	<!-- ============================= -->
 	<dependencies>
 
+		<!-- PDF Generation -->
+		<dependency>
+			<groupId>com.github.librepdf</groupId>
+			<artifactId>openpdf</artifactId>
+			<version>1.3.8</version>
+		</dependency>
+
 		<!-- WEB -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
 		</dependency>
 
+		<!-- MAIL -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+
+		<!-- THYMELEAF -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-thymeleaf</artifactId>
+		</dependency>
+
+		<!-- AOP -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-aop</artifactId>
+		</dependency>
+
 		<!-- SECURITY -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-messaging</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-config</artifactId>
 		</dependency>
 
 		<!-- JPA / HIBERNATE -->
@@ -66,18 +104,18 @@
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-api</artifactId>
-			<version>0.12.5</version>
+			<version>${jjwt.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-impl</artifactId>
-			<version>0.12.5</version>
+			<version>${jjwt.version}</version>
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>
 			<artifactId>jjwt-jackson</artifactId>
-			<version>0.12.5</version>
+			<version>${jjwt.version}</version>
 			<scope>runtime</scope>
 		</dependency>
 
@@ -91,7 +129,6 @@
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
-			<version>1.18.42</version>
 			<scope>provided</scope>
 		</dependency>
 
@@ -99,13 +136,12 @@
 		<dependency>
 			<groupId>com.stripe</groupId>
 			<artifactId>stripe-java</artifactId>
-			<version>24.16.0</version>
+			<version>${stripe.version}</version>
 		</dependency>
 
 		<dependency>
 			<groupId>com.google.code.gson</groupId>
 			<artifactId>gson</artifactId>
-			<version>2.10.1</version>
 		</dependency>
 
 		<!-- MONITORING & LOGGING -->
@@ -124,7 +160,7 @@
 		<dependency>
 			<groupId>net.logstash.logback</groupId>
 			<artifactId>logstash-logback-encoder</artifactId>
-			<version>7.4</version>
+			<version>${logstash-logback.version}</version>
 		</dependency>
 
 		<!-- REDIS & CACHING -->
@@ -141,7 +177,7 @@
 		<dependency>
 			<groupId>com.bucket4j</groupId>
 			<artifactId>bucket4j-core</artifactId>
-			<version>8.10.1</version>
+			<version>${bucket4j.version}</version>
 		</dependency>
 
 		<!-- FLYWAY -->
@@ -156,24 +192,16 @@
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
 
-		<!-- SECURITY FOR WEBSOCKET -->
-		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-messaging</artifactId>
-			<version>6.2.1</version>
-		</dependency>
-
-		<dependency>
-			<groupId>org.springframework.security</groupId>
-			<artifactId>spring-security-config</artifactId>
-		</dependency>
-
-
-
 		<!-- TEST -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-test</artifactId>
 			<scope>test</scope>
 		</dependency>
 
@@ -190,10 +218,20 @@
 	<!-- ============================= -->
 	<build>
 		<plugins>
-
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+
+			<plugin>
+				<groupId>org.flywaydb</groupId>
+				<artifactId>flyway-maven-plugin</artifactId>
+				<version>${flyway.version}</version>
+				<configuration>
+					<locations>
+						<location>filesystem:src/main/resources/db/migration</location>
+					</locations>
+				</configuration>
 			</plugin>
 
 			<plugin>
@@ -207,12 +245,30 @@
 						<arg>-Xlint:-processing</arg>
 						<arg>-Xlint:-serial</arg>
 						<arg>-Xlint:-try</arg>
-						<arg>-Werror</arg>
+						<arg>${compiler.warnerr}</arg>
 					</compilerArgs>
 				</configuration>
 			</plugin>
 
 		</plugins>
 	</build>
+
+	<profiles>
+		<profile>
+			<id>dev</id>
+			<activation>
+				<activeByDefault>true</activeByDefault>
+			</activation>
+			<properties>
+				<compiler.warnerr>-Xlint:all</compiler.warnerr>
+			</properties>
+		</profile>
+		<profile>
+			<id>prod</id>
+			<properties>
+				<compiler.warnerr>-Werror</compiler.warnerr>
+			</properties>
+		</profile>
+	</profiles>
 
 </project>

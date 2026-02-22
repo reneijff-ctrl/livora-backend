@@ -1,9 +1,12 @@
 package com.joinlivora.backend.payout;
 
+import com.joinlivora.backend.payout.dto.PayoutEligibilityResponseDTO;
+import com.joinlivora.backend.payout.dto.PayoutRequestResponseDTO;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -21,41 +24,76 @@ import java.util.Map;
 public class CreatorPayoutController {
 
     private final PayoutService payoutService;
+    private final CreatorPayoutService creatorPayoutService;
+    private final PayoutRequestService payoutRequestService;
     private final UserService userService;
-    private final StripeAccountRepository stripeAccountRepository;
+    private final LegacyCreatorStripeAccountRepository creatorStripeAccountRepository;
+    private final StripeConnectService stripeConnectService;
 
-    @PostMapping("/request")
-    public ResponseEntity<?> requestPayout(
-            @AuthenticationPrincipal UserDetails userDetails,
-            @RequestBody Map<String, Long> payload
-    ) {
-        Long tokens = payload.get("tokens");
-        if (tokens == null || tokens <= 0) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Invalid token amount"));
-        }
+    @Value("${app.frontend-url:http://localhost:3000}")
+    private String frontendUrl;
 
-        log.info("SECURITY: Payout requested by creator: {} for {} tokens", userDetails.getUsername(), tokens);
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    @GetMapping
+    public ResponseEntity<List<PayoutRequestResponseDTO>> getPayouts(@AuthenticationPrincipal UserDetails userDetails) {
+        log.info("CREATOR_PAYOUT: Payout list requested by: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
-        
-        try {
-            Payout payout = payoutService.requestPayout(user, tokens);
-            return ResponseEntity.ok(payout);
-        } catch (Exception e) {
-            log.error("SECURITY: Payout request failed for user: {}", user.getEmail(), e);
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        }
+        List<PayoutRequest> requests = payoutRequestService.getPayoutRequestsByUser(user);
+        return ResponseEntity.ok(requests.stream()
+                .map(payoutRequestService::mapToResponseDTO)
+                .toList());
     }
+
+    @PostMapping("/onboard")
+    @PreAuthorize("hasAnyRole('CREATOR', 'ADMIN')")
+    public ResponseEntity<Map<String, String>> onboard(java.security.Principal principal) throws com.stripe.exception.StripeException {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: payout onboard short-circuited");
+            return ResponseEntity.ok(Map.of("onboardingUrl", ""));
+        }
+        log.info("STRIPE: Onboarding link requested by creator: {}", principal.getName());
+        User user = userService.getByEmail(principal.getName());
+
+        String stripeAccountId = stripeConnectService.createOrGetStripeAccount(user);
+
+        String returnUrl = frontendUrl + "/creator/stripe/success";
+        String refreshUrl = frontendUrl + "/creator/stripe/retry";
+
+        String onboardingUrl = stripeConnectService.generateOnboardingLink(stripeAccountId, returnUrl, refreshUrl);
+
+        return ResponseEntity.ok(Map.of("onboardingUrl", onboardingUrl));
+    }
+
 
     @GetMapping("/history")
     public ResponseEntity<List<Payout>> getPayoutHistory(@AuthenticationPrincipal UserDetails userDetails) {
         User user = userService.getByEmail(userDetails.getUsername());
+        log.info("AUDIT: User {} accessed payout history for creator ID {}", userDetails.getUsername(), user.getId());
         return ResponseEntity.ok(payoutService.getPayoutHistory(user));
+    }
+
+    @GetMapping("/eligibility")
+    public ResponseEntity<PayoutEligibilityResponseDTO> checkEligibility(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userService.getByEmail(userDetails.getUsername());
+        log.info("AUDIT: User {} requested payout eligibility check", userDetails.getUsername());
+        return ResponseEntity.ok(payoutRequestService.checkEligibility(user));
+    }
+
+    @PostMapping("/request")
+    public ResponseEntity<PayoutRequestResponseDTO> requestPayout(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userService.getByEmail(userDetails.getUsername());
+        log.info("AUDIT: User {} requested a payout", userDetails.getUsername());
+        PayoutRequest request = payoutRequestService.createPayoutRequest(user);
+        return ResponseEntity.ok(payoutRequestService.mapToResponseDTO(request));
     }
 
     @GetMapping("/account")
     public ResponseEntity<?> getStripeAccountStatus(@AuthenticationPrincipal UserDetails userDetails) {
         User user = userService.getByEmail(userDetails.getUsername());
-        return stripeAccountRepository.findByUser(user)
+        log.info("AUDIT: User {} accessed Stripe account status for creator ID {}", userDetails.getUsername(), user.getId());
+        return creatorStripeAccountRepository.findByCreatorId(user.getId())
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

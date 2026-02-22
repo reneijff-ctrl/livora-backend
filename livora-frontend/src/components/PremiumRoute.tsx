@@ -8,10 +8,10 @@ interface PremiumRouteProps {
 }
 
 const PremiumRoute: React.FC<PremiumRouteProps> = ({ children }) => {
-  const { isAuthenticated, hasPremiumAccess, isLoading } = useAuth();
+  const { isAuthenticated, hasPremiumAccess, isInitialized } = useAuth();
   const location = useLocation();
 
-  if (isLoading) {
+  if (!isInitialized) {
     return <Loader />;
   }
 

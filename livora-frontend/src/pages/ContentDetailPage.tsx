@@ -29,7 +29,7 @@ const ContentDetailPage: React.FC = () => {
           navigate('/pricing');
         } else {
           showToast('Failed to load content.', 'error');
-          navigate('/dashboard');
+          navigate('/');
         }
       } finally {
         setIsLoading(false);
@@ -80,9 +80,9 @@ const ContentDetailPage: React.FC = () => {
           {content.accessLevel}
         </span>
         <span style={{ color: '#666' }}>By {content.creatorEmail}</span>
-        <span style={{ color: '#999', fontSize: '0.85rem' }}>{new Date(content.createdAt).toLocaleDateString()}</span>
+        <span style={{ color: '#999', fontSize: '0.85rem' }}>{content.createdAt ? new Date(content.createdAt).toLocaleDateString() : 'N/A'}</span>
         <div style={{ marginLeft: 'auto' }}>
-           <TipButton creatorId={content.creatorId.toString()} creatorEmail={content.creatorEmail} />
+           <TipButton userId={content.userId.toString()} creatorEmail={content.creatorEmail} />
         </div>
       </div>
       

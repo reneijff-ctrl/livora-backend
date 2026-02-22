@@ -4,5 +4,6 @@ public enum Role {
     USER,
     PREMIUM,
     ADMIN,
+    MODERATOR,
     CREATOR
 }

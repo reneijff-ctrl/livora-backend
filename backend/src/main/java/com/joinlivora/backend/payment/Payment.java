@@ -31,7 +31,43 @@ public class Payment {
     private String currency;
     private String stripePaymentIntentId;
     private String stripeInvoiceId;
+    private String stripeSessionId;
     private String receiptUrl;
+
+    @Column(nullable = false)
+    private boolean success = true;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    private PaymentStatus status;
+
+    @Column(name = "failure_reason")
+    private String failureReason;
+
+    @Column(name = "ip_address")
+    private String ipAddress;
+
+    @Column(name = "user_agent")
+    private String userAgent;
+
+    @Column(name = "device_fingerprint")
+    private String deviceFingerprint;
+
+    @Column(name = "payment_method_fingerprint")
+    private String paymentMethodFingerprint;
+
+    @Column(name = "payment_method_brand")
+    private String paymentMethodBrand;
+
+    @Column(name = "payment_method_last4")
+    private String paymentMethodLast4;
+
+    @Column(name = "country")
+    private String country;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "risk_level")
+    private com.joinlivora.backend.fraud.model.RiskLevel riskLevel;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
@@ -98,12 +134,108 @@ public class Payment {
         this.stripeInvoiceId = stripeInvoiceId;
     }
 
+    public String getStripeSessionId() {
+        return stripeSessionId;
+    }
+
+    public void setStripeSessionId(String stripeSessionId) {
+        this.stripeSessionId = stripeSessionId;
+    }
+
     public String getReceiptUrl() {
         return receiptUrl;
     }
 
     public void setReceiptUrl(String receiptUrl) {
         this.receiptUrl = receiptUrl;
+    }
+
+    public boolean isSuccess() {
+        return success;
+    }
+
+    public void setSuccess(boolean success) {
+        this.success = success;
+    }
+
+    public PaymentStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(PaymentStatus status) {
+        this.status = status;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
+    }
+
+    public String getIpAddress() {
+        return ipAddress;
+    }
+
+    public void setIpAddress(String ipAddress) {
+        this.ipAddress = ipAddress;
+    }
+
+    public String getUserAgent() {
+        return userAgent;
+    }
+
+    public void setUserAgent(String userAgent) {
+        this.userAgent = userAgent;
+    }
+
+    public String getDeviceFingerprint() {
+        return deviceFingerprint;
+    }
+
+    public void setDeviceFingerprint(String deviceFingerprint) {
+        this.deviceFingerprint = deviceFingerprint;
+    }
+
+    public String getPaymentMethodFingerprint() {
+        return paymentMethodFingerprint;
+    }
+
+    public void setPaymentMethodFingerprint(String paymentMethodFingerprint) {
+        this.paymentMethodFingerprint = paymentMethodFingerprint;
+    }
+
+    public String getPaymentMethodBrand() {
+        return paymentMethodBrand;
+    }
+
+    public void setPaymentMethodBrand(String paymentMethodBrand) {
+        this.paymentMethodBrand = paymentMethodBrand;
+    }
+
+    public String getPaymentMethodLast4() {
+        return paymentMethodLast4;
+    }
+
+    public void setPaymentMethodLast4(String paymentMethodLast4) {
+        this.paymentMethodLast4 = paymentMethodLast4;
+    }
+
+    public String getCountry() {
+        return country;
+    }
+
+    public void setCountry(String country) {
+        this.country = country;
+    }
+
+    public com.joinlivora.backend.fraud.model.RiskLevel getRiskLevel() {
+        return riskLevel;
+    }
+
+    public void setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel riskLevel) {
+        this.riskLevel = riskLevel;
     }
 
     public Instant getCreatedAt() {

@@ -4,12 +4,13 @@ import com.joinlivora.backend.content.ContentAccessLevel;
 import lombok.Builder;
 import lombok.Data;
 
+import java.io.Serializable;
 import java.time.Instant;
 import java.util.UUID;
 
 @Data
 @Builder
-public class ContentResponse {
+public class ContentResponse implements Serializable {
     private UUID id;
     private String title;
     private String description;

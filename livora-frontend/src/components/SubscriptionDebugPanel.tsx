@@ -10,7 +10,7 @@ const SubscriptionDebugPanel: React.FC = () => {
     isAuthenticated
   } = useAuth();
   
-  const currentPeriodEnd = user?.subscription.renewalDate;
+  const currentPeriodEnd = user?.subscription.currentPeriodEnd;
   
   const [lastRefresh, setLastRefresh] = useState<string>(new Date().toLocaleTimeString());
   const [isRefreshing, setIsRefreshing] = useState(false);

@@ -41,6 +41,10 @@ public class JwtService {
     // TOKEN GENERATION
     // ======================
 
+    public long getJwtExpiration() {
+        return jwtExpiration;
+    }
+
     public String generateAccessToken(User user) {
         return Jwts.builder()
                 .subject(user.getEmail())
@@ -48,8 +52,8 @@ public class JwtService {
                 .audience().add(audience).and()
                 .claim("role", user.getRole().name())
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + jwtExpiration))
-                .signWith(secretKey)
+                .expiration(new Date(System.currentTimeMillis() + jwtExpiration * 1000))
+                .signWith(secretKey, Jwts.SIG.HS256)
                 .compact();
     }
 
@@ -61,7 +65,7 @@ public class JwtService {
                 .claim("type", "refresh")
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + refreshExpiration * 1000))
-                .signWith(secretKey)
+                .signWith(secretKey, Jwts.SIG.HS256)
                 .compact();
     }
 
@@ -71,8 +75,8 @@ public class JwtService {
                 .issuer(issuer)
                 .audience().add(audience).and()
                 .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + expiration))
-                .signWith(secretKey);
+                .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
+                .signWith(secretKey, Jwts.SIG.HS256);
 
         if (includeRole) {
             builder.claim("role", user.getRole().name());
@@ -88,8 +92,8 @@ public class JwtService {
                 .audience().add(audience).and()
                 .claim("role", role)
                 .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + jwtExpiration))
-                .signWith(secretKey)
+                .expiration(new Date(System.currentTimeMillis() + jwtExpiration * 1000))
+                .signWith(secretKey, Jwts.SIG.HS256)
                 .compact();
     }
 
@@ -97,14 +101,30 @@ public class JwtService {
     // TOKEN VALIDATION
     // ======================
 
+    /**
+     * Validates the token and returns the claims.
+     * Throws JwtException if the token is invalid, expired, or malformed.
+     */
+    public Claims validateToken(String token) {
+        var claimsJws = Jwts.parser()
+                .verifyWith(secretKey)
+                .requireIssuer(issuer)
+                .requireAudience(audience)
+                .build()
+                .parseSignedClaims(token);
+        
+        // Explicitly check algorithm to prevent algorithm switching attacks
+        String alg = claimsJws.getHeader().getAlgorithm();
+        if (!"HS256".equals(alg)) {
+            throw new io.jsonwebtoken.security.SignatureException("Invalid algorithm: " + alg);
+        }
+        
+        return claimsJws.getPayload();
+    }
+
     public boolean isTokenValid(String token) {
         try {
-            Jwts.parser()
-                    .verifyWith(secretKey)
-                    .requireIssuer(issuer)
-                    .requireAudience(audience)
-                    .build()
-                    .parseSignedClaims(token);
+            validateToken(token);
             return true;
         } catch (Exception e) {
             return false;
@@ -113,7 +133,7 @@ public class JwtService {
 
     public boolean isRefreshTokenValid(String token) {
         try {
-            Claims claims = extractAllClaims(token);
+            Claims claims = validateToken(token);
             String type = claims.get("type", String.class);
             return "refresh".equals(type);
         } catch (Exception e) {
@@ -138,21 +158,15 @@ public class JwtService {
     }
 
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
+        final Claims claims = validateToken(token);
         return claimsResolver.apply(claims);
     }
 
     private Claims extractAllClaims(String token) {
-        return Jwts.parser()
-                .verifyWith(secretKey)
-                .requireIssuer(issuer)
-                .requireAudience(audience)
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
+        return validateToken(token);
     }
 
     private Claims getClaims(String token) {
-        return extractAllClaims(token);
+        return validateToken(token);
     }
 }

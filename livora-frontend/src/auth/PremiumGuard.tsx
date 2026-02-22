@@ -8,10 +8,10 @@ interface PremiumGuardProps {
 }
 
 const PremiumGuard: React.FC<PremiumGuardProps> = ({ children }) => {
-  const { user, isAuthenticated, isLoading, hasPremiumAccess } = useAuth();
+  const { isAuthenticated, isInitialized, hasPremiumAccess } = useAuth();
   const location = useLocation();
 
-  if (isLoading) {
+  if (!isInitialized) {
     return <Loader />;
   }
 

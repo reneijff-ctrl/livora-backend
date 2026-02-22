@@ -1,19 +1,21 @@
 package com.joinlivora.backend.analytics;
 
-import com.joinlivora.backend.payment.PaymentRepository;
-import com.joinlivora.backend.payment.UserSubscriptionRepository;
+import com.joinlivora.backend.analytics.dto.CreatorAnalyticsResponseDTO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/admin/analytics")
@@ -21,44 +23,65 @@ import java.util.Map;
 @PreAuthorize("hasRole('ADMIN')")
 public class AdminAnalyticsController {
 
-    private final AnalyticsEventRepository analyticsEventRepository;
-    private final PaymentRepository paymentRepository;
-    private final UserSubscriptionRepository subscriptionRepository;
+    private final PlatformAnalyticsRepository platformAnalyticsRepository;
+    private final CreatorAnalyticsService creatorAnalyticsService;
+    private final ExperimentAnalyticsRepository experimentAnalyticsRepository;
+
+    @GetMapping("/creators/{id}")
+    @Transactional(readOnly = true)
+    public ResponseEntity<List<CreatorAnalyticsResponseDTO>> getCreatorAnalytics(
+            @PathVariable UUID id,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+    ) {
+        return ResponseEntity.ok(creatorAnalyticsService.getAnalyticsByProfileId(id, from, to));
+    }
 
     @GetMapping("/overview")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, Object>> getOverview() {
-        Instant thirtyDaysAgo = Instant.now().minus(30, ChronoUnit.DAYS);
+        LocalDate thirtyDaysAgo = LocalDate.now(ZoneOffset.UTC).minusDays(30);
         
+        PlatformAnalytics latest = platformAnalyticsRepository.findFirstByOrderByDateDesc().orElse(null);
+        
+        BigDecimal revenue = platformAnalyticsRepository.sumRevenueSince(thirtyDaysAgo);
+        Long visits = platformAnalyticsRepository.sumUniqueVisitsSince(thirtyDaysAgo);
+        Long registrations = platformAnalyticsRepository.sumRegistrationsSince(thirtyDaysAgo);
+
         return ResponseEntity.ok(Map.of(
-            "totalActiveSubscriptions", subscriptionRepository.countActiveSubscriptions(),
-            "revenue30Days", paymentRepository.calculateRevenue(thirtyDaysAgo) != null ? paymentRepository.calculateRevenue(thirtyDaysAgo) : java.math.BigDecimal.ZERO,
-            "uniqueVisits30Days", analyticsEventRepository.countUniqueVisits(thirtyDaysAgo),
-            "registrations30Days", analyticsEventRepository.countRegistrations(thirtyDaysAgo)
+            "totalActiveSubscriptions", latest != null ? latest.getActiveSubscriptions() : 0,
+            "revenue30Days", revenue != null ? revenue : BigDecimal.ZERO,
+            "uniqueVisits30Days", visits != null ? visits : 0,
+            "registrations30Days", registrations != null ? registrations : 0
         ));
     }
 
     @GetMapping("/experiments")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, Object>> getExperiments() {
         return ResponseEntity.ok(Map.of());
     }
 
     @GetMapping("/experiments/results")
-    public ResponseEntity<Map<String, Object>> getExperimentResults(@org.springframework.web.bind.annotation.RequestParam String experimentKey) {
-        java.util.List<Object[]> data = analyticsEventRepository.countByExperimentKeyAndVariant(experimentKey);
-        return ResponseEntity.ok(data.stream().collect(java.util.stream.Collectors.toMap(
-            row -> (String) row[0],
-            row -> row[1]
+    @Transactional(readOnly = true)
+    public ResponseEntity<Map<String, Object>> getExperimentResults(@RequestParam String experimentKey) {
+        List<ExperimentAnalytics> results = experimentAnalyticsRepository.findAllByExperimentKey(experimentKey);
+        return ResponseEntity.ok(results.stream().collect(Collectors.toMap(
+            ExperimentAnalytics::getVariant,
+            ExperimentAnalytics::getCount
         )));
     }
 
     @GetMapping("/revenue")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, Object>> getRevenue() {
-        Instant thirtyDaysAgo = Instant.now().minus(30, ChronoUnit.DAYS);
+        LocalDate thirtyDaysAgo = LocalDate.now(ZoneOffset.UTC).minusDays(30);
         
-        BigDecimal totalRevenue = paymentRepository.calculateRevenue(thirtyDaysAgo);
+        BigDecimal totalRevenue = platformAnalyticsRepository.sumRevenueSince(thirtyDaysAgo);
         if (totalRevenue == null) totalRevenue = BigDecimal.ZERO;
         
-        long activeSubs = subscriptionRepository.countActiveSubscriptions();
+        PlatformAnalytics latest = platformAnalyticsRepository.findFirstByOrderByDateDesc().orElse(null);
+        long activeSubs = latest != null ? latest.getActiveSubscriptions() : 0;
         
         BigDecimal arpu = activeSubs > 0 
             ? totalRevenue.divide(BigDecimal.valueOf(activeSubs), 2, RoundingMode.HALF_UP)
@@ -71,32 +94,41 @@ public class AdminAnalyticsController {
     }
 
     @GetMapping("/funnels")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, Object>> getFunnels() {
-        Instant thirtyDaysAgo = Instant.now().minus(30, ChronoUnit.DAYS);
+        LocalDate thirtyDaysAgo = LocalDate.now(ZoneOffset.UTC).minusDays(30);
         
-        long visits = analyticsEventRepository.countUniqueVisits(thirtyDaysAgo);
-        long registrations = analyticsEventRepository.countRegistrations(thirtyDaysAgo);
-        long paid = analyticsEventRepository.countNewSubscriptions(thirtyDaysAgo);
+        Long visits = platformAnalyticsRepository.sumUniqueVisitsSince(thirtyDaysAgo);
+        Long registrations = platformAnalyticsRepository.sumRegistrationsSince(thirtyDaysAgo);
+        Long paid = platformAnalyticsRepository.sumNewSubscriptionsSince(thirtyDaysAgo);
+
+        long v = visits != null ? visits : 0;
+        long r = registrations != null ? registrations : 0;
+        long p = paid != null ? paid : 0;
 
         return ResponseEntity.ok(Map.of(
-            "visits", visits,
-            "registrations", registrations,
-            "paid", paid,
-            "visitToRegRate", visits > 0 ? (double) registrations / visits : 0,
-            "regToPaidRate", registrations > 0 ? (double) paid / registrations : 0
+            "visits", v,
+            "registrations", r,
+            "paid", p,
+            "visitToRegRate", v > 0 ? (double) r / v : 0,
+            "regToPaidRate", r > 0 ? (double) p / r : 0
         ));
     }
 
     @GetMapping("/churn")
+    @Transactional(readOnly = true)
     public ResponseEntity<Map<String, Object>> getChurn() {
-        Instant thirtyDaysAgo = Instant.now().minus(30, ChronoUnit.DAYS);
+        LocalDate thirtyDaysAgo = LocalDate.now(ZoneOffset.UTC).minusDays(30);
         
-        long activeAtStart = subscriptionRepository.countActiveSubscriptions(); // Simplified
-        long churned = subscriptionRepository.countCanceledSubscriptions(thirtyDaysAgo);
+        PlatformAnalytics latest = platformAnalyticsRepository.findFirstByOrderByDateDesc().orElse(null);
+        long activeAtEnd = latest != null ? latest.getActiveSubscriptions() : 0;
+        Long churned = platformAnalyticsRepository.sumChurnedSubscriptionsSince(thirtyDaysAgo);
+        
+        long c = churned != null ? churned : 0;
         
         return ResponseEntity.ok(Map.of(
-            "churned30Days", churned,
-            "churnRate", activeAtStart > 0 ? (double) churned / activeAtStart : 0
+            "churned30Days", c,
+            "churnRate", activeAtEnd + c > 0 ? (double) c / (activeAtEnd + c) : 0
         ));
     }
 }

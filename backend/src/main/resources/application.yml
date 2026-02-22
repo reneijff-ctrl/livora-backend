@@ -3,11 +3,14 @@ spring:
     name: joinlivora-backend
   profiles:
     active: dev
+  mvc:
+    pathmatch:
+      matching-strategy: path_pattern_parser
   
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/joinlivora}
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       connection-timeout: 30000
@@ -15,11 +18,13 @@ spring:
       minimum-idle: 5
       idle-timeout: 600000
       max-lifetime: 1800000
-      auto-commit: true
+      auto-commit: false
       initialization-fail-timeout: 1 # Fail fast if DB unreachable
 
   jpa:
     open-in-view: false
+    hibernate:
+      ddl-auto: validate
     properties:
       hibernate:
         jdbc:
@@ -43,8 +48,23 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: false
+          starttls:
+            enable: false
+
 logging:
   level:
+    root: INFO
+    com.joinlivora: INFO
+    org.springframework.security: INFO
     org.springframework.data.repository.config.RepositoryConfigurationDelegate: WARN
     org.springframework.data.redis.repository.configuration.RedisRepositoryConfigurationExtension: WARN
 
@@ -54,15 +74,16 @@ server:
   error:
     include-stacktrace: never
     include-message: always
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
 
 management:
   endpoints:
     web:
       exposure:
         include: health
-  endpoint:
-    health:
-      show-details: when_authorized
   otlp:
     metrics:
       export:
@@ -75,37 +96,86 @@ security:
     refresh-token-expiration: 604800
 
 stripe:
-  secret-key: ${STRIPE_SECRET_KEY}
-  webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_dev_fallback}
+  api:
+    key: ${STRIPE_SECRET_KEY}
+  webhook:
+    secret: ${STRIPE_WEBHOOK_SECRET}
   premium-plan-id: ${STRIPE_PREMIUM_PLAN_ID:price_12345}
   success-url: ${FRONTEND_SUCCESS_URL:${FRONTEND_URL:http://localhost:3000}/payment/success}
   cancel-url: ${FRONTEND_CANCEL_URL:${FRONTEND_URL:http://localhost:3000}/payment/cancel}
+  token-success-url: ${FRONTEND_TOKEN_SUCCESS_URL:${FRONTEND_URL:http://localhost:3000}/tokens/success}
+  token-cancel-url: ${FRONTEND_TOKEN_CANCEL_URL:${FRONTEND_URL:http://localhost:3000}/tokens/cancel}
 
----
-spring:
-  config:
-    activate:
-      on-profile: dev
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    show-sql: true
-  management:
-    health:
-      redis:
-        enabled: false
-    endpoints:
-      web:
-        exposure:
-          include: health,metrics,prometheus
-  data:
-    redis:
-      repositories:
-        enabled: false
-  cache:
-    type: none
-  autoconfigure:
-    exclude: org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration, org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+livora:
+  base-url: ${BASE_URL:http://localhost:8080}
+  upload:
+    dir: ${UPLOAD_DIR:uploads}
+  tipping:
+    min-tokens: 1
+    max-per-minute: 5
+  supertips:
+    max-per-minute: 2
+    room-cooldown-seconds: 10
+    slow-mode-bypass-seconds: 300
+  highlights:
+    max-per-minute: 5
+  monetization:
+    platform-fee-percentage: 30
+    earnings-dry-run: ${EARNINGS_DRY_RUN:false}
+  chat:
+    slow-mode-interval-seconds: 3
+  security:
+    enforce-https: ${ENFORCE_HTTPS:false}
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://joinlivora.com}
+    rate-limit:
+      anonymous: 30
+      authenticated: 200
+      creator: 1000
+      admin: 5000
+      websocket: 10000
+      login: 5
+      register: 3
+  payout:
+    hold-rules:
+      none:
+        risk-score: 20
+        chargeback-rate: 0.5
+        days: 0
+      short-hold:
+        risk-score: 40
+        chargeback-rate: 0.5
+        days: 3
+      medium-hold:
+        risk-score: 60
+        chargeback-rate: 0.5
+        days: 7
+      long-hold:
+        risk-score: 100
+        chargeback-rate: 1.0
+        days: 14
+    unlock-check-interval-ms: 600000
+  fraud:
+    velocity:
+      login:
+        1m:
+          limit: 5
+          action: suspicious
+      tip:
+        1m:
+          limit: 10
+          action: suspicious
+        10m:
+          limit: 50
+          action: critical
+      payment:
+        5m:
+          limit: 3
+          action: critical
+      message:
+        1m:
+          limit: 30
+          action: spam
 
 ---
 spring:
@@ -117,17 +187,27 @@ spring:
       maximum-pool-size: 50
       minimum-idle: 10
   jpa:
-    hibernate:
-      ddl-auto: validate
     show-sql: false
   sql:
     init:
       mode: never
-  stripe:
-    webhook-secret: ${STRIPE_WEBHOOK_SECRET}
   h2:
     console:
       enabled: false
+
+logging:
+  level:
+    root: WARN
+    com.joinlivora: INFO
+    org.springframework: WARN
+livora:
+  security:
+    enforce-https: true
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,https://joinlivora.com}
+  stripe:
+    webhook:
+      secret: ${STRIPE_WEBHOOK_SECRET}
   springdoc:
     api-docs:
       enabled: false

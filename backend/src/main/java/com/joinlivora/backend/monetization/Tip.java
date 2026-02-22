@@ -1,5 +1,6 @@
 package com.joinlivora.backend.monetization;
 
+import com.joinlivora.backend.streaming.StreamRoom;
 import com.joinlivora.backend.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -10,10 +11,15 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table(name = "tips")
+@Table(name = "tips", indexes = {
+    @Index(name = "idx_tip_from_user", columnList = "from_user_id"),
+    @Index(name = "idx_tip_creator", columnList = "creator_id"),
+    @Index(name = "idx_tip_room_id", columnList = "room_id"),
+    @Index(name = "idx_tip_client_request_id", columnList = "clientRequestId", unique = true)
+})
 @Getter
 @Setter
-@ToString(exclude = {"fromUser", "creator"})
+@ToString(exclude = {"senderUserId", "creatorUserId", "room"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor
@@ -28,11 +34,15 @@ public class Tip {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "from_user_id", nullable = false)
-    private User fromUser;
+    private User senderUserId;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "creator_id", nullable = false)
-    private User creator;
+    private User creatorUserId;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "room_id")
+    private StreamRoom room;
 
     @Column(nullable = false)
     private BigDecimal amount;
@@ -41,6 +51,9 @@ public class Tip {
     private String currency;
 
     private String message;
+
+    @Column(unique = true)
+    private String clientRequestId;
 
     private String stripePaymentIntentId;
 
@@ -53,6 +66,8 @@ public class Tip {
 
     @PrePersist
     protected void onCreate() {
-        createdAt = Instant.now();
+        if (createdAt == null) {
+            createdAt = Instant.now();
+        }
     }
 }

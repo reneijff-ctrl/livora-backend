@@ -30,10 +30,10 @@ public class Payout {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private long tokenAmount;
 
-    @Column(nullable = false)
+    @Column(nullable = false, updatable = false)
     private BigDecimal eurAmount;
 
     @Enumerated(EnumType.STRING)

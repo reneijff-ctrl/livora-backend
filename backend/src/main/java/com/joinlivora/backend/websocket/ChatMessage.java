@@ -18,6 +18,8 @@ public class ChatMessage {
     private String content;
     private Instant timestamp;
     private RoomType roomType;
+    private boolean system;
+    private boolean moderated;
 
     public enum RoomType {
         PUBLIC, PREMIUM

@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/flags")
+@RequestMapping("/api/auth/flags")
 @RequiredArgsConstructor
 public class FeatureFlagController {
 

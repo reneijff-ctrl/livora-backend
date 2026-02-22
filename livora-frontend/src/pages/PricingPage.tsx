@@ -1,14 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../auth/useAuth';
-import paymentService from '../api/paymentService';
-import { useLocation, Link } from 'react-router-dom';
+import paymentService, { SubscriptionPlan } from '../api/paymentService';
+import { useLocation, Link, useNavigate } from 'react-router-dom';
 import { showToast } from '../components/Toast';
 import SEO from '../components/SEO';
+import { getDashboardRouteByRole } from '../store/authStore';
 
 const PricingPage: React.FC = () => {
-  const { subscriptionStatus, isAuthenticated, hasPremiumAccess } = useAuth();
-  const [isProcessing, setIsProcessing] = useState(false);
+  const { subscriptionStatus, isAuthenticated, hasPremiumAccess, user } = useAuth();
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
+  const [isLoadingPlans, setIsLoadingPlans] = useState(true);
+  const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchPlans = async () => {
+      try {
+        const data = await paymentService.getPlans();
+        setPlans(data);
+      } catch (err) {
+        console.error('Failed to fetch plans:', err);
+        showToast('Failed to load pricing plans. Please try again later.', 'error');
+      } finally {
+        setIsLoadingPlans(false);
+      }
+    };
+
+    fetchPlans();
+  }, []);
 
   useEffect(() => {
     if (location.state?.reason === 'subscription_lost') {
@@ -18,9 +38,13 @@ const PricingPage: React.FC = () => {
     }
   }, [location]);
 
-  const handleUpgrade = async () => {
+  const handleUpgrade = async (plan: SubscriptionPlan) => {
     if (!isAuthenticated) {
-      window.location.href = '/login';
+      navigate('/login', { state: { from: location } });
+      return;
+    }
+
+    if (plan.id === 'free') {
       return;
     }
 
@@ -29,28 +53,38 @@ const PricingPage: React.FC = () => {
       return;
     }
 
-    setIsProcessing(true);
+    setIsProcessing(plan.id);
 
     try {
-      const { redirectUrl } = await paymentService.createCheckoutSession();
+      // Pass the stripe price ID if available, otherwise the plan id
+      const { redirectUrl } = await paymentService.createCheckoutSession(plan.stripePriceId || plan.id);
       // Redirect to Stripe Checkout
       window.location.href = redirectUrl;
     } catch (err) {
       console.error('Checkout error:', err);
       // Handled by global interceptor
-      setIsProcessing(false);
+      setIsProcessing(null);
     }
   };
 
   const isActive = subscriptionStatus === 'ACTIVE';
   const hasAccess = hasPremiumAccess();
 
+  if (isLoadingPlans) {
+    return (
+      <div style={{ padding: '4rem 2rem', textAlign: 'center' }}>
+        <SEO title="Pricing" canonical="/pricing" />
+        <h1>Loading Plans...</h1>
+      </div>
+    );
+  }
+
   return (
     <div style={{ 
       padding: '4rem 2rem', 
-      maxWidth: '900px', 
+      maxWidth: '1200px', 
       margin: '0 auto', 
-      fontFamily: 'sans-serif',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
       textAlign: 'center'
     }}>
       <SEO 
@@ -58,8 +92,8 @@ const PricingPage: React.FC = () => {
         description="Choose the best plan for your needs. Upgrade to Premium for full access to all features."
         canonical="/pricing"
       />
-      <h1>Simple, Transparent Pricing</h1>
-      <p style={{ color: '#666', marginBottom: '3rem' }}>
+      <h1 style={{ fontSize: '2.5rem', fontWeight: '800', marginBottom: '1rem', color: '#F4F4F5' }}>Simple, Transparent Pricing</h1>
+      <p style={{ color: '#71717A', fontSize: '1.125rem', marginBottom: '4rem', maxWidth: '600px', margin: '0 auto 4rem' }}>
         Unlock all premium features and support our development.
       </p>
 
@@ -67,103 +101,120 @@ const PricingPage: React.FC = () => {
         display: 'flex', 
         gap: '2rem', 
         justifyContent: 'center',
-        flexWrap: 'wrap'
+        flexWrap: 'wrap',
+        alignItems: 'stretch'
       }}>
-        {/* Free Plan */}
-        <div style={{ 
-          border: '1px solid #ddd', 
-          borderRadius: '12px', 
-          padding: '2rem', 
-          backgroundColor: '#fff',
-          flex: '1',
-          minWidth: '300px',
-          maxWidth: '400px'
-        }}>
-          <h2>Free</h2>
-          <div style={{ fontSize: '3rem', fontWeight: 'bold', margin: '1rem 0' }}>
-            €0 <span style={{ fontSize: '1rem', color: '#666', fontWeight: 'normal' }}>/ month</span>
-          </div>
-          <ul style={{ listStyle: 'none', padding: 0, margin: '2rem 0', textAlign: 'left' }}>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Basic content access</li>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Community forum</li>
-            <li style={{ marginBottom: '0.5rem' }}>❌ Premium features</li>
-            <li style={{ marginBottom: '0.5rem' }}>❌ Ad-free experience</li>
-          </ul>
-          <button
-            disabled={true}
-            style={{
-              backgroundColor: '#f3f3f3',
-              color: '#666',
-              padding: '12px 30px',
-              fontSize: '1.1rem',
-              fontWeight: 'bold',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'default',
-              width: '100%'
+        {plans.map((plan) => (
+          <div 
+            key={plan.id}
+            style={{ 
+              border: plan.isPopular ? '2px solid #6366F1' : '1px solid rgba(255, 255, 255, 0.05)', 
+              borderRadius: '24px', 
+              padding: '3rem 2rem', 
+              backgroundColor: '#0F0F14',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+              flex: '1',
+              minWidth: '300px',
+              maxWidth: '400px',
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              transition: 'transform 0.2s ease',
             }}
           >
-            {subscriptionStatus === 'NONE' ? 'Current Plan' : 'Free Tier'}
-          </button>
-        </div>
-
-        {/* Premium Plan */}
-        <div style={{ 
-          border: '2px solid #6772e5', 
-          borderRadius: '12px', 
-          padding: '2rem', 
-          backgroundColor: '#fff',
-          boxShadow: '0 4px 20px rgba(103, 114, 229, 0.15)',
-          flex: '1',
-          minWidth: '300px',
-          maxWidth: '400px',
-          position: 'relative'
-        }}>
-          <div style={{ 
-            position: 'absolute', 
-            top: '-15px', 
-            left: '50%', 
-            transform: 'translateX(-50%)',
-            backgroundColor: '#6772e5',
-            color: 'white',
-            padding: '4px 12px',
-            borderRadius: '20px',
-            fontSize: '0.8rem',
-            fontWeight: 'bold'
-          }}>MOST POPULAR</div>
-          <h2 style={{ color: '#6772e5' }}>Premium</h2>
-          <div style={{ fontSize: '3rem', fontWeight: 'bold', margin: '1rem 0' }}>
-            €9.99 <span style={{ fontSize: '1rem', color: '#666', fontWeight: 'normal' }}>/ month</span>
+            {plan.isPopular && (
+              <div style={{ 
+                position: 'absolute', 
+                top: '-14px', 
+                left: '50%', 
+                transform: 'translateX(-50%)',
+                backgroundColor: '#6366F1',
+                color: 'white',
+                padding: '4px 14px',
+                borderRadius: '20px',
+                fontSize: '0.75rem',
+                fontWeight: 'bold',
+                letterSpacing: '0.05em'
+              }}>MOST POPULAR</div>
+            )}
+            
+            <h2 style={{ 
+              fontSize: '1.5rem', 
+              fontWeight: '700', 
+              color: plan.isPopular ? '#6366F1' : '#F4F4F5',
+              marginBottom: '1rem'
+            }}>
+              {plan.name}
+            </h2>
+            
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', margin: '1.5rem 0' }}>
+              <span style={{ fontSize: '3.5rem', fontWeight: '800', color: '#F4F4F5' }}>
+                {plan.currency === 'EUR' ? '€' : plan.currency}{plan.price}
+              </span>
+              <span style={{ fontSize: '1.125rem', color: '#71717A', marginLeft: '0.25rem' }}>/{plan.interval}</span>
+            </div>
+            
+            <ul style={{ 
+              listStyle: 'none', 
+              padding: 0, 
+              margin: '2rem 0', 
+              textAlign: 'left',
+              flex: 1
+            }}>
+              {plan.features.map((feature, idx) => (
+                <li key={idx} style={{ 
+                  display: 'flex', 
+                  alignItems: 'flex-start', 
+                  marginBottom: '1rem',
+                  fontSize: '1rem',
+                  color: '#A1A1AA'
+                }}>
+                  <span style={{ color: '#10b981', marginRight: '0.75rem', fontWeight: 'bold' }}>✓</span>
+                  {feature}
+                </li>
+              ))}
+            </ul>
+            
+            <button
+              onClick={() => handleUpgrade(plan)}
+              disabled={!!isProcessing || (plan.id === 'free') || (plan.id === 'premium' && hasAccess)}
+              style={{
+                backgroundColor: (plan.id === 'premium' && hasAccess) ? '#10b981' : (plan.id === 'free' ? 'rgba(255, 255, 255, 0.05)' : '#6366F1'),
+                color: plan.id === 'free' ? '#71717A' : 'white',
+                padding: '1rem 2rem',
+                fontSize: '1.125rem',
+                fontWeight: '700',
+                border: 'none',
+                borderRadius: '12px',
+                cursor: (isProcessing || (plan.id === 'free') || (plan.id === 'premium' && hasAccess)) ? 'not-allowed' : 'pointer',
+                width: '100%',
+                transition: 'all 0.2s ease',
+                boxShadow: plan.isPopular && !hasAccess ? '0 4px 12px rgba(99, 102, 241, 0.3)' : 'none'
+              }}
+            >
+              {isProcessing === plan.id ? 'Processing...' : 
+               (plan.id === 'free') ? (subscriptionStatus === 'NONE' ? 'Current Plan' : 'Free Tier') :
+               hasAccess ? (isActive ? 'Current Plan' : 'Premium Active') : 
+               `Get ${plan.name}`}
+            </button>
           </div>
-          <ul style={{ listStyle: 'none', padding: 0, margin: '2rem 0', textAlign: 'left' }}>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Full access to all premium content</li>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Priority support</li>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Exclusive community features</li>
-            <li style={{ marginBottom: '0.5rem' }}>✅ Ad-free experience</li>
-          </ul>
-          <button
-            onClick={handleUpgrade}
-            disabled={isProcessing || hasAccess}
-            style={{
-              backgroundColor: hasAccess ? '#4caf50' : '#6772e5',
-              color: 'white',
-              padding: '12px 30px',
-              fontSize: '1.1rem',
-              fontWeight: 'bold',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: (isProcessing || hasAccess) ? 'not-allowed' : 'pointer',
-              width: '100%',
-              transition: 'background-color 0.2s'
-            }}
-          >
-            {isProcessing ? 'Processing...' : hasAccess ? (isActive ? 'Current Plan' : 'Premium Active') : 'Upgrade to Premium'}
-          </button>
-        </div>
+        ))}
       </div>
 
-      <div style={{ marginTop: '3rem' }}>
-        <Link to="/" style={{ color: '#666', textDecoration: 'none' }}>← Back to Home</Link>
+      <div style={{ marginTop: '4rem' }}>
+        <Link 
+          to={getDashboardRouteByRole(user?.role)} 
+          style={{ 
+            color: '#71717A', 
+            textDecoration: 'none',
+            fontWeight: '600',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}
+        >
+          <span>←</span> {getDashboardRouteByRole(user?.role) !== '/' ? 'Back to Dashboard' : 'Back to Home'}
+        </Link>
       </div>
     </div>
   );

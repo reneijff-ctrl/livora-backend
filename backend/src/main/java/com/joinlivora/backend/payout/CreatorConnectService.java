@@ -12,7 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-@Service
+@Service("creatorConnectService")
 @RequiredArgsConstructor
 @Slf4j
 public class CreatorConnectService {
@@ -51,15 +51,15 @@ public class CreatorConnectService {
                                 .build();
                         return stripeAccountRepository.save(newAccount);
                     } catch (Exception e) {
-                        log.error("Failed to create Stripe Connect account for user: {}", user.getEmail(), e);
+                        log.error("Failed to create Stripe Connect account for creator: {}", user.getEmail(), e);
                         throw new RuntimeException("Stripe account creation failed");
                     }
                 });
 
         AccountLinkCreateParams linkParams = AccountLinkCreateParams.builder()
                 .setAccount(stripeAccount.getStripeAccountId())
-                .setRefreshUrl(frontendUrl + "/creator/onboarding/refresh")
-                .setReturnUrl(frontendUrl + "/creator/onboarding/complete")
+                .setRefreshUrl(frontendUrl + "/creatorUserId/onboarding/refresh")
+                .setReturnUrl(frontendUrl + "/creatorUserId/onboarding/complete")
                 .setType(AccountLinkCreateParams.Type.ACCOUNT_ONBOARDING)
                 .build();
 

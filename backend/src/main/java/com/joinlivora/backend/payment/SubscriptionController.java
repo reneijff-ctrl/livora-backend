@@ -22,11 +22,16 @@ public class SubscriptionController {
     private final SubscriptionService subscriptionService;
     private final UserService userService;
 
+    @GetMapping("/plans")
+    public ResponseEntity<java.util.List<com.joinlivora.backend.payment.dto.SubscriptionPlanDTO>> getPlans() {
+        return ResponseEntity.ok(subscriptionService.getAvailablePlans());
+    }
+
     @GetMapping("/me")
     public ResponseEntity<SubscriptionResponse> getMySubscription(
             @AuthenticationPrincipal UserDetails userDetails
     ) {
-        log.info("SECURITY: Fetching subscription for user: {}", userDetails.getUsername());
+        log.info("SECURITY: Fetching subscription for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
         
         SubscriptionResponse response = subscriptionService.getSubscriptionForUser(user);
@@ -39,32 +44,22 @@ public class SubscriptionController {
     @PostMapping("/cancel")
     public ResponseEntity<Void> cancelSubscription(
             @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        log.info("SECURITY: Cancellation requested for user: {}", userDetails.getUsername());
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Cancellation requested for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
         
-        try {
-            subscriptionService.cancelSubscription(user);
-            return ResponseEntity.ok().build();
-        } catch (Exception e) {
-            log.error("SECURITY: Failed to cancel subscription for user: {}", user.getEmail(), e);
-            return ResponseEntity.internalServerError().build();
-        }
+        subscriptionService.cancelSubscription(user);
+        return ResponseEntity.ok().build();
     }
 
     @PostMapping("/resume")
     public ResponseEntity<Void> resumeSubscription(
             @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        log.info("SECURITY: Resume requested for user: {}", userDetails.getUsername());
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Resume requested for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
         
-        try {
-            subscriptionService.resumeSubscription(user);
-            return ResponseEntity.ok().build();
-        } catch (Exception e) {
-            log.error("SECURITY: Failed to resume subscription for user: {}", user.getEmail(), e);
-            return ResponseEntity.internalServerError().build();
-        }
+        subscriptionService.resumeSubscription(user);
+        return ResponseEntity.ok().build();
     }
 }

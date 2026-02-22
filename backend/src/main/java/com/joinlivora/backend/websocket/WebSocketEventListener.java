@@ -1,5 +1,6 @@
 package com.joinlivora.backend.websocket;
 
+import com.joinlivora.backend.analytics.AnalyticsEventType;
 import com.joinlivora.backend.analytics.DomainAnalyticsEvent;
 import com.joinlivora.backend.user.Role;
 import com.joinlivora.backend.user.User;
@@ -9,14 +10,18 @@ import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.Map;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WebSocketEventListener {
 
     private final SimpMessagingTemplate messagingTemplate;
+
+    public WebSocketEventListener(@org.springframework.context.annotation.Lazy SimpMessagingTemplate messagingTemplate) {
+        this.messagingTemplate = messagingTemplate;
+    }
 
     @EventListener
     public void handleDomainAnalyticsEvent(DomainAnalyticsEvent event) {
@@ -52,17 +57,27 @@ public class WebSocketEventListener {
     }
 
     private void broadcastTipToRoom(DomainAnalyticsEvent event, RealtimeMessage message) {
-        if (event.getEventType() == com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_SUCCEEDED) {
+        if (event.getEventType() == AnalyticsEventType.PAYMENT_SUCCEEDED) {
             Map<String, Object> metadata = event.getMetadata();
-            if ("tip".equals(metadata.get("type"))) {
+            if ("tip".equals(metadata.get("type")) && metadata.get("roomId") != null) {
                 String roomId = String.valueOf(metadata.get("roomId"));
-                long amount = Long.parseLong(String.valueOf(metadata.get("amount")));
+                long amount = 0;
+                Object amountObj = metadata.get("amount");
+                if (amountObj instanceof Number n) {
+                    amount = n.longValue();
+                } else if (amountObj != null) {
+                    try {
+                        amount = new java.math.BigDecimal(String.valueOf(amountObj)).longValue();
+                    } catch (Exception e) {
+                        log.warn("WebSocket: Could not parse amount: {}", amountObj);
+                    }
+                }
                 
                 RealtimeMessage tipBroadcast = RealtimeMessage.builder()
                         .type("ROOM_TIP")
-                        .timestamp(java.time.Instant.now())
+                        .timestamp(Instant.now())
                         .payload(Map.of(
-                                "username", event.getUser().getEmail().split("@")[0],
+                                "senderEmail", event.getUser() != null ? event.getUser().getEmail().split("@")[0] : "Anonymous",
                                 "amount", amount,
                                 "animationType", getAnimationForAmount(amount)
                         ))
@@ -80,7 +95,7 @@ public class WebSocketEventListener {
         return "coin";
     }
 
-    private String getDestinationForEventType(com.joinlivora.backend.analytics.AnalyticsEventType type) {
+    private String getDestinationForEventType(AnalyticsEventType type) {
         return switch (type) {
             case PAYMENT_SUCCEEDED, PAYMENT_FAILED -> "/queue/payments";
             case SUBSCRIPTION_STARTED, SUBSCRIPTION_CANCELED -> "/queue/subscription";
@@ -90,29 +105,29 @@ public class WebSocketEventListener {
     }
 
     @EventListener
-    public void handleSubscriptionLost(com.joinlivora.backend.analytics.DomainAnalyticsEvent event) {
-        if (event.getEventType() == com.joinlivora.backend.analytics.AnalyticsEventType.SUBSCRIPTION_CANCELED || 
-            event.getEventType() == com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_FAILED) {
+    public void handleSubscriptionLost(DomainAnalyticsEvent event) {
+        if (event.getEventType() == AnalyticsEventType.SUBSCRIPTION_CANCELED || 
+            event.getEventType() == AnalyticsEventType.PAYMENT_FAILED) {
             
-            log.info("SECURITY: Subscription lost for user {}, checking if watching any premium stream", event.getUser().getEmail());
-            // In a real system, we'd find all active rooms and if the user is a viewer, send a kill signal.
-            // For now, we broadcast an ACCESS_DENIED signaling message to the user's webrtc queue.
+            log.info("SECURITY: Subscription lost for creator {}, checking if watching any premium stream", event.getUser().getEmail());
+            // In a real system, we'd find all active rooms and if the creator is a viewer, send a kill signal.
+            // For now, we broadcast an ACCESS_DENIED signaling message to the creator's webrtc queue.
             messagingTemplate.convertAndSendToUser(
                 event.getUser().getEmail(),
                 "/queue/webrtc",
                 RealtimeMessage.builder()
                     .type("ACCESS_DENIED")
-                    .timestamp(java.time.Instant.now())
-                    .payload(java.util.Map.of("message", "Subscription expired. Stream access revoked."))
+                    .timestamp(Instant.now())
+                    .payload(Map.of("message", "Subscription expired. Stream access revoked."))
                     .build()
             );
         }
     }
 
     private void broadcastToAdmins(DomainAnalyticsEvent event, RealtimeMessage message) {
-        com.joinlivora.backend.analytics.AnalyticsEventType type = event.getEventType();
-        if (type == com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_SUCCEEDED || 
-            type == com.joinlivora.backend.analytics.AnalyticsEventType.SUBSCRIPTION_STARTED) {
+        AnalyticsEventType type = event.getEventType();
+        if (type == AnalyticsEventType.PAYMENT_SUCCEEDED || 
+            type == AnalyticsEventType.SUBSCRIPTION_STARTED) {
             messagingTemplate.convertAndSend("/topic/admin/payments", message);
             messagingTemplate.convertAndSend("/topic/admin/metrics", Map.of(
                     "event", type.name(),

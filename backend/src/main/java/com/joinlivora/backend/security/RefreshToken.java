@@ -26,7 +26,7 @@ public class RefreshToken {
     private User user;
 
     @Column(nullable = false)
-    private Instant expiresAt;
+    private Instant expiryDate;
 
     @Column(nullable = false)
     private boolean revoked;
@@ -62,12 +62,12 @@ public class RefreshToken {
         this.user = user;
     }
 
-    public Instant getExpiresAt() {
-        return expiresAt;
+    public Instant getExpiryDate() {
+        return expiryDate;
     }
 
-    public void setExpiresAt(Instant expiresAt) {
-        this.expiresAt = expiresAt;
+    public void setExpiryDate(Instant expiryDate) {
+        this.expiryDate = expiryDate;
     }
 
     public boolean isRevoked() {

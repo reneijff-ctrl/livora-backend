@@ -1,104 +1,96 @@
 import apiClient from './apiClient';
+import { LoginResponse, User } from '../types';
+import { setAccessToken, setRefreshToken, clearTokens } from '../auth/jwt';
+import { adaptCreator } from '../adapters/CreatorAdapter';
 
 /**
- * Role types as defined in the backend.
+ * AuthService provides methods for authentication and user session management.
+ * It uses the centralized Axios instance and stores the JWT in localStorage.
  */
-export type Role = 'USER' | 'PREMIUM' | 'ADMIN' | 'CREATOR';
 
-/**
- * User interface.
- */
-export interface User {
-  id: string;
-  email: string;
-  role: Role;
-  subscription: {
-    status: 'NONE' | 'FREE' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED';
-    renewalDate: string | null;
-  };
-}
-
-/**
- * Response for the /auth/me endpoint.
- */
-export interface UserResponse extends User {}
-
-/**
- * Request for login.
- */
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-/**
- * Request for register.
- */
-export interface RegisterRequest {
-  email: string;
-  password: string;
-}
-
-/**
- * Response for auth actions (login, refresh).
- */
-export interface AuthResponse {
-  accessToken: string;
-  message: string;
-}
-
-/**
- * Authentication API service.
- * 
- * Provides methods for:
- * - Login
- * - Registration
- * - Token Refresh
- * - Logout
- * - Get current user info
- */
-const authService = {
-  /**
-   * Performs login.
-   * Credentials (access/refresh tokens) are handled via HTTP-only cookies by the backend.
-   */
-  async login(data: LoginRequest): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/login', data);
-    return response.data;
-  },
-
-  /**
-   * Registers a new user.
-   */
-  async register(data: RegisterRequest): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/register', data);
-    return response.data;
-  },
-
-  /**
-   * Refreshes the authentication tokens.
-   * Expects the refreshToken cookie to be present.
-   */
-  async refresh(): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/refresh');
-    return response.data;
-  },
-
-  /**
-   * Logs out the user and clears authentication cookies.
-   */
-  async logout(): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/logout');
-    return response.data;
-  },
-
-  /**
-   * Retrieves the current authenticated user's information.
-   */
-  async getMe(): Promise<UserResponse> {
-    const response = await apiClient.get<UserResponse>('/auth/me');
-    return response.data;
-  },
+export const login = async (email: string, password: string): Promise<LoginResponse> => {
+  const response = await apiClient.post<LoginResponse>('/api/auth/login', { email, password });
+  if (response.data) {
+    if (response.data.token) {
+      setAccessToken(response.data.token);
+    }
+    if (response.data.refreshToken) {
+      setRefreshToken(response.data.refreshToken);
+    }
+  }
+  return response.data;
 };
 
-export default authService;
+export const logout = async (): Promise<void> => {
+  try {
+    // Attempt to notify backend to clear refresh token cookie
+    await apiClient.post('/api/auth/logout');
+  } catch (error) {
+    console.warn('Backend logout failed or session already expired', error);
+  } finally {
+    // Always clear local storage tokens
+    clearTokens();
+  }
+};
+
+export const getCurrentUser = async (): Promise<User> => {
+  const response = await apiClient.get<User>('/api/auth/me');
+  const user = response.data;
+  
+  if (user) {
+    // Ensure ID is a string if backend returns a number
+    if (typeof user.id === 'number') {
+      user.id = (user.id as number).toString();
+    }
+    
+    // Normalize role: USER -> VIEWER
+    if (user.role === ('USER' as any)) {
+      user.role = 'VIEWER';
+    }
+
+    // Adapt creator profile if present
+    if (user.creatorProfile) {
+      user.creatorProfile = adaptCreator(user.creatorProfile);
+    }
+  }
+  
+  return user;
+};
+
+export const register = async (data: { email: string; password: string }): Promise<{ message: string }> => {
+  const response = await apiClient.post<{ message: string }>('/api/auth/register', data);
+  return response.data;
+};
+
+export const verifyEmail = async (token: string): Promise<{ message: string }> => {
+  const response = await apiClient.post<{ message: string }>(`/api/auth/verify-email?token=${token}`);
+  return response.data;
+};
+
+export const resendVerification = async (): Promise<{ message: string }> => {
+  const response = await apiClient.post<{ message: string }>('/api/auth/resend-verification');
+  return response.data;
+};
+
+export const refreshToken = async (token: string): Promise<{ accessToken: string; refreshToken: string }> => {
+  const response = await apiClient.post<{ accessToken: string; refreshToken: string }>('/api/auth/refresh', { refreshToken: token });
+  if (response.data) {
+    setAccessToken(response.data.accessToken);
+    if (response.data.refreshToken) {
+      setRefreshToken(response.data.refreshToken);
+    }
+  }
+  return response.data;
+};
+
+const AuthService = {
+  login,
+  logout,
+  getCurrentUser,
+  register,
+  verifyEmail,
+  resendVerification,
+  refreshToken,
+};
+
+export default AuthService;

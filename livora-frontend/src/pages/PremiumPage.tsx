@@ -2,7 +2,7 @@ import React from 'react';
 import { useAuth } from '../auth/useAuth';
 import { Link } from 'react-router-dom';
 import SEO from '../components/SEO';
-import LiveChat from '../components/LiveChat';
+import GlobalChat from '../components/GlobalChat';
 
 const PremiumPage: React.FC = () => {
   const { user } = useAuth();
@@ -15,7 +15,7 @@ const PremiumPage: React.FC = () => {
       
       <div style={{ marginTop: '2rem', maxWidth: '800px' }}>
         <h2>Premium Live Chat</h2>
-        <LiveChat />
+        <GlobalChat />
       </div>
 
       <div style={{ marginTop: '2rem' }}>

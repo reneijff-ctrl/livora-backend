@@ -27,7 +27,7 @@ public class DataInitializer {
 
                 userRepository.save(user);
 
-                System.out.println("✅ Test user created: test@test.com / password");
+                System.out.println("✅ Test creator created: test@test.com / password");
             }
 
             if (userRepository.findByEmail("admin@test.com").isEmpty()) {
@@ -36,7 +36,7 @@ public class DataInitializer {
                 admin.setPassword(passwordEncoder.encode("password"));
                 admin.setRole(Role.ADMIN);
                 userRepository.save(admin);
-                System.out.println("✅ Admin user created: admin@test.com / password");
+                System.out.println("✅ Admin creator created: admin@test.com / password");
             }
         };
     }

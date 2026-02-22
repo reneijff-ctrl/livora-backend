@@ -7,10 +7,10 @@ import { showToast } from '../components/Toast';
 import { Link } from 'react-router-dom';
 
 const SubscriptionPage: React.FC = () => {
-  const { isAuthenticated, isLoading, hasPremiumAccess, subscriptionStatus } = useAuth();
+  const { isInitialized, hasPremiumAccess, subscriptionStatus } = useAuth();
   const [isProcessing, setIsProcessing] = useState(false);
 
-  if (isLoading) {
+  if (!isInitialized) {
     return <Loader type="skeleton" />;
   }
 
@@ -35,66 +35,62 @@ const SubscriptionPage: React.FC = () => {
     }
   };
 
-  if (!isLoading && !isAuthenticated) {
-    window.location.href = '/login';
-    return null;
-  }
 
   return (
-    <div style={{ padding: '4rem 2rem', maxWidth: '600px', margin: '0 auto', fontFamily: 'sans-serif', textAlign: 'center' }}>
+    <div style={{ padding: '4rem 2rem', maxWidth: '600px', margin: '0 auto', fontFamily: 'system-ui, -apple-system, sans-serif', textAlign: 'center', color: '#F4F4F5' }}>
       <SEO title="Upgrade to Premium" canonical="/subscription" />
       
       {hasPremiumAccess() ? (
         <div>
-          <div style={{ fontSize: '4rem', marginBottom: '1rem' }}>✨</div>
-          <h1>You're a Premium Member!</h1>
-          <p style={{ color: '#666', marginBottom: '2rem' }}>
-            Thank you for supporting Livora. Your subscription status is: <strong>{subscriptionStatus}</strong>
+          <div style={{ fontSize: '4rem', marginBottom: '1.5rem' }}>✨</div>
+          <h1 style={{ fontWeight: 800, marginBottom: '1rem' }}>You're a Premium Member!</h1>
+          <p style={{ color: '#71717A', marginBottom: '2.5rem', fontSize: '1.1rem' }}>
+            Thank you for supporting Livora. Your subscription status is: <strong style={{ color: '#10b981' }}>{subscriptionStatus}</strong>
           </p>
-          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <Link to="/dashboard" style={{ color: '#6772e5', textDecoration: 'none', fontWeight: 'bold' }}>Dashboard</Link>
-            <Link to="/billing" style={{ color: '#6772e5', textDecoration: 'none', fontWeight: 'bold' }}>Manage Billing</Link>
+          <div style={{ display: 'flex', gap: '1.25rem', justifyContent: 'center' }}>
+            <Link to="/dashboard" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 'bold' }}>Dashboard</Link>
+            <Link to="/billing" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 'bold' }}>Manage Billing</Link>
           </div>
         </div>
       ) : (
         <>
-          <h1>Upgrade to Premium</h1>
-          <p style={{ color: '#666', marginBottom: '2rem' }}>
+          <h1 style={{ fontWeight: 800, marginBottom: '1rem' }}>Upgrade to Premium</h1>
+          <p style={{ color: '#71717A', marginBottom: '3rem', fontSize: '1.1rem' }}>
             Get unlimited access to all premium content, priority support, and an ad-free experience.
           </p>
           
           <div style={{ 
-            padding: '3rem 2rem', 
-            border: '2px solid #6772e5', 
-            borderRadius: '12px', 
-            backgroundColor: '#fff',
-            boxShadow: '0 4px 12px rgba(103, 114, 229, 0.1)'
+            padding: '4rem 2rem', 
+            border: '1px solid rgba(255, 255, 255, 0.05)', 
+            borderRadius: '24px', 
+            backgroundColor: '#0F0F14',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.6)'
           }}>
-            <h3 style={{ color: '#6772e5', marginTop: 0 }}>Premium Monthly</h3>
-            <p style={{ fontSize: '2.5rem', fontWeight: 'bold', margin: '1rem 0' }}>€9.99<span style={{ fontSize: '1rem', color: '#666' }}>/month</span></p>
+            <h3 style={{ color: '#6366f1', marginTop: 0, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Premium Monthly</h3>
+            <p style={{ fontSize: '3.5rem', fontWeight: '800', margin: '1.5rem 0', color: '#F4F4F5' }}>€9.99<span style={{ fontSize: '1.25rem', color: '#71717A', fontWeight: 500 }}>/month</span></p>
             
             <ul style={{ listStyle: 'none', padding: 0, margin: '2rem 0', textAlign: 'left', display: 'inline-block' }}>
-              <li>✅ Full access to all content</li>
-              <li>✅ Priority customer support</li>
-              <li>✅ No advertisements</li>
+              <li style={{ marginBottom: '0.75rem', color: '#A1A1AA' }}>✅ Full access to all content</li>
+              <li style={{ marginBottom: '0.75rem', color: '#A1A1AA' }}>✅ Priority customer support</li>
+              <li style={{ marginBottom: '0.75rem', color: '#A1A1AA' }}>✅ No advertisements</li>
             </ul>
 
             <button
               onClick={handleSubscribe}
               disabled={isProcessing}
               style={{
-                padding: '14px 30px',
-                fontSize: '1.1rem',
-                fontWeight: 'bold',
-                backgroundColor: isProcessing ? '#aab1f0' : '#6772e5',
+                padding: '1rem 2rem',
+                fontSize: '1.125rem',
+                fontWeight: '800',
+                backgroundColor: '#6366f1',
                 color: 'white',
                 border: 'none',
-                borderRadius: '6px',
+                borderRadius: '12px',
                 cursor: isProcessing ? 'not-allowed' : 'pointer',
-                opacity: isProcessing ? 0.7 : 1,
                 width: '100%',
                 marginTop: '1rem',
-                transition: 'all 0.2s ease'
+                transition: 'all 0.2s ease',
+                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
               }}
             >
               {isProcessing ? (
@@ -113,8 +109,8 @@ const SubscriptionPage: React.FC = () => {
             </button>
           </div>
           
-          <div style={{ marginTop: '2rem' }}>
-            <Link to="/dashboard" style={{ color: '#666', textDecoration: 'none' }}>Back to Dashboard</Link>
+          <div style={{ marginTop: '3rem' }}>
+            <Link to="/dashboard" style={{ color: '#71717A', textDecoration: 'none', fontWeight: '600' }}>Back to Dashboard</Link>
           </div>
         </>
       )}

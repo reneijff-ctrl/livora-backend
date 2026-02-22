@@ -2,16 +2,17 @@ import React from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from './useAuth';
 import Loader from '../components/Loader';
+import { Role } from '../types';
 
 interface RoleGuardProps {
-  allowedRoles: Array<'USER' | 'PREMIUM' | 'ADMIN' | 'CREATOR'>;
+  allowedRoles: Role[];
 }
 
 const RoleGuard: React.FC<RoleGuardProps> = ({ allowedRoles }) => {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isInitialized } = useAuth();
   const location = useLocation();
 
-  if (isLoading) {
+  if (!isInitialized) {
     return <Loader />;
   }
 

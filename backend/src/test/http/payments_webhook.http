@@ -3,7 +3,7 @@
 # the endpointSecret matches the one used to generate the header.
 # This test is primarily for verifying endpoint accessibility and payload structure.
 
-POST http://localhost:8080/api/payments/webhook/stripe
+POST http://localhost:8080/webhooks/stripe
 Content-Type: application/json
 Stripe-Signature: t=1611234567,v1=6a328965649987f2e123456789abcdef0123456789abcdef0123456789abcdef
 

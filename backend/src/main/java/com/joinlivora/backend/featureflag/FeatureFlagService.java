@@ -22,11 +22,11 @@ public class FeatureFlagService {
     private final FeatureFlagRepository repository;
 
     /**
-     * Evaluates a feature flag for a specific user.
+     * Evaluates a feature flag for a specific creator.
      * 
      * @param key The feature flag key.
-     * @param user The user to evaluate the flag for (nullable).
-     * @return true if the feature is enabled for the user, false otherwise.
+     * @param user The creator to evaluate the flag for (nullable).
+     * @return true if the feature is enabled for the creator, false otherwise.
      */
     public boolean isEnabled(String key, User user) {
         try {

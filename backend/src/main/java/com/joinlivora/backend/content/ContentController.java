@@ -5,6 +5,7 @@ import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -15,7 +16,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/content")
+@RequestMapping({"/api/content", "/api/auth/content"})
 @RequiredArgsConstructor
 @Slf4j
 public class ContentController {
@@ -26,6 +27,7 @@ public class ContentController {
     private final com.joinlivora.backend.payment.SubscriptionService subscriptionService;
 
     @GetMapping("/public")
+    @Cacheable("publicContent")
     public List<ContentResponse> getPublicContent() {
         return contentService.getPublicContent().stream()
                 .map(this::mapToResponse)

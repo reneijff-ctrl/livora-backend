@@ -5,10 +5,12 @@ import com.stripe.exception.StripeException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.actuate.health.Health;
 import org.springframework.boot.actuate.health.HealthIndicator;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "management.health.stripe.enabled", havingValue = "true", matchIfMissing = true)
 public class StripeHealthIndicator implements HealthIndicator {
 
     private final StripeClient stripeClient;

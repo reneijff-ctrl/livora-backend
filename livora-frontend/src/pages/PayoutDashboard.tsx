@@ -6,16 +6,19 @@ import SEO from '../components/SEO';
 import { Link } from 'react-router-dom';
 
 const PayoutDashboard: React.FC = () => {
-  const { user, tokenBalance } = useAuth();
+  const { tokenBalance, user, authLoading } = useAuth();
   const [account, setAccount] = useState<StripeAccount | null>(null);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [loading, setLoading] = useState(true);
-  const [payoutAmount, setPayoutAmount] = useState<number>(5000);
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
+    // Requirement: Do NOT fetch dashboard data until role is resolved
+    if (!user || authLoading) {
+      return;
+    }
     fetchData();
-  }, []);
+  }, [user, authLoading]);
 
   const fetchData = async () => {
     try {
@@ -36,30 +39,14 @@ const PayoutDashboard: React.FC = () => {
   const handleStartOnboarding = async () => {
     setIsProcessing(true);
     try {
-      const { redirectUrl } = await payoutService.startOnboarding();
-      window.location.href = redirectUrl;
+      const { onboardingUrl } = await payoutService.startOnboarding();
+      window.location.href = onboardingUrl;
     } catch (error) {
       showToast('Failed to start onboarding', 'error');
       setIsProcessing(false);
     }
   };
 
-  const handleRequestPayout = async () => {
-    if (payoutAmount < 5000) {
-      showToast('Minimum payout is 5000 tokens', 'error');
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      await payoutService.requestPayout(payoutAmount);
-      showToast('Payout request submitted!', 'success');
-      fetchData();
-    } catch (error: any) {
-      // Error handled by interceptor
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   if (loading) return <div style={{ padding: '2rem' }}>Loading Payout Dashboard...</div>;
 
@@ -100,33 +87,10 @@ const PayoutDashboard: React.FC = () => {
         </div>
 
         <div style={{ padding: '1.5rem', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f0f7ff' }}>
-          <h3>Request Payout</h3>
+          <h3>Automatic Payouts</h3>
+          <p>Payouts are processed automatically every day at 03:00 UTC for all eligible creators who meet their minimum payout threshold.</p>
           <p>Available Balance: <strong>{tokenBalance} tokens</strong></p>
-          <div style={{ display: 'flex', gap: '10px', marginTop: '1rem' }}>
-            <input 
-              type="number" 
-              value={payoutAmount} 
-              onChange={(e) => setPayoutAmount(parseInt(e.target.value))}
-              min="5000"
-              style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
-            />
-            <button 
-              onClick={handleRequestPayout}
-              disabled={isProcessing || !account?.payoutsEnabled || tokenBalance < payoutAmount}
-              style={{ 
-                padding: '10px 20px', 
-                backgroundColor: '#4caf50', 
-                color: 'white', 
-                border: 'none', 
-                borderRadius: '4px', 
-                cursor: (isProcessing || !account?.payoutsEnabled) ? 'not-allowed' : 'pointer',
-                opacity: (isProcessing || !account?.payoutsEnabled) ? 0.6 : 1
-              }}
-            >
-              Request {payoutAmount * 0.01} EUR
-            </button>
-          </div>
-          <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>* 1 token = 0.01 EUR. Min 5000 tokens.</p>
+          <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.5rem' }}>* Ensure your Stripe account is connected and payouts are enabled to receive funds.</p>
         </div>
       </div>
 
@@ -143,11 +107,19 @@ const PayoutDashboard: React.FC = () => {
           </thead>
           <tbody>
             {payouts.length === 0 ? (
-              <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center' }}>No payouts yet.</td></tr>
+              <tr>
+                <td colSpan={4} style={{ padding: '3rem', textAlign: 'center' }}>
+                  <div style={{ color: '#666', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <span style={{ fontSize: '2rem', marginBottom: '1rem' }}>🏦</span>
+                    <p style={{ fontWeight: '600', margin: 0 }}>No payouts yet</p>
+                    <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>Completed payouts will be listed here.</p>
+                  </div>
+                </td>
+              </tr>
             ) : (
               payouts.map(p => (
                 <tr key={p.id} style={{ borderBottom: '1px solid #f9f9f9' }}>
-                  <td style={{ padding: '12px' }}>{new Date(p.createdAt).toLocaleDateString()}</td>
+                  <td style={{ padding: '12px' }}>{p.createdAt ? new Date(p.createdAt).toLocaleDateString() : 'N/A'}</td>
                   <td style={{ padding: '12px' }}>{p.tokenAmount}</td>
                   <td style={{ padding: '12px' }}>€{p.eurAmount.toFixed(2)}</td>
                   <td style={{ padding: '12px' }}>

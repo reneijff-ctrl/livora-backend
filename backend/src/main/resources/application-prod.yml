@@ -17,6 +17,7 @@ spring:
 
 server:
   port: 8080
+  address: 0.0.0.0
   forward-headers-strategy: native
   # HTTPS is handled by reverse proxy, but Spring needs to know to trust headers
   tomcat:
@@ -29,6 +30,18 @@ security:
     secret: ${JWT_SECRET}
   cookie:
     secure: true
+
+  mail:
+    host: ${MAIL_HOST}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 management:
   endpoints:

@@ -1,9 +1,9 @@
 package com.joinlivora.backend.streaming;
 
 import com.joinlivora.backend.token.TokenService;
-import com.joinlivora.backend.token.TransactionReason;
+import com.joinlivora.backend.wallet.WalletTransactionType;
 import com.joinlivora.backend.user.User;
-import com.joinlivora.backend.payout.MonetizationService;
+import com.joinlivora.backend.payout.CreatorEarningsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -21,7 +21,7 @@ public class BadgeService {
     private final BadgeRepository badgeRepository;
     private final UserBadgeRepository userBadgeRepository;
     private final TokenService tokenService;
-    private final MonetizationService monetizationService;
+    private final CreatorEarningsService creatorEarningsService;
 
     public List<Badge> getAllBadges() {
         return badgeRepository.findAll();
@@ -33,12 +33,12 @@ public class BadgeService {
                 .orElseThrow(() -> new RuntimeException("Badge not found"));
 
         // 1. Deduct tokens
-        tokenService.deductTokens(user, badge.getTokenCost(), TransactionReason.BADGE, "Purchase badge: " + badge.getName());
+        tokenService.deductTokens(user, badge.getTokenCost(), WalletTransactionType.BADGE, "Purchase badge: " + badge.getName());
 
-        // 2. Record creator earning (simplified: platform takes all or split if it's creator-specific badges)
-        // For now, let's assume badges are platform-wide but revenue goes to creator if it's a specific creator badge
+        // 2. Record creatorUserId earning (simplified: platform takes all or split if it's creatorUserId-specific badges)
+        // For now, let's assume badges are platform-wide but revenue goes to creatorUserId if it's a specific creatorUserId badge
         // Here we just record it as a general transaction if not specified.
-        // monetizationService.recordBadgeEarning(...)
+        // creatorEarningsService.recordBadgeEarning(...)
 
         // 3. Assign badge
         Instant expiresAt = null;

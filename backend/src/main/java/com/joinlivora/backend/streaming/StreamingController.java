@@ -2,6 +2,7 @@ package com.joinlivora.backend.streaming;
 
 import com.joinlivora.backend.payment.SubscriptionService;
 import com.joinlivora.backend.payment.dto.SubscriptionResponse;
+import com.joinlivora.backend.streaming.service.LiveAccessService;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,6 @@ import java.util.Map;
 import java.util.UUID;
 
 @Controller
-@RequiredArgsConstructor
 @Slf4j
 public class StreamingController {
 
@@ -27,6 +27,22 @@ public class StreamingController {
     private final SubscriptionService subscriptionService;
     private final SimpMessagingTemplate messagingTemplate;
     private final StreamService streamService;
+    private final LiveAccessService liveAccessService;
+
+    public StreamingController(
+            StreamRoomRepository roomRepository,
+            UserService userService,
+            SubscriptionService subscriptionService,
+            @org.springframework.context.annotation.Lazy SimpMessagingTemplate messagingTemplate,
+            StreamService streamService,
+            LiveAccessService liveAccessService) {
+        this.roomRepository = roomRepository;
+        this.userService = userService;
+        this.subscriptionService = subscriptionService;
+        this.messagingTemplate = messagingTemplate;
+        this.streamService = streamService;
+        this.liveAccessService = liveAccessService;
+    }
 
     @MessageMapping("/webrtc/join")
     public void joinRoom(@Payload SignalingMessage message, Principal principal) {
@@ -49,6 +65,16 @@ public class StreamingController {
             }
         }
 
+        // Paid stream access check
+        if (room.isPaid()) {
+            if (!liveAccessService.hasAccess(room.getCreator().getId(), user.getId())) {
+                log.warn("SECURITY: User {} denied access to paid room {}", email, room.getId());
+                sendError(email, SignalingMessage.Type.ACCESS_DENIED, "Paid access required");
+                return;
+            }
+        }
+
+        log.info("Viewer incremented for creator {} by viewer {}", room.getCreator().getId(), user.getId());
         log.info("User {} joined room {}", email, room.getId());
         streamService.updateViewerCount(room.getId(), 1);
         
@@ -87,9 +113,9 @@ public class StreamingController {
     public void startStream(@Payload SignalingMessage message, Principal principal) {
         String email = principal.getName();
         StreamRoom room = roomRepository.findByCreatorEmail(email)
-                .orElseThrow(() -> new RuntimeException("Room not found for creator"));
+                .orElseThrow(() -> new RuntimeException("Room not found for creatorUserId"));
 
-        room.setLive(true);
+        // room.setLive(true); // Removed as per instructions
         room.setStartedAt(Instant.now());
         roomRepository.save(room);
 
@@ -101,35 +127,16 @@ public class StreamingController {
     @MessageMapping("/webrtc/stop")
     public void stopStream(@Payload SignalingMessage message, Principal principal) {
         String email = principal.getName();
-        StreamRoom room = roomRepository.findByCreatorEmail(email)
-                .orElseThrow(() -> new RuntimeException("Room not found for creator"));
-
-        room.setLive(false);
-        roomRepository.save(room);
-
+        User creator = userService.getByEmail(email);
+        streamService.stopStream(creator);
         log.info("Stream stopped by {}", email);
-        messagingTemplate.convertAndSend("/topic/streams", 
-            SignalingMessage.builder().type(SignalingMessage.Type.STREAM_STOP).roomId(room.getId()).build());
     }
 
     @MessageMapping("/admin/stream/stop")
     @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
     public void adminStopStream(@Payload SignalingMessage message, Principal principal) {
-        StreamRoom room = roomRepository.findById(message.getRoomId())
-                .orElseThrow(() -> new RuntimeException("Room not found"));
-
-        room.setLive(false);
-        roomRepository.save(room);
-
-        log.info("ADMIN: Stream room {} force-stopped by {}", room.getId(), principal.getName());
-        
-        // Notify creator
-        messagingTemplate.convertAndSendToUser(room.getCreator().getEmail(), "/queue/webrtc", 
-            SignalingMessage.builder().type(SignalingMessage.Type.ERROR).message("Your stream was stopped by an administrator.").build());
-        
-        // Notify everyone
-        messagingTemplate.convertAndSend("/topic/streams", 
-            SignalingMessage.builder().type(SignalingMessage.Type.STREAM_STOP).roomId(room.getId()).build());
+        streamService.closeRoom(message.getRoomId());
+        log.info("ADMIN: Stream room {} force-stopped by {}", message.getRoomId(), principal.getName());
     }
 
     private void forwardSignaling(SignalingMessage message, String senderEmail) {

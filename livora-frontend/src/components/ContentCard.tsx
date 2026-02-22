@@ -3,6 +3,8 @@ import { ContentItem } from '../api/contentService';
 import { useAuth } from '../auth/useAuth';
 import { Link } from 'react-router-dom';
 
+import ImageWithFallback from '@/components/ImageWithFallback';
+
 interface ContentCardProps {
   content: ContentItem;
 }
@@ -30,8 +32,8 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
       flexDirection: 'column'
     }}>
       <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', backgroundColor: '#eee' }}>
-        <img 
-          src={content.thumbnailUrl || 'https://via.placeholder.com/320x180?text=No+Thumbnail'} 
+        <ImageWithFallback 
+          src={content.thumbnailUrl || undefined} 
           alt={content.title}
           style={{ 
             position: 'absolute', 
@@ -42,6 +44,23 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
             objectFit: 'cover',
             filter: locked ? 'blur(4px) grayscale(50%)' : 'none'
           }}
+          fallback={
+            <div style={{
+              position: 'absolute', 
+              top: 0, 
+              left: 0, 
+              width: '100%', 
+              height: '100%', 
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#2d2d39',
+              color: '#666',
+              fontSize: '0.875rem'
+            }}>
+              No Thumbnail
+            </div>
+          }
         />
         {locked && (
           <div style={{ 
@@ -74,7 +93,7 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
             {content.accessLevel}
           </span>
           <span style={{ fontSize: '0.75rem', color: '#666' }}>
-            {new Date(content.createdAt).toLocaleDateString()}
+            {content.createdAt ? new Date(content.createdAt).toLocaleDateString() : 'N/A'}
           </span>
         </div>
         <h3 style={{ margin: '0.5rem 0', fontSize: '1.1rem' }}>{content.title}</h3>

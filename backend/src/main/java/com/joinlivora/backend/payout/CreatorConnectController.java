@@ -27,14 +27,14 @@ public class CreatorConnectController {
 
     @PostMapping("/start")
     public ResponseEntity<?> startOnboarding(@AuthenticationPrincipal UserDetails userDetails) {
-        log.info("SECURITY: Creator onboarding started for user: {}", userDetails.getUsername());
+        log.info("SECURITY: Creator onboarding started for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
         
         try {
             String onboardingUrl = creatorConnectService.createOnboardingLink(user);
             return ResponseEntity.ok(Map.of("redirectUrl", onboardingUrl));
         } catch (Exception e) {
-            log.error("SECURITY: Failed to start creator onboarding for user: {}", user.getEmail(), e);
+            log.error("SECURITY: Failed to start creatorUserId onboarding for creator: {}", user.getEmail(), e);
             return ResponseEntity.internalServerError().body(Map.of("message", "Failed to start onboarding"));
         }
     }

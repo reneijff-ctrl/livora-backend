@@ -1,7 +1,9 @@
 package com.joinlivora.backend.streaming;
 
+import com.joinlivora.backend.audit.service.AuditService;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +27,7 @@ public class AdminStreamController {
     private final UserService userService;
     private final BadgeService badgeService;
     private final BadgeRepository badgeRepository;
+    private final AuditService auditService;
 
     @GetMapping
     public ResponseEntity<List<StreamRoom>> getAllStreams() {
@@ -32,9 +35,25 @@ public class AdminStreamController {
     }
 
     @PostMapping("/{id}/stop")
-    public ResponseEntity<Void> forceStopStream(@PathVariable UUID id) {
+    public ResponseEntity<Void> forceStopStream(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal UserDetails adminDetails,
+            HttpServletRequest request
+    ) {
         StreamRoom room = streamService.getRoom(id);
         streamService.stopStream(room.getCreator());
+        
+        User admin = userService.getByEmail(adminDetails.getUsername());
+        auditService.logEvent(
+                new UUID(0L, admin.getId()),
+                AuditService.CONTENT_TAKEDOWN,
+                "STREAM",
+                id,
+                Map.of("action", "force_stop", "creator", room.getCreator().getId()),
+                request.getRemoteAddr(),
+                request.getHeader("User-Agent")
+        );
+        
         return ResponseEntity.ok().build();
     }
 

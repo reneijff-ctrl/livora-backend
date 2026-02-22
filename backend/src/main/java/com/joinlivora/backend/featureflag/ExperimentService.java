@@ -21,10 +21,10 @@ public class ExperimentService {
     private final AnalyticsEventPublisher analyticsEventPublisher;
 
     /**
-     * Gets the assigned variant for a user for a given experiment.
+     * Gets the assigned variant for a creator for a given experiment.
      * 
      * @param experimentKey The key of the experiment (must be a feature flag marked as experiment).
-     * @param user The user to assign a variant for.
+     * @param user The creator to assign a variant for.
      * @param funnelId Optional funnel ID for analytics.
      * @return "A", "B", or "CONTROL" if the experiment is disabled.
      */
@@ -38,7 +38,7 @@ public class ExperimentService {
             return "CONTROL";
         }
 
-        // If user is in rollout, assign A or B
+        // If creator is in rollout, assign A or B
         if (featureFlagService.isEnabled(experimentKey, user)) {
             String variant = assignVariant(user.getId().toString(), experimentKey);
             

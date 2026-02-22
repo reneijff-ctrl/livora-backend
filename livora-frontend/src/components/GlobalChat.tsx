@@ -1,41 +1,60 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth/useAuth';
 import webSocketService from '../websocket/webSocketService';
+import chatRoomService, { ChatRoomDto } from '../api/chatRoomService';
 import { showToast } from './Toast';
 
 interface ChatMessage {
-  id: string;
-  senderEmail: string;
-  content: string;
+  roomId: string;
+  sender: string;
+  message: string;
   timestamp: string;
-  roomType: 'PUBLIC' | 'PREMIUM';
+  systemMessage?: boolean;
 }
 
-const LiveChat: React.FC = () => {
+const GlobalChat: React.FC = () => {
   const { user, hasPremiumAccess } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [room, setRoom] = useState<'PUBLIC' | 'PREMIUM'>('PUBLIC');
+  const [rooms, setRooms] = useState<ChatRoomDto[]>([]);
+  const [activeRoom, setActiveRoom] = useState<ChatRoomDto | null>(null);
   const [onlineCount, setOnlineCount] = useState<number>(0);
+  const [isMuted, setIsMuted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const unsubPublic = webSocketService.subscribe('/topic/public', (msg) => {
-      if (room === 'PUBLIC') {
-        const data = JSON.parse(msg.body);
-        if (data.chatMessage) {
-          setMessages((prev) => [...prev, data.chatMessage]);
+    const loadRooms = async () => {
+      try {
+        const liveRooms = await chatRoomService.getLiveRooms();
+        setRooms(liveRooms);
+        const publicRoom = liveRooms.find(r => (r.name || '').toLowerCase() === 'public');
+        if (publicRoom) {
+          setActiveRoom(publicRoom);
+        } else if (liveRooms.length > 0) {
+          setActiveRoom(liveRooms[0]);
         }
+      } catch (e) {
+        console.error('Failed to load chat rooms', e);
       }
-    });
+    };
+    loadRooms();
+  }, []);
 
-    const unsubPremium = webSocketService.subscribe('/topic/premium', (msg) => {
-      if (room === 'PREMIUM') {
-        const data = JSON.parse(msg.body);
-        if (data.chatMessage) {
-          setMessages((prev) => [...prev, data.chatMessage]);
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    const unsubChat = webSocketService.subscribe(`/topic/chat/${activeRoom.id}`, (msg) => {
+      const data = JSON.parse(msg.body);
+      // New format is ChatMessageDto directly
+      const chatMsg: ChatMessage = data;
+
+      if (chatMsg.systemMessage) {
+        showToast(chatMsg.message, 'info');
+        if (chatMsg.message.includes('User muted') && user && chatMsg.message.includes(user.email)) {
+          setIsMuted(true);
         }
       }
+      setMessages((prev) => [...prev, chatMsg]);
     });
 
     const unsubPresence = webSocketService.subscribe('/topic/presence', (msg) => {
@@ -50,13 +69,23 @@ const LiveChat: React.FC = () => {
       showToast(data.payload?.message || 'WebSocket Error', 'error');
     });
 
+    const unsubNotifications = webSocketService.subscribe('/user/queue/notifications', (msg) => {
+      const data = JSON.parse(msg.body);
+      if (data.type === 'DISCONNECT') {
+        showToast(data.payload?.reason || 'Disconnected', 'error');
+      }
+    });
+
+    // Send join message
+    webSocketService.send('/app/chat.join', { roomId: activeRoom.id });
+
     return () => {
-      unsubPublic();
-      unsubPremium();
+      unsubChat();
       unsubPresence();
       unsubErrors();
+      unsubNotifications();
     };
-  }, [room]);
+  }, [activeRoom, user]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -64,18 +93,30 @@ const LiveChat: React.FC = () => {
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || !activeRoom) return;
 
-    if (room === 'PREMIUM' && !hasPremiumAccess()) {
+    if (((activeRoom.name || '').toLowerCase()) === 'premium' && !hasPremiumAccess()) {
       showToast('Premium access required for this room', 'error');
       return;
     }
 
     webSocketService.send('/app/chat.send', {
-      content: input,
-      roomType: room,
+      roomId: activeRoom.id,
+      message: input,
     });
     setInput('');
+  };
+
+  const switchRoom = (roomName: string) => {
+    const targetRoom = rooms.find(r => (r.name || '').toLowerCase() === (roomName || '').toLowerCase());
+    if (targetRoom) {
+      setActiveRoom(targetRoom);
+      setMessages([]);
+    }
+  };
+
+  const isPremiumLocked = (roomName: string) => {
+    return (roomName || '').toLowerCase() === 'premium' && !hasPremiumAccess();
   };
 
   return (
@@ -100,10 +141,10 @@ const LiveChat: React.FC = () => {
       }}>
         <div style={{ display: 'flex', gap: '1rem' }}>
           <button 
-            onClick={() => { setRoom('PUBLIC'); setMessages([]); }}
+            onClick={() => switchRoom('PUBLIC')}
             style={{ 
-              fontWeight: room === 'PUBLIC' ? 'bold' : 'normal',
-              color: room === 'PUBLIC' ? '#6772e5' : '#666',
+              fontWeight: activeRoom?.name === 'PUBLIC' ? 'bold' : 'normal',
+              color: activeRoom?.name === 'PUBLIC' ? '#6772e5' : '#666',
               border: 'none',
               background: 'none',
               cursor: 'pointer'
@@ -112,17 +153,17 @@ const LiveChat: React.FC = () => {
             Public Room
           </button>
           <button 
-            onClick={() => { setRoom('PREMIUM'); setMessages([]); }}
+            onClick={() => switchRoom('PREMIUM')}
             style={{ 
-              fontWeight: room === 'PREMIUM' ? 'bold' : 'normal',
-              color: room === 'PREMIUM' ? '#d4af37' : '#666',
+              fontWeight: activeRoom?.name === 'PREMIUM' ? 'bold' : 'normal',
+              color: activeRoom?.name === 'PREMIUM' ? '#d4af37' : '#666',
               border: 'none',
               background: 'none',
               cursor: 'pointer',
-              opacity: hasPremiumAccess() ? 1 : 0.5
+              opacity: isPremiumLocked('PREMIUM') ? 0.5 : 1
             }}
           >
-            Premium Room {!hasPremiumAccess() && '🔒'}
+            Premium Room {isPremiumLocked('PREMIUM') && '🔒'}
           </button>
         </div>
         <div style={{ fontSize: '0.8rem', color: '#28a745' }}>
@@ -132,18 +173,18 @@ const LiveChat: React.FC = () => {
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
         {messages.map((m, i) => (
-          <div key={m.id || i} style={{ marginBottom: '1rem', textAlign: m.senderEmail === user?.email ? 'right' : 'left' }}>
-            <div style={{ fontSize: '0.7rem', color: '#888' }}>{m.senderEmail}</div>
+          <div key={i} style={{ marginBottom: '1rem', textAlign: m.sender === user?.email ? 'right' : 'left' }}>
+            <div style={{ fontSize: '0.7rem', color: '#888' }}>{m.sender}</div>
             <div style={{ 
               display: 'inline-block', 
               padding: '0.5rem 1rem', 
               borderRadius: '12px', 
-              backgroundColor: m.senderEmail === user?.email ? '#6772e5' : '#e9ecef',
-              color: m.senderEmail === user?.email ? '#fff' : '#333',
+              backgroundColor: m.sender === user?.email ? '#6772e5' : '#e9ecef',
+              color: m.sender === user?.email ? '#fff' : '#333',
               maxWidth: '80%',
               wordBreak: 'break-word'
             }}>
-              {m.content}
+              {m.message}
             </div>
           </div>
         ))}
@@ -155,8 +196,8 @@ const LiveChat: React.FC = () => {
           type="text" 
           value={input} 
           onChange={(e) => setInput(e.target.value)} 
-          placeholder={room === 'PREMIUM' && !hasPremiumAccess() ? "Unlock premium to chat here..." : "Type a message..."}
-          disabled={room === 'PREMIUM' && !hasPremiumAccess()}
+          placeholder={isMuted ? "You are muted" : (activeRoom && isPremiumLocked(activeRoom.name) ? "Unlock premium to chat here..." : "Type a message...")}
+          disabled={isMuted || (activeRoom ? isPremiumLocked(activeRoom.name) : true)}
           style={{ 
             flex: 1, 
             padding: '0.5rem', 
@@ -166,7 +207,7 @@ const LiveChat: React.FC = () => {
         />
         <button 
           type="submit"
-          disabled={room === 'PREMIUM' && !hasPremiumAccess()}
+          disabled={isMuted || (activeRoom ? isPremiumLocked(activeRoom.name) : true)}
           style={{ 
             padding: '0.5rem 1rem', 
             backgroundColor: '#6772e5', 
@@ -174,7 +215,7 @@ const LiveChat: React.FC = () => {
             border: 'none', 
             borderRadius: '4px',
             cursor: 'pointer',
-            opacity: (room === 'PREMIUM' && !hasPremiumAccess()) ? 0.5 : 1
+            opacity: (isMuted || (activeRoom ? isPremiumLocked(activeRoom.name) : true)) ? 0.5 : 1
           }}
         >
           Send
@@ -184,4 +225,4 @@ const LiveChat: React.FC = () => {
   );
 };
 
-export default LiveChat;
+export default GlobalChat;

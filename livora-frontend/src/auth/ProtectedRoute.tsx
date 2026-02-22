@@ -1,25 +1,38 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { authStore } from '../store/authStore';
+import { useAuth } from './useAuth';
+import Loader from '../components/Loader';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: string;
-  fallbackPath?: string;
 }
 
-const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredRole, fallbackPath = '/forbidden' }) => {
+/**
+ * A component that requires the user to be authenticated.
+ * If not authenticated, it redirects to the login page.
+ */
+const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
+  const { isAuthenticated, isInitialized, user } = useAuth();
   const location = useLocation();
-  const isAuthenticated = authStore.isAuthenticated;
 
+  if (!isInitialized) {
+    return <Loader type="logo" />;
+  }
+
+  // Guard: Redirect to login if not authenticated
   if (!isAuthenticated) {
-    // Redirect to /login but save the current location they were trying to go to
+    // Redirect to login, but save the current location they were trying to go to
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (requiredRole && !authStore.hasRole(requiredRole)) {
-    // If authenticated but doesn't have the required role, redirect to fallback path
-    return <Navigate to={fallbackPath} replace />;
+  // Guard: Redirect creators in DRAFT status to onboarding
+  if (user?.role === 'CREATOR' && user?.creatorProfile?.status === 'DRAFT' && location.pathname !== '/creator/onboard') {
+    return <Navigate to="/creator/onboard" replace />;
+  }
+
+  // Guard: Redirect creators in PENDING status to waiting screen
+  if (user?.role === 'CREATOR' && user?.creatorProfile?.status === 'PENDING' && location.pathname !== '/creator/pending') {
+    return <Navigate to="/creator/pending" replace />;
   }
 
   return <>{children}</>;

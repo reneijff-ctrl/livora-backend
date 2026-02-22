@@ -1,11 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import paymentService, { Invoice } from '../api/paymentService';
+import { useAuth } from '../auth/useAuth';
 
 const InvoiceTable: React.FC = React.memo(() => {
+  const { user, authLoading } = useAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // Requirement: Do NOT fetch dashboard data until role is resolved
+    if (!user || authLoading) {
+      return;
+    }
+
     const loadInvoices = async () => {
       try {
         setIsLoading(true);
@@ -20,7 +27,7 @@ const InvoiceTable: React.FC = React.memo(() => {
     };
 
     loadInvoices();
-  }, []);
+  }, [user, authLoading]);
 
   if (isLoading) {
     return (
@@ -63,7 +70,7 @@ const InvoiceTable: React.FC = React.memo(() => {
           {invoices.map((invoice) => (
             <tr key={invoice.id} style={{ borderBottom: '1px solid #f9f9f9' }}>
               <td style={{ padding: '0.75rem' }}>
-                {new Date(invoice.date).toLocaleDateString()}
+                {invoice.date ? new Date(invoice.date).toLocaleDateString() : 'N/A'}
               </td>
               <td style={{ padding: '0.75rem' }}>
                 {(invoice.amount / 100).toFixed(2)} {invoice.currency.toUpperCase()}
@@ -74,8 +81,8 @@ const InvoiceTable: React.FC = React.memo(() => {
                   padding: '0.2rem 0.5rem',
                   borderRadius: '4px',
                   fontSize: '0.85rem',
-                  backgroundColor: invoice.status.toLowerCase() === 'paid' ? '#e6fffa' : '#fff5f5',
-                  color: invoice.status.toLowerCase() === 'paid' ? '#2c7a7b' : '#c53030'
+                  backgroundColor: (invoice.status || '').toLowerCase() === 'paid' ? '#e6fffa' : '#fff5f5',
+                  color: (invoice.status || '').toLowerCase() === 'paid' ? '#2c7a7b' : '#c53030'
                 }}>
                   {invoice.status}
                 </span>

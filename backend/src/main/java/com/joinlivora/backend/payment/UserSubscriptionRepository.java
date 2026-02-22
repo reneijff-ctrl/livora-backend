@@ -10,6 +10,7 @@ public interface UserSubscriptionRepository extends JpaRepository<UserSubscripti
     Optional<UserSubscription> findByStripeSubscriptionId(String stripeSubscriptionId);
     Optional<UserSubscription> findByUserAndStatus(User user, SubscriptionStatus status);
     Optional<UserSubscription> findFirstByUserOrderByCreatedAtDesc(User user);
+    java.util.List<UserSubscription> findAllByUser(User user);
 
     @Query("SELECT COUNT(s) FROM UserSubscription s WHERE s.status = 'ACTIVE'")
     long countActiveSubscriptions();

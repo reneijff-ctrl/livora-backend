@@ -34,7 +34,7 @@ Content-Type: application/json
 X-XSRF-TOKEN: {{xsrf_token}}
 
 {
-  "bio": "Legitimate user"
+  "bio": "Legitimate creator"
 }
 
 < {%

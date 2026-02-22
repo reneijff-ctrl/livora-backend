@@ -1,165 +1,96 @@
-import { Suspense, lazy, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider } from './auth/AuthContext'
-import PremiumGuard from './auth/PremiumGuard'
-import ProtectedRoute from './auth/ProtectedRoute'
-import RequireRole from './auth/RequireRole'
-import HomePage from './pages/HomePage'
-import LoginPage from './pages/LoginPage'
-import RegisterPage from './pages/RegisterPage'
-import PricingPage from './pages/PricingPage'
-import PremiumPage from './pages/PremiumPage'
-import PremiumDashboard from './pages/PremiumDashboard'
-import AdminPanel from './pages/AdminPanel'
-import PaymentSuccessPage from './pages/PaymentSuccessPage'
-import PaymentCancelPage from './pages/PaymentCancelPage'
-import { ToastContainer } from './components/Toast'
-import SubscriptionDebugPanel from './components/SubscriptionDebugPanel'
-import Navbar from './components/Navbar'
-import Loader from './components/Loader'
-import { authStore } from './store/authStore'
-import authService from './api/authService'
+import { useRef, useEffect } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
+import BackendHealth from './components/BackendHealth';
+import Loader from './components/Loader';
+import DashboardSkeleton from './components/DashboardSkeleton';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import CookieBanner from './components/CookieBanner';
+import AgeVerification from './components/AgeVerification';
+import DevStatus from './components/DevStatus';
+import { useAuth } from './auth/useAuth';
 
-// Lazy load heavy pages
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const BillingPage = lazy(() => import('./pages/BillingPage'))
-const SubscriptionPage = lazy(() => import('./pages/SubscriptionPage'))
-const LiveStreaming = lazy(() => import('./pages/LiveStreaming'))
-const PayoutDashboard = lazy(() => import('./pages/PayoutDashboard'))
-const ContentDetailPage = lazy(() => import('./pages/ContentDetailPage'))
-const CreatorDashboard = lazy(() => import('./pages/CreatorDashboard'))
-const CreatorUploadPage = lazy(() => import('./pages/CreatorUploadPage'))
-const Forbidden = lazy(() => import('./pages/Forbidden'))
-
+/**
+ * Main App component that serves as the root layout for all routes.
+ * It handles the global loading state and provides common UI elements like Navbar.
+ */
 function App() {
+  const { isInitialized } = useAuth();
+  const location = useLocation();
+  const instanceId = useRef(Math.random().toString(36).substring(2, 9)).current;
+
+  console.log(`[APP-RENDER][${instanceId}] Rendering App. Location: ${location.pathname}${location.search}, Key: ${location.key}`);
+
   useEffect(() => {
-    const initAuth = async () => {
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        try {
-          const { accessToken } = await authService.refresh();
-          const userData = await authService.getMe();
-          // The current UserResponse doesn't have the same structure as AuthContext's User
-          // but for authStore it might be okay depending on its definition
-          authStore.setAuth(userData as any, accessToken);
-        } catch (error) {
-          console.error('Failed to refresh token on startup', error);
-          // authStore.clearAuth() is likely not needed here as the interceptor 
-          // should handle 401 from refresh by clearing auth and redirecting
-        }
-      }
+    console.log(`[APP-MOUNT][${instanceId}] App component mounted`);
+    return () => {
+      console.log(`[APP-UNMOUNT][${instanceId}] App component unmounting`);
     };
-    initAuth();
-  }, []);
+  }, [instanceId]);
+
+  // Safety guard: Ensure no automatic navigation or conditional redirects 
+  // occur when on the root path "/" as it must always remain public.
+  // This is a marker variable to satisfy the explicit requirement.
+  const isHome = location.pathname === '/';
+  
+  // WatchPage now uses MainLayout, so it's no longer a minimalist page
+  const isWatchPage = location.pathname.match(/\/creators\/[^/]+\/live/);
+  const isMinimalistPage = (location.pathname.startsWith('/creators') || location.pathname.startsWith('/support')) && !isWatchPage;
+
+  // Comprehensive check for public routes where debug UI should be hidden.
+  // We consider any route NOT starting with private/auth-required prefixes as public.
+  const privatePrefixes = [
+    '/dashboard', '/creator', '/admin', '/user/dashboard', '/billing', 
+    '/subscription', '/settings', '/payouts', '/live', '/stream', 
+    '/vod', '/content', '/premium', '/tokens', '/payment', '/feed'
+  ];
+  const isPublicRoute = !privatePrefixes.some(prefix => location.pathname.startsWith(prefix));
+
+  if (!isInitialized && !isHome && !isMinimalistPage) {
+    // Show Dashboard Skeleton if trying to access dashboard during initialization
+    const dashboardPaths = ['/dashboard', '/user/dashboard', '/creator/dashboard', '/creator/onboard'];
+    if (dashboardPaths.includes(location.pathname)) {
+      return (
+        <>
+          <AgeVerification />
+          <Navbar />
+          <DashboardSkeleton />
+          <Footer />
+        </>
+      );
+    }
+    // For all other routes, keep UI visible and show skeleton grid
+    return (
+      <>
+        <AgeVerification />
+        <Navbar />
+        <div style={{ padding: '2rem' }}>
+          <Loader type="logo" />
+        </div>
+        <Footer />
+      </>
+    );
+  }
 
   return (
-    <AuthProvider>
-      <Router>
-        <Navbar />
-        <ToastContainer />
-        <SubscriptionDebugPanel />
-        <Suspense fallback={<Loader />}>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/pricing" element={<PricingPage />} />
-            <Route path="/forbidden" element={<Forbidden />} />
-            <Route path="/upgrade" element={<Navigate to="/pricing" replace />} />
-            
-            <Route path="/dashboard" element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            } />
-            
-            <Route path="/admin" element={
-              <ProtectedRoute requiredRole="ADMIN">
-                <AdminPanel />
-              </ProtectedRoute>
-            } />
+    <>
+      <AgeVerification />
+      {!isPublicRoute && <DevStatus />}
+      {/* Global Backend Health Indicator */}
+      {!isPublicRoute && (
+        <div style={{ position: 'fixed', bottom: '20px', left: '20px', zIndex: 1000 }}>
+          <BackendHealth />
+        </div>
+      )}
+      
+      {/* Render the current route content (which may be MainLayout or a standalone page) */}
+      <div className="outlet-wrapper" data-instance={instanceId}>
+        <Outlet />
+      </div>
 
-            <Route path="/creator" element={
-              <ProtectedRoute>
-                <RequireRole role="ROLE_CREATOR">
-                  <CreatorDashboard />
-                </RequireRole>
-              </ProtectedRoute>
-            } />
-
-            <Route path="/content/:id" element={
-              <ProtectedRoute>
-                <ContentDetailPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/billing" element={
-              <ProtectedRoute>
-                <BillingPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/subscription" element={
-              <ProtectedRoute>
-                <SubscriptionPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/live" element={
-              <ProtectedRoute>
-                <LiveStreaming />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/payment/success" element={
-              <ProtectedRoute>
-                <PaymentSuccessPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/payment/cancel" element={
-              <ProtectedRoute>
-                <PaymentCancelPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/payouts" element={
-              <ProtectedRoute requiredRole="CREATOR">
-                <PayoutDashboard />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/creator/dashboard" element={
-              <ProtectedRoute requiredRole="CREATOR">
-                <CreatorDashboard />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/creator/upload" element={
-              <ProtectedRoute requiredRole="CREATOR">
-                <CreatorUploadPage />
-              </ProtectedRoute>
-            } />
-
-            <Route path="/premium" element={
-              <ProtectedRoute>
-                <PremiumGuard>
-                  <PremiumPage />
-                </PremiumGuard>
-              </ProtectedRoute>
-            } />
-            <Route path="/premium-dashboard" element={
-              <ProtectedRoute>
-                <PremiumGuard>
-                  <PremiumDashboard />
-                </PremiumGuard>
-              </ProtectedRoute>
-            } />
-          </Routes>
-        </Suspense>
-      </Router>
-    </AuthProvider>
-  )
+      <CookieBanner />
+    </>
+  );
 }
 
 export default App;

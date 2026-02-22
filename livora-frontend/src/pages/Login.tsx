@@ -1,86 +1,200 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { login, getMe } from '../api/auth';
-import { authStore } from '../store/authStore';
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../auth/useAuth';
+import authStore, { getDashboardRouteByRole } from '../store/authStore';
+import SEO from '../components/SEO';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
   const navigate = useNavigate();
+  const { login } = useAuth();
 
-  useEffect(() => {
-    if (authStore.isAuthenticated) {
-      navigate('/dashboard', { replace: true });
-    }
-  }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setLoading(true);
+    setIsSubmitting(true);
 
     try {
-      const data = await login(email, password);
-      const { accessToken } = data;
+      // Use the login function from AuthContext which handles state synchronization
+      await login(email, password);
       
-      // Update store with token first so subsequent requests are authenticated
-      localStorage.setItem('access_token', accessToken);
+      // Resolve the user's role from the store to determine the default route
+      const { user } = authStore.getState();
+      const redirectPath = getDashboardRouteByRole(user?.role);
       
-      // Fetch user profile
-      const user = await getMe();
-      
-      authStore.setAuth(user, accessToken);
-      navigate('/dashboard');
+      // After login, redirect based on role using the mapping
+      navigate(redirectPath, { replace: true });
     } catch (err: any) {
-      if (err.response && err.response.data && err.response.data.message) {
-        setError(err.response.data.message);
-      } else if (err.response && err.response.status === 401) {
-        setError('Invalid email or password.');
-      } else if (err.response && err.response.status === 403) {
-        setError('Access forbidden. Your account might be locked or restricted.');
+      console.error('Login failed:', err);
+      if (err.code === 'ERR_NETWORK' || !err.response) {
+        setError('The server is currently unreachable. Please check your internet connection.');
       } else {
-        setError('An unexpected error occurred. Please try again.');
+        // Show backend validation errors
+        setError(err.response?.data?.message || 'Invalid email or password. Please try again.');
       }
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="login-container" style={{ maxWidth: '400px', margin: '50px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px' }}>
-      <h1>Login</h1>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="email" style={{ display: 'block', marginBottom: '5px' }}>Email:</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-          />
+    <div style={styles.container}>
+      <SEO 
+        title="Login" 
+        description="Sign in to your Livora account to access your dashboard and premium features."
+        canonical="/login"
+      />
+      <div style={styles.card}>
+        <h2 style={styles.title}>Welcome back</h2>
+        <p style={styles.subtitle}>Please sign in to your account</p>
+        
+        <form onSubmit={handleSubmit} style={styles.form}>
+          <div style={styles.field}>
+            <label htmlFor="email" style={styles.label}>Email Address</label>
+            <input
+              id="email"
+              type="email"
+              placeholder="your@email.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={isSubmitting}
+              style={styles.input}
+            />
+          </div>
+          
+          <div style={styles.field}>
+            <label htmlFor="password" style={styles.label}>Password</label>
+            <input
+              id="password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={isSubmitting}
+              style={styles.input}
+            />
+          </div>
+
+          {error && <div style={styles.error}>{error}</div>}
+
+          <button 
+            type="submit" 
+            disabled={isSubmitting}
+            style={isSubmitting ? { ...styles.button, ...styles.buttonDisabled } : styles.button}
+          >
+            {isSubmitting ? 'Signing in...' : 'Sign In'}
+          </button>
+        </form>
+
+        <div style={styles.footer}>
+          Don't have an account? <Link to="/register" style={styles.link}>Register</Link>
         </div>
-        <div style={{ marginBottom: '15px' }}>
-          <label htmlFor="password" style={{ display: 'block', marginBottom: '5px' }}>Password:</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={{ width: '100%', padding: '8px', boxSizing: 'border-box' }}
-          />
-        </div>
-        {error && <div style={{ color: 'red', marginBottom: '15px' }}>{error}</div>}
-        <button type="submit" disabled={loading} style={{ width: '100%', padding: '10px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: loading ? 'not-allowed' : 'pointer' }}>
-          {loading ? 'Logging in...' : 'Login'}
-        </button>
-      </form>
+      </div>
     </div>
   );
+};
+
+const styles: { [key: string]: React.CSSProperties } = {
+  container: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 'calc(100vh - 80px)', // Adjust for navbar height
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    backgroundColor: 'transparent',
+    padding: '20px',
+  },
+  card: {
+    width: '100%',
+    maxWidth: '400px',
+    padding: '2.5rem',
+    backgroundColor: '#0F0F14',
+    borderRadius: '16px',
+    border: '1px solid rgba(255, 255, 255, 0.05)',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+  },
+  title: {
+    fontSize: '1.875rem',
+    fontWeight: '700',
+    color: '#F4F4F5',
+    marginBottom: '0.5rem',
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: '1rem',
+    color: '#71717A',
+    marginBottom: '2rem',
+    textAlign: 'center',
+  },
+  form: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '1.25rem',
+  },
+  field: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.375rem',
+  },
+  label: {
+    fontSize: '0.875rem',
+    fontWeight: '600',
+    color: '#A1A1AA',
+  },
+  input: {
+    padding: '0.75rem',
+    borderRadius: '8px',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    backgroundColor: '#08080A',
+    color: '#FFFFFF',
+    fontSize: '1rem',
+    outline: 'none',
+    transition: 'border-color 0.2s ease',
+  },
+  error: {
+    padding: '0.75rem',
+    borderRadius: '8px',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    color: '#ef4444',
+    fontSize: '0.875rem',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    textAlign: 'center',
+  },
+  button: {
+    marginTop: '0.5rem',
+    padding: '0.75rem',
+    backgroundColor: '#6366F1',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '1rem',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+  buttonDisabled: {
+    backgroundColor: '#27272A',
+    color: '#71717A',
+    cursor: 'not-allowed',
+  },
+  footer: {
+    textAlign: 'center',
+    marginTop: '1.5rem',
+    fontSize: '0.875rem',
+    color: '#71717A',
+  },
+  link: {
+    color: '#6366F1',
+    textDecoration: 'none',
+    fontWeight: '600',
+  },
 };
 
 export default Login;

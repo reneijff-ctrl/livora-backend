@@ -15,9 +15,13 @@ interface RequireRoleProps {
  * @param role The required role (e.g., 'ADMIN', 'CREATOR')
  */
 const RequireRole: React.FC<RequireRoleProps> = ({ children, role }) => {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isInitialized } = useAuth();
 
-  // If not authenticated at all, the ProtectedRoute should have handled it, 
+  if (!isInitialized) {
+    return null;
+  }
+
+  // If not authenticated at all, the ProtectedRoute guard should have handled it,
   // but as a fallback we redirect to login or dashboard.
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
@@ -31,7 +35,7 @@ const RequireRole: React.FC<RequireRoleProps> = ({ children, role }) => {
   const hasRole = userRole === role || userRole === `ROLE_${role}`;
 
   if (!hasRole) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

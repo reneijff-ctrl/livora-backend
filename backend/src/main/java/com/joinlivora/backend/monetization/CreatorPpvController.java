@@ -16,19 +16,20 @@ import java.util.UUID;
 @RequestMapping("/api/creator/ppv")
 @RequiredArgsConstructor
 @Slf4j
-@PreAuthorize("hasRole('CREATOR') or hasRole('ADMIN')")
 public class CreatorPpvController {
 
     private final PpvService ppvService;
     private final UserService userService;
 
     @GetMapping("/mine")
+    @PreAuthorize("hasAnyRole('CREATOR', 'ADMIN')")
     public ResponseEntity<?> getMyContent(@AuthenticationPrincipal UserDetails userDetails) {
         User creator = userService.getByEmail(userDetails.getUsername());
         return ResponseEntity.ok(ppvService.getCreatorPpvContent(creator));
     }
 
     @PostMapping
+    @PreAuthorize("hasAnyRole('CREATOR', 'ADMIN')")
     public ResponseEntity<?> createContent(
             @AuthenticationPrincipal UserDetails userDetails,
             @RequestBody PpvContent content
@@ -38,6 +39,7 @@ public class CreatorPpvController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAnyRole('CREATOR', 'ADMIN')")
     public ResponseEntity<?> updateContent(
             @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable UUID id,
@@ -48,6 +50,7 @@ public class CreatorPpvController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('CREATOR', 'ADMIN')")
     public ResponseEntity<?> deleteContent(
             @AuthenticationPrincipal UserDetails userDetails,
             @PathVariable UUID id

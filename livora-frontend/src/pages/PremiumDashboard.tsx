@@ -1,28 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { useAuth } from '../auth/useAuth';
 import { Link } from 'react-router-dom';
-import paymentService, { SubscriptionResponse } from '../api/paymentService';
 import SEO from '../components/SEO';
 
 const PremiumDashboard: React.FC = () => {
   const { user, subscriptionStatus } = useAuth();
-  const [subscription, setSubscription] = useState<SubscriptionResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchSubscription = async () => {
-      try {
-        const sub = await paymentService.getMySubscription();
-        setSubscription(sub);
-      } catch (err) {
-        console.error('Failed to fetch subscription', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchSubscription();
-  }, []);
+  const subscription = user?.subscription;
 
   return (
     <div style={{ padding: '2rem' }}>
@@ -38,13 +21,11 @@ const PremiumDashboard: React.FC = () => {
             <p>Subscription Status: <strong style={{ color: 'green' }}>{subscriptionStatus}</strong></p>
             <p>Access Level: <strong>PREMIUM</strong></p>
             
-            {loading ? (
-              <p>Loading subscription details...</p>
-            ) : subscription ? (
+            {subscription ? (
               <div style={{ marginTop: '0.5rem', padding: '0.5rem', background: '#e8f5e9', borderRadius: '4px' }}>
                 <p>Status: <strong>{subscription.status}</strong></p>
                 {subscription.currentPeriodEnd && (
-                  <p>Current period ends on: <strong>{new Date(subscription.currentPeriodEnd).toLocaleDateString()}</strong></p>
+                  <p>Current period ends on: <strong>{subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toLocaleDateString() : 'N/A'}</strong></p>
                 )}
               </div>
             ) : (

@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -33,13 +34,16 @@ public class StreamRoom {
     @JoinColumn(name = "creator_id", nullable = false)
     private User creator;
 
-    @Builder.Default
-    @Column(nullable = false)
-    private boolean isLive = false;
+    @org.hibernate.annotations.Formula("(SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM livestream_sessions ls WHERE ls.creator_id = creator_id AND ls.status = 'LIVE')")
+    private boolean isLive;
 
     @Builder.Default
     @Column(nullable = false)
     private boolean isPremium = false;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private boolean slowMode = false;
 
     @Builder.Default
     @Column(nullable = false)
@@ -53,10 +57,37 @@ public class StreamRoom {
 
     private Long minChatTokens;
 
+    @Builder.Default
+    private boolean isPaid = false;
+
+    private Long pricePerMessage;
+
+    @Column(nullable = false, precision = 10, scale = 2)
+    @Builder.Default
+    private BigDecimal admissionPrice = BigDecimal.ZERO;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
     private Instant startedAt;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("userId")
+    public Long getUserId() {
+        return creator != null ? creator.getId() : null;
+    }
+
+    @org.hibernate.annotations.Formula("(SELECT c.id FROM creator_records c WHERE c.user_id = creator_id)")
+    private Long creatorRecordId;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("creatorRecordId")
+    public Long getCreatorRecordId() {
+        return creatorRecordId;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonProperty("creator")
+    public Long getCreatorId() {
+        return creator != null ? creator.getId() : null;
+    }
 
     @PrePersist
     protected void onCreate() {

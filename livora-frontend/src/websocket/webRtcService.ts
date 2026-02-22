@@ -27,6 +27,7 @@ class WebRtcService {
   private localStream: MediaStream | null = null;
   private roomId: string | null = null;
   private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
+  private onStreamStopCallback: (() => void) | null = null;
 
   private iceServers = {
     iceServers: [
@@ -96,6 +97,11 @@ class WebRtcService {
       case SignalingType.ICE_CANDIDATE:
         await this.peerConnection?.addIceCandidate(new RTCIceCandidate(message.payload));
         break;
+      case SignalingType.STREAM_STOP:
+        console.log('Stream stopped by creator');
+        this.cleanup();
+        if (this.onStreamStopCallback) this.onStreamStopCallback();
+        break;
       case SignalingType.ACCESS_DENIED:
         console.error('Access Denied:', message.message);
         this.cleanup();
@@ -113,6 +119,10 @@ class WebRtcService {
 
   setOnAccessDenied(callback: (msg: string) => void) {
     this.onAccessDeniedCallback = callback;
+  }
+
+  setOnStreamStop(callback: () => void) {
+    this.onStreamStopCallback = callback;
   }
 
   private async handleOffer(message: SignalingMessage) {

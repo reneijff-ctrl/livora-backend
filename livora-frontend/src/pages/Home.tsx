@@ -2,81 +2,173 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import SEO from '../components/SEO';
-import HasRole from '../components/HasRole';
-import contentService, { ContentItem } from '../api/contentService';
-import ContentCard from '../components/ContentCard';
+import creatorService from '../api/creatorService';
+import { ICreator } from '../domain/creator/ICreator';
+import CreatorCard from '../components/creator/CreatorCard';
 
 const Home = () => {
   const { isAuthenticated } = useAuth();
-  const [publicContent, setPublicContent] = useState<ContentItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [creators, setCreators] = useState<ICreator[]>([]);
 
   useEffect(() => {
-    const fetchPublicContent = async () => {
+    const fetchData = async () => {
       try {
-        const data = await contentService.getPublicContent();
-        setPublicContent(data);
+        const creatorsData = await creatorService.getPublicCreatorsForHomepage();
+        setCreators(creatorsData.content.slice(0, 8));
       } catch (err) {
-        console.error('Failed to fetch public content', err);
-      } finally {
-        setIsLoading(false);
+        console.error('Failed to fetch homepage data:', err);
+        setCreators([]);
       }
     };
-    fetchPublicContent();
+
+    fetchData();
   }, []);
 
   return (
-    <div style={{ padding: 'clamp(1rem, 3vw, 2rem)', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
+    <div className="bg-[#08080A] text-zinc-100 font-sans">
       <SEO 
-        title="Welcome" 
-        description="Livora is a modern platform with advanced subscription features and premium content."
+        title="Premium Creator Platform" 
+        description="Livora is the premium platform for discovery and supporting your favorite creators."
         canonical="/"
       />
-      <header style={{ textAlign: 'center', marginBottom: 'clamp(2rem, 8vw, 4rem)' }}>
-        <h1 style={{ fontSize: 'clamp(2rem, 6vw, 3.5rem)', margin: '0 0 0.5rem 0' }}>Welcome to Livora</h1>
-        <p style={{ fontSize: 'clamp(1rem, 3vw, 1.25rem)', color: '#666' }}>Premium Content for Everyone</p>
-        <nav style={{ marginTop: '2rem', display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <Link to="/pricing" style={{ padding: '0.5rem 1rem', textDecoration: 'none', color: '#6772e5', fontWeight: 'bold' }}>Pricing</Link>
-          {isAuthenticated ? (
-            <>
-              <Link to="/dashboard" style={{ padding: '0.5rem 1rem', backgroundColor: '#6772e5', color: 'white', textDecoration: 'none', borderRadius: '8px', fontWeight: 'bold' }}>Go to Dashboard</Link>
-              <HasRole role="ADMIN">
-                <Link to="/admin" style={{ padding: '0.5rem 1rem', color: 'red', fontWeight: 'bold', textDecoration: 'none' }}>Admin Panel</Link>
-              </HasRole>
-            </>
-          ) : (
-            <>
-              <Link to="/login" style={{ padding: '0.5rem 1rem', textDecoration: 'none', color: '#6772e5', fontWeight: 'bold' }}>Login</Link>
-              <Link to="/register" style={{ padding: '0.5rem 1rem', backgroundColor: '#6772e5', color: 'white', textDecoration: 'none', borderRadius: '8px', fontWeight: 'bold' }}>Register</Link>
-            </>
-          )}
-        </nav>
-      </header>
+      
+      <section className="relative bg-[#08080A] py-20 text-center">
 
-      <main>
-        <section>
-          <h2 style={{ marginBottom: '1.5rem', fontSize: 'clamp(1.5rem, 4vw, 2rem)' }}>Explore Free Content</h2>
-          {isLoading ? (
-            <p>Loading content...</p>
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '2rem', marginTop: '1rem' }}>
-              {publicContent.length === 0 ? (
-                <p>No public content available yet.</p>
+        {/* Ambient glow layer */}
+        <div className="absolute inset-0 flex justify-center pointer-events-none">
+          <div className="w-[1100px] h-[1100px] bg-indigo-600/15 blur-[220px] rounded-full" />
+        </div>
+
+        <div className="relative z-10 max-w-[1200px] mx-auto px-6 md:px-8">
+          <img 
+            src="/icoon_joinlivora.png"
+            alt="JoinLivora Icon"
+            className="mx-auto mb-10 w-[120px] drop-shadow-[0_20px_60px_rgba(0,0,0,0.6)]"
+          />
+      
+          <h1 className="text-5xl md:text-7xl font-black tracking-tight text-white drop-shadow-[0_0_40px_rgba(255,255,255,0.08)]">
+            Live. Direct. Connected.
+          </h1>
+
+          <p className="mt-8 text-lg text-white/60 max-w-2xl mx-auto leading-relaxed">
+            A private live experience. Premium creators. Direct access.
+          </p>
+
+          <div className="mt-8 flex justify-center gap-4">
+
+            <a
+              href="/explore"
+              className="px-6 py-3 rounded-xl bg-white text-black font-medium hover:bg-white/90 transition duration-200"
+            >
+              Explore Creators
+            </a>
+
+            <a
+              href="/become-creator"
+              className="px-6 py-3 rounded-xl border border-white/30 text-white hover:border-white hover:text-white transition duration-200"
+            >
+              Become a Creator
+            </a>
+
+          </div>
+        </div>
+      </section>
+
+      <main className="relative z-10">
+        {/* FEATURED CREATORS SECTION */}
+        <section className="py-20">
+          <div className="max-w-[1200px] mx-auto px-6 md:px-8">
+            
+            <h2 className="text-3xl md:text-5xl font-extrabold text-white tracking-tighter">
+              Featured Creators
+            </h2>
+
+            <p className="mt-2 text-lg text-white/60 leading-relaxed">
+              Discover the most active and trending talent on Livora.
+            </p>
+
+            <div className="marketplace-grid">
+              {creators.length === 0 ? (
+                <div className="col-span-full text-white/60">
+                  No featured creators at the moment.
+                </div>
               ) : (
-                publicContent.map(item => <ContentCard key={item.id} content={item} />)
+                creators.map((creator) => (
+                  <CreatorCard key={creator.id} creator={creator} />
+                ))
               )}
             </div>
-          )}
+          </div>
         </section>
         
-        <section style={{ marginTop: '4rem', padding: 'clamp(1.5rem, 5vw, 3rem)', backgroundColor: '#f8f9ff', borderRadius: '16px', textAlign: 'center' }}>
-          <h2 style={{ fontSize: 'clamp(1.5rem, 4vw, 2.25rem)', marginBottom: '1rem' }}>Ready for more?</h2>
-          <p style={{ fontSize: 'clamp(1rem, 2.5vw, 1.15rem)', color: '#444', maxWidth: '600px', margin: '0 auto 2rem' }}>Join our premium community to unlock exclusive content and support your favorite creators.</p>
-          <Link to="/pricing" style={{ display: 'inline-block', padding: '14px 32px', backgroundColor: '#6772e5', color: 'white', textDecoration: 'none', borderRadius: '8px', fontWeight: 'bold', fontSize: '1.1rem' }}>View Pricing</Link>
+        {/* VALUE PROPS SECTION */}
+        <section className="py-20">
+          <div className="max-w-[1200px] mx-auto px-6 md:px-8">
+            <div className="text-center mb-16">
+              <h2 className="text-3xl md:text-5xl font-extrabold text-white mb-4 tracking-tighter">Why Choose Livora?</h2>
+              <p className="text-lg text-white/60 max-w-2xl mx-auto leading-relaxed">
+                Designed for those who value privacy, quality, and direct connection.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div className="bg-[#0F0F14] p-10 rounded-2xl border border-[#16161D] flex flex-col items-center text-center shadow-[0_20px_60px_rgba(0,0,0,0.6)] transition-all hover:scale-[1.02]">
+                <div className="w-20 h-20 rounded-3xl bg-white/5 flex items-center justify-center mb-8 border border-[#16161D]">
+                  <span className="text-4xl">💎</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-4">Support Directly</h3>
+                <p className="text-lg text-white/60 leading-relaxed">
+                  Your support goes directly to the creators you love. No middleman, no hidden fees, just pure appreciation for their work.
+                </p>
+              </div>
+              
+              <div className="bg-[#0F0F14] p-10 rounded-2xl border border-[#16161D] flex flex-col items-center text-center shadow-[0_20px_60px_rgba(0,0,0,0.6)] transition-all hover:scale-[1.02]">
+                <div className="w-20 h-20 rounded-3xl bg-white/5 flex items-center justify-center mb-8 border border-[#16161D]">
+                  <span className="text-4xl">🛡️</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-4">Secure Payments</h3>
+                <p className="text-lg text-white/60 leading-relaxed">
+                  Industry-leading security ensures your transactions are safe and private. Support with confidence every time.
+                </p>
+              </div>
+              
+              <div className="bg-[#0F0F14] p-10 rounded-2xl border border-[#16161D] flex flex-col items-center text-center shadow-[0_20px_60px_rgba(0,0,0,0.6)] transition-all hover:scale-[1.02]">
+                <div className="w-20 h-20 rounded-3xl bg-white/5 flex items-center justify-center mb-8 border border-[#16161D]">
+                  <span className="text-4xl">✨</span>
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-4">Real Interaction</h3>
+                <p className="text-lg text-white/60 leading-relaxed">
+                  Go beyond simple following. Engage in real conversations, request custom content, and join a community that cares.
+                </p>
+              </div>
+            </div>
+          </div>
         </section>
+
+        {!isAuthenticated && (
+          <section className="py-20">
+            <div className="max-w-[1200px] mx-auto px-6 md:px-8">
+              <div className="bg-zinc-900 rounded-[40px] p-12 md:p-24 text-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-600/20 to-pink-600/20 opacity-40" />
+                <div className="relative z-10 max-w-2xl mx-auto">
+                  <h2 className="text-3xl md:text-5xl font-extrabold text-white mb-6 tracking-tighter">Ready to start?</h2>
+                  <p className="text-lg text-white/60 mb-10 leading-relaxed">Join thousands of fans and creators already on the platform.</p>
+                  <Link 
+                    to="/register" 
+                    className="inline-block px-10 py-5 bg-white text-black rounded-2xl text-lg font-bold hover:scale-[1.02] transition-transform active:scale-95 shadow-2xl"
+                  >
+                    Create Your Account Today
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        <div className="border-t border-white/10 mt-16 mb-24" />
       </main>
     </div>
-  )
-}
+  );
+};
 
-export default Home
+export default Home;

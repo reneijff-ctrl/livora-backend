@@ -12,7 +12,7 @@ import java.util.UUID;
 })
 @Getter
 @Setter
-@ToString(exclude = "user")
+@ToString(exclude = "creator")
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor
@@ -35,6 +35,10 @@ public class CreatorEarnings {
     @Builder.Default
     @Column(nullable = false)
     private long availableTokens = 0;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private long lockedTokens = 0;
 
     @Column(nullable = false)
     private Instant updatedAt;

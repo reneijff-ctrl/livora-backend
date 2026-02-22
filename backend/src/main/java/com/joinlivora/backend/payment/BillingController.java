@@ -28,23 +28,18 @@ public class BillingController {
     @GetMapping("/portal")
     public ResponseEntity<Map<String, String>> openBillingPortal(
             @AuthenticationPrincipal UserDetails userDetails
-    ) {
-        log.info("SECURITY: Billing portal requested for user: {}", userDetails.getUsername());
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Billing portal requested for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
-        try {
-            String portalUrl = subscriptionService.createBillingPortalSession(user);
-            return ResponseEntity.ok(Map.of("url", portalUrl));
-        } catch (Exception e) {
-            log.error("SECURITY: Failed to create billing portal session for user: {}", user.getEmail(), e);
-            return ResponseEntity.internalServerError().build();
-        }
+        String portalUrl = subscriptionService.createBillingPortalSession(user);
+        return ResponseEntity.ok(Map.of("url", portalUrl));
     }
 
     @GetMapping("/invoices")
     public ResponseEntity<List<Map<String, Object>>> getInvoices(
             @AuthenticationPrincipal UserDetails userDetails
     ) {
-        log.info("SECURITY: Fetching invoices for user: {}", userDetails.getUsername());
+        log.info("SECURITY: Fetching invoices for creator: {}", userDetails.getUsername());
         User user = userService.getByEmail(userDetails.getUsername());
         
         List<Payment> payments = paymentRepository.findAllByUserOrderByCreatedAtDesc(user);
@@ -54,7 +49,7 @@ public class BillingController {
             invoice.put("id", payment.getId().toString());
             invoice.put("amount", payment.getAmount().multiply(new java.math.BigDecimal(100)).intValue());
             invoice.put("currency", payment.getCurrency().toUpperCase());
-            invoice.put("status", "PAID");
+            invoice.put("status", "COMPLETED");
             invoice.put("date", payment.getCreatedAt().toString());
             invoice.put("pdfUrl", payment.getReceiptUrl() != null ? payment.getReceiptUrl() : "#");
             return invoice;

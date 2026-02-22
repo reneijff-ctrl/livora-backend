@@ -28,8 +28,12 @@ const tokenService = {
     return response.data;
   },
 
-  async sendTip(roomId: string, amount: number): Promise<void> {
-    await apiClient.post('/api/tokens/tip', { roomId, amount });
+  async sendTip(roomId: string, amount: number, clientRequestId?: string): Promise<void> {
+    await apiClient.post('/api/tokens/tip', { roomId, amount, clientRequestId });
+  },
+
+  async sendTipByCreatorId(creatorId: number, amount: number): Promise<void> {
+    await apiClient.post('/api/tokens/tip', { creatorId, amount });
   }
 };
 

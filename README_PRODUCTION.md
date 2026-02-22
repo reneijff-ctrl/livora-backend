@@ -80,7 +80,7 @@ DOMAIN=api.joinlivora.com
 ## Stripe Webhook Setup
 
 1. Go to the Stripe Dashboard -> Developers -> Webhooks.
-2. Add an endpoint: `https://api.joinlivora.com/api/payments/webhook/stripe`
+2. Add an endpoint: `https://api.joinlivora.com/webhooks/stripe`
 3. Select events:
    - `checkout.session.completed`
    - `customer.subscription.deleted`

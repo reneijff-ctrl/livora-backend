@@ -1,5 +1,7 @@
 package com.joinlivora.backend.websocket;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,17 +14,19 @@ import java.util.Map;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class RealtimeMessage {
     private String type;
-    private java.time.Instant timestamp;
-    private java.util.Map<String, Object> payload;
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
+    private Instant timestamp;
+    private Map<String, Object> payload;
     private ChatMessage chatMessage;
 
-    public static RealtimeMessage of(String type, java.util.Map<String, Object> payload) {
+    public static RealtimeMessage of(String type, Map<String, Object> payload) {
         return RealtimeMessage.builder()
                 .type(type)
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .payload(payload)
                 .build();
     }
@@ -30,7 +34,7 @@ public class RealtimeMessage {
     public static RealtimeMessage ofChat(ChatMessage chatMessage) {
         return RealtimeMessage.builder()
                 .type("chat")
-                .timestamp(java.time.Instant.now())
+                .timestamp(Instant.now())
                 .chatMessage(chatMessage)
                 .build();
     }

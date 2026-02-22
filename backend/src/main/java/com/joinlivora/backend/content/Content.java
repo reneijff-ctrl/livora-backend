@@ -46,4 +46,9 @@ public class Content {
 
     @CreationTimestamp
     private Instant createdAt;
+
+    @com.fasterxml.jackson.annotation.JsonProperty("creator")
+    public Long getUserId() {
+        return creator != null ? creator.getId() : null;
+    }
 }

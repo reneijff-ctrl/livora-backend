@@ -13,7 +13,7 @@ import java.util.UUID;
 @Table(name = "ppv_purchases")
 @Getter
 @Setter
-@ToString(exclude = {"user", "ppvContent"})
+@ToString(exclude = {"creator", "ppvContent"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor
@@ -38,6 +38,8 @@ public class PpvPurchase {
     private BigDecimal amount;
 
     private String stripePaymentIntentId;
+
+    private String clientRequestId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

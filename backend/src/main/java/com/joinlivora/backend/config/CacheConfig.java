@@ -18,6 +18,12 @@ public class CacheConfig {
                 .withCacheConfiguration("users",
                         RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(5)))
                 .withCacheConfiguration("subscriptions",
-                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(1)));
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(1)))
+                .withCacheConfiguration("creatorEarnings",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)))
+                .withCacheConfiguration("ipReputation",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(24)))
+                .withCacheConfiguration("publicContent",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(10)));
     }
 }

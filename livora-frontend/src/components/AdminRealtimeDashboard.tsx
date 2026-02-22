@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import webSocketService from '../websocket/webSocketService';
+import { useAuth } from '../auth/useAuth';
 
 interface AdminEvent {
   id: number;
@@ -9,10 +10,16 @@ interface AdminEvent {
 }
 
 const AdminRealtimeDashboard: React.FC = () => {
+  const { user, authLoading } = useAuth();
   const [events, setEvents] = useState<AdminEvent[]>([]);
   const [metrics, setMetrics] = useState<any>({});
 
   useEffect(() => {
+    // Requirement: Do NOT fetch dashboard data until role is resolved
+    if (!user || authLoading || user.role !== 'ADMIN') {
+      return;
+    }
+
     // Subscribe to admin activity
     const unsubActivity = webSocketService.subscribe('/topic/admin/activity', (msg) => {
       const data = JSON.parse(msg.body);
@@ -48,7 +55,7 @@ const AdminRealtimeDashboard: React.FC = () => {
       unsubPayments();
       unsubMetrics();
     };
-  }, []);
+  }, [user, authLoading]);
 
   return (
     <div style={{ marginTop: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>

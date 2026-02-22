@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class PremiumController {
 
     @GetMapping("/content")
-    @PreAuthorize("hasRole('PREMIUM')")
+    @PreAuthorize("hasAnyRole('PREMIUM', 'ADMIN')")
     public String content() {
         return "💎 Premium content";
     }

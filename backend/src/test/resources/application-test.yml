@@ -11,10 +11,16 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.H2Dialect
+  cache:
+    type: none
+  flyway:
+    enabled: false
 
 stripe:
-  secret-key: sk_test_mock_key
-  webhook-secret: whsec_mock_secret
+  api:
+    key: sk_test_mock_key
+  webhook:
+    secret: whsec_mock_secret
   premium-plan-id: price_mock
   success-url: http://localhost:3000/payment/success
   cancel-url: http://localhost:3000/payment/cancel
@@ -22,3 +28,29 @@ stripe:
 security:
   jwt:
     secret: test_secret_test_secret_test_secret_test_secret_test_secret_test_secret
+    expiration: 3600
+    refresh-token-expiration: 604800
+
+livora:
+  monetization:
+    platform-fee-percentage: 30
+  security:
+    cors:
+      allowed-origins: http://localhost:3000,https://joinlivora.com
+    rate-limit:
+      anonymous: 100
+      authenticated: 100
+      creator: 100
+      admin: 100
+      websocket: 100
+      login: 100
+      register: 100
+
+management:
+  health:
+    mail:
+      enabled: false
+    stripe:
+      enabled: false
+    redis:
+      enabled: false

@@ -4,9 +4,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -33,10 +37,10 @@ public class AnalyticsService {
         }
     }
 
-    @org.springframework.scheduling.annotation.Scheduled(cron = "0 0 2 * * *") // Every day at 2 AM
+    @Scheduled(cron = "0 0 2 * * *") // Every day at 2 AM
     @Transactional
     public void cleanupOldAnalytics() {
-        java.time.Instant cutoff = java.time.Instant.now().minus(90, java.time.temporal.ChronoUnit.DAYS);
+        Instant cutoff = Instant.now().minus(90, ChronoUnit.DAYS);
         log.info("Starting analytics cleanup for events older than {}", cutoff);
         analyticsEventRepository.deleteOlderThan(cutoff);
         log.info("Analytics cleanup completed.");

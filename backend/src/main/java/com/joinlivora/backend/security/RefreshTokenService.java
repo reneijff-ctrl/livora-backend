@@ -39,7 +39,7 @@ public class RefreshTokenService {
         token.setUser(user);
         // Store hashed token in DB
         token.setToken(passwordEncoder.encode(plainToken));
-        token.setExpiresAt(
+        token.setExpiryDate(
                 Instant.now().plusSeconds(refreshTokenExpiration)
         );
 
@@ -66,9 +66,9 @@ public class RefreshTokenService {
                     throw new TokenExpiredException("Invalid refresh token");
                 });
 
-        if (token.getExpiresAt().isBefore(Instant.now())) {
+        if (token.getExpiryDate().isBefore(Instant.now())) {
             refreshTokenRepository.delete(token);
-            logger.info("SECURITY: Expired refresh token used and deleted for user: {}", token.getUser().getEmail());
+            logger.info("SECURITY: Expired refresh token used and deleted for creator: {}", token.getUser().getEmail());
             throw new TokenExpiredException("Refresh token expired");
         }
 
@@ -87,13 +87,13 @@ public class RefreshTokenService {
 
         // Reuse Detection Logic
         if (oldToken.isRevoked()) {
-            logger.warn("SECURITY CRITICAL: Refresh token reuse detected for user: {}. Token ID: {}", oldToken.getUser().getEmail(), oldToken.getId());
-            // Invalidate ALL tokens for the user to stop the potential attack
+            logger.warn("SECURITY CRITICAL: Refresh token reuse detected for creator: {}. Token ID: {}", oldToken.getUser().getEmail(), oldToken.getId());
+            // Invalidate ALL tokens for the creator to stop the potential attack
             refreshTokenRepository.revokeAllByUser(oldToken.getUser());
             throw new TokenExpiredException("Unauthorized: Refresh token is invalid or compromised");
         }
 
-        if (oldToken.getExpiresAt().isBefore(Instant.now())) {
+        if (oldToken.getExpiryDate().isBefore(Instant.now())) {
             throw new TokenExpiredException("Unauthorized: Refresh token is expired");
         }
 
@@ -101,7 +101,7 @@ public class RefreshTokenService {
         RefreshToken newToken = create(oldToken.getUser());
 
         oldToken.setRevoked(true);
-        // We store the hashed version of the NEW token as a reference if needed
+        // We store the hashed version of the NEW token as a referenceId if needed
         // but since newToken.getToken() currently returns the plain value (see create)
         // we should hash it or just store a marker.
         oldToken.setReplacedByToken("ROTATED"); 
