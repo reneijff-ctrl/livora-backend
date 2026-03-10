@@ -17,19 +17,19 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/stream")
+@RequestMapping("/api/stream")
 @RequiredArgsConstructor
 @Slf4j
 public class LiveStreamController {
 
     private final StreamService streamService;
-    private final LiveStreamService liveStreamService;
     private final UserService userService;
     private final com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService;
     private final com.joinlivora.backend.user.UserRepository userRepository;
-    private final LiveStreamRepository liveStreamRepository;
+    private final StreamRepository streamRepository;
     private final SuperTipHighlightTracker highlightTracker;
-    private final com.joinlivora.backend.livestream.service.LiveStreamService liveStreamServiceV2;
+    private final com.joinlivora.backend.livestream.service.LiveStreamService liveStreamService;
+    private final com.joinlivora.backend.streaming.service.StreamModerationService streamModerationService;
 
     @PostMapping("/start")
     @PreAuthorize("hasRole('ADMIN') or (hasRole('CREATOR') and @securityService.isActiveCreator(principal.userId))")
@@ -62,7 +62,7 @@ public class LiveStreamController {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('CREATOR') and @securityService.isActiveCreator(principal.userId))")
     public ResponseEntity<Map<String, String>> getIngestInfo(@AuthenticationPrincipal UserPrincipal principal) {
         User creator = userService.getById(principal.getUserId());
-        LiveStream stream = liveStreamRepository.findByCreatorId(creator.getId())
+        Stream stream = streamRepository.findByCreatorIdAndIsLiveTrueWithCreator(creator.getId())
                 .orElseThrow(() -> new RuntimeException("Stream not found"));
 
         return ResponseEntity.ok(Map.of(
@@ -76,12 +76,12 @@ public class LiveStreamController {
             @PathVariable UUID id,
             java.security.Principal principal
     ) {
-        LiveStream stream = liveStreamRepository.findById(id)
+        Stream stream = streamRepository.findByIdWithCreator(id)
                 .orElseThrow(() -> new RuntimeException("Stream not found"));
 
         User user = null;
         if (principal != null) {
-            user = userService.getByEmail(principal.getName());
+            user = userService.resolveUserFromSubject(principal.getName()).orElse(null);
         }
 
         if (!liveStreamService.validateViewerAccess(stream, user)) {
@@ -90,21 +90,21 @@ public class LiveStreamController {
             return ResponseEntity.status(403).build();
         }
 
-        // Enforce V2 state gating: WATCH allowed only when state == LIVE
+        // Enforce state gating: WATCH allowed only when state == LIVE
         try {
-            if (liveStreamServiceV2.getActiveStream(stream.getCreatorId()) == null) {
-                log.warn("SECURITY: HLS URL denied due to non-LIVE V2 state: creator={} stream={}",
-                        stream.getCreatorId(), id);
+            if (!liveStreamService.isStreamActive(stream.getCreator().getId())) {
+                log.warn("SECURITY: HLS URL denied due to non-LIVE state: creator={} stream={}",
+                        stream.getCreator().getId(), id);
                 return ResponseEntity.status(403).build();
             }
         } catch (Exception e) {
-            log.error("V2 gating check failed: {}", e.getMessage());
+            log.error("Gating check failed: {}", e.getMessage());
             return ResponseEntity.status(403).build();
         }
 
         // Return a proxy URL that includes the streamId and streamKey
         // This allows the HlsProxyController to validate access for every request
-        String proxyUrl = "/hls/" + id + "/" + stream.getStreamKey() + "/index.m3u8";
+        String proxyUrl = "/api/hls/" + id + "/" + stream.getStreamKey() + "/index.m3u8";
         
         return ResponseEntity.ok(Map.of("url", proxyUrl));
     }
@@ -115,8 +115,8 @@ public class LiveStreamController {
     }
 
     @GetMapping("/vod")
-    public ResponseEntity<List<LiveStream>> getVodStreams() {
-        return ResponseEntity.ok(liveStreamRepository.findAllByIsLiveFalseAndRecordingPathIsNotNull());
+    public ResponseEntity<List<Stream>> getVodStreams() {
+        return ResponseEntity.ok(streamRepository.findAll().stream().filter(s -> !s.isLive()).toList());
     }
 
     @GetMapping("/{creatorId}")
@@ -142,6 +142,23 @@ public class LiveStreamController {
     @GetMapping("/{id}/highlight")
     public ResponseEntity<SuperTipResponse> getActiveHighlight(@PathVariable UUID id) {
         return highlightTracker.getActiveHighlight(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/{id}/pinned")
+    public ResponseEntity<Map<String, Object>> getPinnedMessage(@PathVariable UUID id) {
+        StreamRoom room = streamService.getRoom(id);
+        if (room == null || room.getCreator() == null) return ResponseEntity.noContent().build();
+        
+        return streamModerationService.getPinnedMessage(room.getCreator().getId())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
+    @GetMapping("/creator/{creatorId}/pinned")
+    public ResponseEntity<Map<String, Object>> getPinnedMessageByCreator(@PathVariable Long creatorId) {
+        return streamModerationService.getPinnedMessage(creatorId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.noContent().build());
     }

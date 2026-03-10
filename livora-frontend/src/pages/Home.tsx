@@ -1,14 +1,21 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import SEO from '../components/SEO';
 import creatorService from '../api/creatorService';
 import { ICreator } from '../domain/creator/ICreator';
 import CreatorCard from '../components/creator/CreatorCard';
+import { useWs } from '../ws/WsContext';
 
 const Home = () => {
+  const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { thumbnailCacheBuster } = useWs();
   const [creators, setCreators] = useState<ICreator[]>([]);
+
+  const handleCreatorClick = useCallback((creator: ICreator) => {
+    navigate(`/creators/${creator.userId}`);
+  }, [navigate]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -23,6 +30,22 @@ const Home = () => {
 
     fetchData();
   }, []);
+
+  const displayedCreators = useMemo(() => {
+    return creators.map(c => {
+      if (c.activeStream?.thumbnailUrl) {
+        const baseUrl = c.activeStream.thumbnailUrl.split('?')[0];
+        return {
+          ...c,
+          activeStream: {
+            ...c.activeStream,
+            thumbnailUrl: `${baseUrl}?t=${thumbnailCacheBuster}`
+          }
+        };
+      }
+      return c;
+    });
+  }, [creators, thumbnailCacheBuster]);
 
   return (
     <div className="bg-[#08080A] text-zinc-100 font-sans">
@@ -88,13 +111,17 @@ const Home = () => {
             </p>
 
             <div className="marketplace-grid">
-              {creators.length === 0 ? (
+              {displayedCreators.length === 0 ? (
                 <div className="col-span-full text-white/60">
                   No featured creators at the moment.
                 </div>
               ) : (
-                creators.map((creator) => (
-                  <CreatorCard key={creator.id} creator={creator} />
+                displayedCreators.map((creator) => (
+                  <CreatorCard 
+                    key={creator.userId} 
+                    creator={creator} 
+                    onClick={handleCreatorClick}
+                  />
                 ))
               )}
             </div>

@@ -5,20 +5,31 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - DB_URL=${DB_URL:-jdbc:postgresql://livora-postgres:5432/livora}
-      - DB_USERNAME=${DB_USERNAME:-livora}
-      - DB_PASSWORD=${DB_PASSWORD:-livora}
-      - REDIS_HOST=${REDIS_HOST:-livora-redis}
-      - REDIS_PORT=${REDIS_PORT:-6379}
-      - MANAGEMENT_HEALTH_REDIS_ENABLED=false
-      - JWT_SECRET=${JWT_SECRET}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
-      - FRONTEND_URL=${FRONTEND_URL:-https://joinlivora.com}
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/joinlivora
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      SPRING_PROFILES_ACTIVE: docker
+      REDIS_HOST: livora-redis
+      REDIS_PORT: 6379
+      MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
+      JWT_SECRET: ${JWT_SECRET}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL:-https://joinlivora.com}
+      STOMP_BROKER_HOST: livora-rabbitmq
+      STOMP_BROKER_PORT: 61613
+      STOMP_BROKER_USERNAME: livora
+      STOMP_BROKER_PASSWORD: livora
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      - livora-postgres
+      - livora-redis
+      - livora-rabbitmq
+    networks:
+      - livora-network
   nginx:
     image: tiangolo/nginx-rtmp
-    container_name: livora-nginx
     restart: always
     ports:
       - "80:80"
@@ -29,6 +40,7 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certbot/conf:/etc/letsencrypt:ro
       - ./nginx/certbot/www:/var/www/certbot:ro
+      - ./uploads:/var/www/uploads
       - hls_data:/var/www/hls
     depends_on:
       - livora-backend
@@ -37,16 +49,17 @@ services:
 
   livora-postgres:
     image: postgres:16-alpine
-    container_name: livora-postgres
+    ports:
+      - "5432:5432"
     restart: always
     environment:
-      - POSTGRES_DB=livora
-      - POSTGRES_USER=livora
-      - POSTGRES_PASSWORD=livora
+      - POSTGRES_DB=joinlivora
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U livora -d livora"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d joinlivora"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -55,10 +68,27 @@ services:
 
   livora-redis:
     image: redis:7-alpine
-    container_name: livora-redis
+    ports:
+      - "6379:6379"
     restart: always
     volumes:
       - redis_data:/data
+    networks:
+      - livora-network
+
+  livora-rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: livora-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "61613:61613"
+    environment:
+      RABBITMQ_DEFAULT_USER: livora
+      RABBITMQ_DEFAULT_PASS: livora
+    command: >
+      sh -c "rabbitmq-plugins enable --offline rabbitmq_stomp &&
+      rabbitmq-server"
     networks:
       - livora-network
 

@@ -21,7 +21,7 @@ const HasRole: React.FC<HasRoleProps> = ({ children, role, fallback = null }) =>
 
   const requiredRoles = Array.isArray(role) ? role : [role];
   
-  if (user.role === 'ADMIN' || requiredRoles.includes(user.role)) {
+  if (user.role === 'ADMIN' || requiredRoles.some(r => user.role === r)) {
     return <>{children}</>;
   }
 

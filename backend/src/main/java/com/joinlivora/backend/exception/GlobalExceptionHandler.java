@@ -28,6 +28,7 @@ import java.io.StringWriter;
 import java.time.Instant;
 import java.util.Map;
 import java.util.stream.Collectors;
+import org.apache.catalina.connector.ClientAbortException;
 
 @RestControllerAdvice
 @Slf4j
@@ -268,6 +269,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNoResourceFoundException(org.springframework.web.servlet.resource.NoResourceFoundException ex, HttpServletRequest request) {
         log.warn("Resource not found (static): {}", ex.getMessage());
         return buildErrorResponse(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage(), request, "NOT_FOUND", ex);
+    }
+
+    @ExceptionHandler(ClientAbortException.class)
+    public ResponseEntity<ErrorResponse> handleClientAbortException(ClientAbortException ex) {
+        log.debug("Client aborted the connection: {}", ex.getMessage());
+        return null;
     }
 
     @ExceptionHandler(RuntimeException.class)

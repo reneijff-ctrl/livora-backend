@@ -29,11 +29,6 @@ public class AdminController {
     private final com.joinlivora.backend.monetization.PpvPurchaseRepository ppvPurchaseRepository;
     private final AdminService adminService;
 
-    @GetMapping("/dashboard")
-    public String dashboard() {
-        return "🛠️ Admin dashboard";
-    }
-
     @GetMapping("/users")
     public Page<UserAdminResponseDTO> getUsers(UserFilterRequestDTO filter, Pageable pageable) {
         return adminService.getUsers(filter, pageable);

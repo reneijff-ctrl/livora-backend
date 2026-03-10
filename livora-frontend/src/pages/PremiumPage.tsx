@@ -19,7 +19,7 @@ const PremiumPage: React.FC = () => {
       </div>
 
       <div style={{ marginTop: '2rem' }}>
-        <Link to="/dashboard">Back to Dashboard</Link>
+        <Link to="/dashboard">Back to Viewer Hub</Link>
       </div>
     </div>
   );

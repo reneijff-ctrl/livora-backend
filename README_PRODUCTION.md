@@ -22,6 +22,9 @@ Ensure the following ports are open:
 - `80/tcp` (HTTP - redirected to HTTPS)
 - `443/tcp` (HTTPS)
 - `22/tcp` (SSH)
+- `40000-49999/udp` (Mediasoup WebRTC Media)
+- `40000-49999/tcp` (Mediasoup WebRTC Media Fallback)
+- `4000/tcp` (Mediasoup Signaling API - if not proxied)
 
 ## Project Structure on VPS
 

@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import webRtcService from '../websocket/webRtcService';
-import { SignalingType } from '../websocket/webRtcService';
+import { webSocketService } from '../websocket/webSocketService';
+import webRtcService, { SignalingType, SignalingMessage } from '../websocket/webRtcService';
+import { SIMULCAST_ENCODINGS, VIDEO_CONSTRAINTS } from '@/constants/webrtc';
+import { Device, Transport, Producer, Consumer } from 'mediasoup-client';
 import { useWs } from '../ws/WsContext';
 import SEO from '../components/SEO';
 import { showToast } from '../components/Toast';
@@ -30,23 +32,32 @@ const LiveStreaming: React.FC = () => {
   const [tipAmount, setTipAmount] = useState<number>(10);
   const [streamData, setStreamData] = useState({ title: '', description: '', minChatTokens: 0, isPaid: false, pricePerMessage: 0 });
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSession | null>(null);
+  const [chatHeight, setChatHeight] = useState(420);
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const sendTransport = useRef<Transport | null>(null);
+  const recvTransport = useRef<Transport | null>(null);
+  const producers = useRef<Map<string, Producer>>(new Map());
+  const consumers = useRef<Map<string, Consumer>>(new Map());
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
+
+
+  const loadInitialData = useCallback(async () => {
+    try {
+      const [rooms, badgeList] = await Promise.all([
+        streamingService.getLiveStreams(),
+        badgeService.getBadges()
+      ]);
+      setAvailableRooms(rooms);
+      setBadges(badgeList);
+    } catch (e) {
+      console.error('Failed to load streaming data', e);
+    }
+  }, []);
 
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        const [rooms, badgeList] = await Promise.all([
-          streamingService.getLiveStreams(),
-          badgeService.getBadges()
-        ]);
-        setAvailableRooms(rooms);
-        setBadges(badgeList);
-      } catch (e) {
-        console.error('Failed to load streaming data', e);
-      }
-    };
     loadInitialData();
 
     const unsubscribe = subscribe('/topic/streams', (_msg) => {
@@ -55,19 +66,19 @@ const LiveStreaming: React.FC = () => {
 
     return () => {
       if (unsubscribe) unsubscribe.unsubscribe();
-      webRtcService.cleanup();
+      webRtcService.leaveStream();
     };
-  }, [subscribe, connected]);
+  }, [subscribe, connected, loadInitialData]);
 
   useEffect(() => {
     if (!currentRoom) return;
 
-    const unsubscribeTips = subscribe(`/topic/rooms/${currentRoom.id}/tips`, (msg) => {
+    const unsubscribeTips = subscribe(`/topic/chat/${currentRoom.userId}`, (msg) => {
       const data = JSON.parse(msg.body);
-      if (data.type === 'ROOM_TIP') {
+      if (data.type === 'TIP') {
         const newTip = {
           id: Date.now(),
-          ...data.payload
+          ...data
         };
         setTips(prev => [...prev, newTip]);
         // Auto-remove tip after animation
@@ -101,22 +112,6 @@ const LiveStreaming: React.FC = () => {
     };
   }, [currentRoom?.id, subscribe]);
 
-  useEffect(() => {
-    // Example: Fetch live rooms. In a real app, this would be an API call
-    // or a WebSocket subscription to /topic/streams
-    const unsubscribe = subscribe('/topic/streams', (msg) => {
-      const data = JSON.parse(msg.body);
-      if (data.type === SignalingType.STREAM_START) {
-        showToast('A new stream has started!', 'info');
-        // Refresh rooms list
-      }
-    });
-
-    return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
-      webRtcService.cleanup();
-    };
-  }, [subscribe]);
 
   useEffect(() => {
     if (!connected || !user) return;
@@ -142,8 +137,21 @@ const LiveStreaming: React.FC = () => {
     };
   }, [connected, subscribe, user]);
 
+  const handleSignalingData = async (signal: SignalingMessage, roomId: string) => {
+    console.debug("STREAMING: Received signaling message (SFU mode):", signal.type);
+  };
+
   const startBroadcast = async () => {
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: VIDEO_CONSTRAINTS, 
+        audio: true 
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+
       const room = await streamingService.startStream({
         title: streamData.title || (user?.email + "'s Stream"),
         description: streamData.description,
@@ -152,21 +160,129 @@ const LiveStreaming: React.FC = () => {
         pricePerMessage: streamData.pricePerMessage
       });
       setCurrentRoom(room);
-      if (localVideoRef.current) {
-        await webRtcService.startBroadcast(room.id, localVideoRef.current);
+      
+      if (user?.id && room.id) {
+        const roomIdStr = room.id;
+        
+        // Mediasoup Publish Flow
+        webRtcService.setCurrentUserId(Number(user.id));
+        await webRtcService.connect(roomIdStr, (signal) => {
+          handleSignalingData(signal, roomIdStr);
+        });
+
+        const routerRtpCapabilities = await webRtcService.sendRequest(SignalingType.GET_ROUTER_CAPABILITIES, roomIdStr);
+        const device = await webRtcService.initDevice(routerRtpCapabilities);
+
+        const transportData = await webRtcService.sendRequest(SignalingType.CREATE_TRANSPORT, roomIdStr, { direction: 'send' });
+        const transport = device.createSendTransport(transportData);
+        sendTransport.current = transport;
+
+        transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+          try {
+            await webRtcService.sendRequest(SignalingType.CONNECT_TRANSPORT, roomIdStr, { transportId: transport.id, dtlsParameters });
+            callback();
+          } catch (e: any) { errback(e); }
+        });
+
+        transport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
+          try {
+            const { id } = await webRtcService.sendRequest(SignalingType.PRODUCE, roomIdStr, { transportId: transport.id, kind, rtpParameters, appData });
+            callback({ id });
+          } catch (e: any) { errback(e); }
+        });
+
+        const attemptIceRestart = async () => {
+          if (!transport || transport.closed) return;
+
+          if (!transport.appData.restartAttempts) {
+            transport.appData.restartAttempts = 0;
+          }
+
+          if ((transport.appData.restartAttempts as number) >= 3) {
+            console.error('PRODUCER: Max ICE restart attempts reached, stopping.');
+            return;
+          }
+
+          transport.appData.restartAttempts =
+            (transport.appData.restartAttempts ?? 0) + 1;
+          const attempt = transport.appData.restartAttempts;
+
+          try {
+            // Add 3-6 second randomized delay between restart attempts to prevent signaling storms
+            const jitterDelay = Math.floor(Math.random() * 3000) + 3000;
+            await new Promise((resolve) => setTimeout(resolve, jitterDelay));
+            if (transport.closed) return;
+
+            console.log(`PRODUCER: Initiating ICE restart (attempt ${attempt}) after ${jitterDelay}ms delay...`);
+
+            const response = await webRtcService.sendRequest(SignalingType.RESTART_ICE, roomIdStr, {
+              transportId: transport.id
+            });
+
+            await transport.restartIce({
+              iceParameters: response.iceParameters
+            });
+            console.log('PRODUCER: ICE restart success, gathering candidates...');
+          } catch (e) {
+            console.error('PRODUCER: ICE restart failed', e);
+          }
+        };
+
+        transport.on('connectionstatechange', async (state) => {
+          if (state === 'failed') {
+            console.log('PRODUCER: SendTransport connection failed, initiating immediate restart...');
+            attemptIceRestart();
+          } else if (state === 'disconnected') {
+            const jitterDelay = Math.floor(Math.random() * 3000) + 3000;
+            console.log(`PRODUCER: SendTransport connection disconnected, waiting ${jitterDelay}ms before restart check...`);
+            setTimeout(() => {
+              if (transport.connectionState === 'disconnected') {
+                console.log(`PRODUCER: Still disconnected after ${jitterDelay}ms, initiating restart...`);
+                attemptIceRestart();
+              } else {
+                console.log('PRODUCER: Recovered from disconnected state automatically.');
+              }
+            }, jitterDelay);
+          }
+        });
+
+        const videoTrack = stream.getVideoTracks()[0];
+        const audioTrack = stream.getAudioTracks()[0];
+        if (videoTrack) {
+          producers.current.set('video', await transport.produce({ 
+            track: videoTrack,
+            encodings: SIMULCAST_ENCODINGS,
+            codecOptions: {
+              videoGoogleStartBitrate: 1000
+            }
+          }));
+        }
+        if (audioTrack) producers.current.set('audio', await transport.produce({ track: audioTrack }));
+
         setIsBroadcasting(true);
         showToast('You are now LIVE!', 'success');
       }
     } catch (err) {
       console.error('Failed to start broadcast', err);
       showToast('Could not start stream', 'error');
+      webRtcService.cleanup();
     }
   };
 
   const stopBroadcast = async () => {
     try {
       await streamingService.stopStream();
-      webRtcService.cleanup();
+      webRtcService.leaveStream();
+      
+      localStreamRef.current?.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = null;
+      }
+
+      sendTransport.current = null;
+      producers.current.clear();
+
       setIsBroadcasting(false);
       showToast('Broadcast ended', 'info');
     } catch (err) {
@@ -211,18 +327,21 @@ const LiveStreaming: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto', color: '#F4F4F5' }}>
-      <SEO title="Live Streaming" />
+    <div className="bg-gradient-to-b from-zinc-950 via-black to-black min-h-screen">
+      <div className="px-8 xl:px-12 py-6 font-sans text-zinc-100">
+        <SEO title="Live Streaming" />
       
       <PrivateShowCreatorHandler />
 
       {activePrivateSession && (
-        <PrivateShowSessionOverlay 
-          sessionId={activePrivateSession.id}
-          pricePerMinute={activePrivateSession.pricePerMinute}
-          isCreator={true}
-          onSessionEnded={() => setActivePrivateSession(null)}
-        />
+        <div className="backdrop-blur-sm">
+          <PrivateShowSessionOverlay 
+            sessionId={activePrivateSession.id}
+            pricePerMinute={activePrivateSession.pricePerMinute}
+            isCreator={true}
+            onSessionEnded={() => setActivePrivateSession(null)}
+          />
+        </div>
       )}
       
       {/* Tip Animations Overlay */}
@@ -242,21 +361,21 @@ const LiveStreaming: React.FC = () => {
             border: '1px solid rgba(255, 255, 255, 0.1)',
             backdropFilter: 'blur(8px)'
           }}>
-            {tip.username} tipped {tip.amount} {tip.animationType === 'fireworks' ? '🔥' : '🪙'}
+            {tip.senderUsername} tipped {tip.amount} {tip.animationType === 'fireworks' ? '🔥' : '🪙'}
           </div>
         ))}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <h1 style={{ margin: 0, fontSize: 'clamp(1.5rem, 5vw, 2.5rem)', fontWeight: 800 }}>Live Streaming</h1>
+      <div className="flex justify-between items-center mb-8 flex-wrap gap-8">
+        <h1 className="m-0 text-4xl md:text-5xl font-extrabold tracking-tight">Live Streaming</h1>
         <TokenBalance />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
-            {/* Broadcaster Section */}
-            <section style={{ border: '1px solid rgba(255, 255, 255, 0.05)', padding: '2rem', borderRadius: '24px', backgroundColor: '#0F0F14', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+      <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr] gap-8">
+        {/* Left Column: Video dominance */}
+        <div className="flex flex-col space-y-10">
+          {/* Broadcaster Section */}
+            <section className="bg-black/40 backdrop-blur-xl border border-white/5 p-8 rounded-3xl shadow-2xl shadow-black/40">
               <h2 style={{ marginTop: 0, color: '#F4F4F5', fontWeight: 700 }}>Creator Studio</h2>
               
               {!isBroadcasting && (
@@ -266,42 +385,42 @@ const LiveStreaming: React.FC = () => {
                     placeholder="Stream Title" 
                     value={streamData.title}
                     onChange={e => setStreamData({...streamData, title: e.target.value})}
-                    style={{ padding: '0.875rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)', fontSize: '16px', backgroundColor: '#08080A', color: 'white', outline: 'none' }}
+                    className="w-full p-3.5 rounded-xl border border-white/10 bg-white/5 text-white outline-none focus:border-purple-500/50 transition-colors"
                   />
                   <input 
                     type="text" 
                     placeholder="Description" 
                     value={streamData.description}
                     onChange={e => setStreamData({...streamData, description: e.target.value})}
-                    style={{ padding: '0.875rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)', fontSize: '16px', backgroundColor: '#08080A', color: 'white', outline: 'none' }}
+                    className="w-full p-3.5 rounded-xl border border-white/10 bg-white/5 text-white outline-none focus:border-purple-500/50 transition-colors"
                   />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <label style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#A1A1AA' }}>Min Chat Tokens:</label>
+                  <div className="flex items-center gap-4">
+                    <label className="text-sm font-bold text-zinc-400">Min Chat Tokens:</label>
                     <input 
                       type="number" 
                       value={streamData.minChatTokens}
                       onChange={e => setStreamData({...streamData, minChatTokens: Number(e.target.value)})}
-                      style={{ width: '100px', padding: '0.875rem', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)', fontSize: '16px', backgroundColor: '#08080A', color: 'white', outline: 'none' }}
+                      className="w-24 p-3.5 rounded-xl border border-white/10 bg-white/5 text-white outline-none focus:border-purple-500/50 transition-colors"
                     />
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <label style={{ fontSize: '0.9rem', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#A1A1AA' }}>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-sm font-bold flex items-center gap-2 cursor-pointer text-zinc-400">
                       <input
                         type="checkbox"
                         checked={streamData.isPaid}
                         onChange={e => setStreamData({...streamData, isPaid: e.target.checked})}
-                        style={{ accentColor: '#6366f1' }}
+                        className="accent-purple-500 h-4 w-4"
                       />
                       Paid Chat (PPV)
                     </label>
                     {streamData.isPaid && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginLeft: '24px' }}>
-                        <label style={{ fontSize: '0.8rem', color: '#71717A' }}>Tokens per message:</label>
+                      <div className="flex items-center gap-4 ml-6">
+                        <label className="text-xs text-zinc-500">Tokens per message:</label>
                         <input
                           type="number"
                           value={streamData.pricePerMessage}
                           onChange={e => setStreamData({...streamData, pricePerMessage: Number(e.target.value)})}
-                          style={{ width: '80px', padding: '0.5rem', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)', backgroundColor: '#08080A', color: 'white' }}
+                          className="w-20 p-2 rounded-lg border border-white/10 bg-white/5 text-white outline-none focus:border-purple-500/50 transition-colors"
                           min={1}
                         />
                       </div>
@@ -310,66 +429,75 @@ const LiveStreaming: React.FC = () => {
                 </div>
               )}
 
-              <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', backgroundColor: '#000', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                <video 
-                  ref={localVideoRef} 
-                  autoPlay 
-                  muted 
-                  playsInline 
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                />
-                {isBroadcasting && (
-                  <div style={{ position: 'absolute', top: '15px', left: '15px', backgroundColor: '#ef4444', color: 'white', padding: '6px 14px', borderRadius: '20px', fontWeight: '800', fontSize: '0.75rem', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)', border: '1px solid rgba(255, 255, 255, 0.1)', animation: 'pulse 2s infinite' }}>
-                    🔴 LIVE
-                  </div>
-                )}
+              <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-black via-zinc-900 to-black border border-white/10 shadow-2xl shadow-purple-500/10">
+                <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', overflow: 'hidden' }}>
+                  <video 
+                    ref={localVideoRef} 
+                    autoPlay 
+                    muted 
+                    playsInline 
+                    className="w-full h-full object-cover" 
+                  />
+                  {isBroadcasting && (
+                    <div className="absolute top-6 left-6 flex items-center gap-3">
+                      <div className="px-4 py-1 rounded-full bg-red-600/90 text-xs font-semibold tracking-wider shadow-lg shadow-red-500/30">
+                        🔴 LIVE
+                      </div>
+                      <div className="px-4 py-1 rounded-full bg-black/60 backdrop-blur-md text-xs border border-white/10">
+                        {currentRoom?.viewerCount || 0} Viewers
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div style={{ marginTop: '2rem' }}>
+              <div className="mt-8">
                 {!isBroadcasting ? (
                   <button 
                     onClick={startBroadcast}
-                    style={{ padding: '1rem 2.5rem', backgroundColor: '#6366f1', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: '800', width: '100%', fontSize: '1.1rem', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)', transition: 'all 0.2s ease' }}
+                    className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-lg shadow-lg shadow-purple-600/20 transition-all duration-200"
                   >
                     Go Live
                   </button>
                 ) : (
                   <button 
                     onClick={stopBroadcast}
-                    style={{ padding: '1rem 2.5rem', backgroundColor: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer', fontWeight: '800', width: '100%', fontSize: '1.1rem', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)', transition: 'all 0.2s ease' }}
+                    className="bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/30 rounded-xl px-6 py-2 font-semibold transition-all duration-200"
                   >
-                    End Stream
+                    Stop Live
                   </button>
                 )}
               </div>
             </section>
 
             {/* Viewer Section */}
-            <section style={{ border: '1px solid rgba(255, 255, 255, 0.05)', padding: '2rem', borderRadius: '24px', backgroundColor: '#0F0F14', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
+            <section className="bg-black/40 backdrop-blur-xl border border-white/5 p-8 rounded-3xl shadow-2xl shadow-black/40">
               <h2 style={{ marginTop: 0, color: '#F4F4F5', fontWeight: 700 }}>Watch Stream</h2>
-              <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', backgroundColor: '#000', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.5)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                <video 
-                  ref={remoteVideoRef} 
-                  autoPlay 
-                  playsInline 
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                />
-                {!isWatching && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#71717A', flexDirection: 'column', gap: '1rem' }}>
-                    <span style={{ fontSize: '3rem' }}>📺</span>
-                    <span style={{ fontWeight: 600 }}>Select a stream to watch</span>
-                  </div>
-                )}
+              <div className="relative rounded-3xl overflow-hidden bg-gradient-to-br from-black via-zinc-900 to-black border border-white/10 shadow-2xl shadow-purple-500/10">
+                <div style={{ position: 'relative', width: '100%', aspectRatio: '16/9', overflow: 'hidden' }}>
+                  <video 
+                    ref={remoteVideoRef} 
+                    autoPlay 
+                    playsInline 
+                    className="w-full h-full object-cover" 
+                  />
+                  {!isWatching && (
+                    <div className="backdrop-blur-sm flex flex-col items-center justify-center h-full text-zinc-500 gap-4 absolute inset-0 bg-black/40">
+                      <span className="text-5xl">📺</span>
+                      <span className="font-semibold text-zinc-400">Select a stream to watch</span>
+                    </div>
+                  )}
+                </div>
               </div>
               
-              <div style={{ marginTop: '2rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                  <h3 style={{ margin: 0, color: '#F4F4F5' }}>Tipping</h3>
+              <div className="mt-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="m-0 text-zinc-100">Tipping</h3>
                   {isWatching && (
-                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <div className="flex gap-3">
                       <select 
                         value={tipAmount} 
                         onChange={(e) => setTipAmount(Number(e.target.value))}
-                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.1)', backgroundColor: '#08080A', color: 'white' }}
+                        className="p-2 rounded-lg border border-white/10 bg-white/5 text-white outline-none focus:border-purple-500/50 transition-colors"
                       >
                         <option value={10}>10 🪙</option>
                         <option value={50}>50 🪙</option>
@@ -379,17 +507,7 @@ const LiveStreaming: React.FC = () => {
                       </select>
                       <button 
                         onClick={handleTip}
-                        style={{ 
-                          backgroundColor: '#fbbf24', 
-                          color: '#000',
-                          border: 'none', 
-                          padding: '8px 16px', 
-                          borderRadius: '8px', 
-                          fontWeight: '800', 
-                          cursor: 'pointer',
-                          boxShadow: '0 4px 12px rgba(251, 191, 36, 0.3)',
-                          transition: 'all 0.2s ease'
-                        }}
+                        className="bg-amber-400 hover:bg-amber-500 text-black px-4 py-2 rounded-lg font-extrabold shadow-lg shadow-amber-400/20 transition-all duration-200"
                       >
                         Send Tip
                       </button>
@@ -397,13 +515,13 @@ const LiveStreaming: React.FC = () => {
                   )}
                 </div>
 
-                <h3 style={{ color: '#F4F4F5' }}>Active Streams</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <h3 className="text-zinc-100">Active Streams</h3>
+                <div className="flex flex-col gap-6">
                   {availableRooms.length === 0 ? (
                     <p style={{ fontSize: '0.9rem', color: '#71717A', fontStyle: 'italic' }}>No active streams right now.</p>
                   ) : (
                     availableRooms.map(room => (
-                      <div key={room.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '12px', alignItems: 'center', backgroundColor: '#08080A' }}>
+                    <div key={room.id} className="flex justify-between p-4 border border-white/5 rounded-2xl items-center bg-white/5">
                         <div>
                           <strong style={{ color: '#F4F4F5' }}>{room.streamTitle}</strong>
                           {room.isPremium && <span style={{ marginLeft: '8px' }}>💎</span>}
@@ -411,17 +529,11 @@ const LiveStreaming: React.FC = () => {
                         </div>
                         <button 
                           onClick={() => watchStream(room.id, room.isPremium)} 
-                          style={{ 
-                            padding: '8px 16px', 
-                            cursor: 'pointer',
-                            backgroundColor: room.isPremium ? '#fbbf24' : 'rgba(255, 255, 255, 0.05)',
-                            color: room.isPremium ? '#000' : '#F4F4F5',
-                            border: room.isPremium ? 'none' : '1px solid rgba(255, 255, 255, 0.1)',
-                            borderRadius: '8px',
-                            fontWeight: '700',
-                            fontSize: '0.875rem',
-                            transition: 'all 0.2s ease'
-                          }}
+                          className={`px-4 py-2 rounded-lg font-bold text-sm transition-all duration-200 ${
+                            room.isPremium 
+                              ? 'bg-amber-400 hover:bg-amber-500 text-black shadow-lg shadow-amber-400/20' 
+                              : 'bg-white/5 hover:bg-white/10 text-zinc-100 border border-white/10'
+                          }`}
                         >
                           Watch
                         </button>
@@ -430,31 +542,47 @@ const LiveStreaming: React.FC = () => {
                   )}
                 </div>
 
-                <div style={{ marginTop: '2.5rem' }}>
-                  <VodGallery />
-                </div>
               </div>
             </section>
-          </div>
+
+            <VodGallery />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem' }}>
+        {/* Right Column: Chat & Store */}
+        <div className="flex flex-col space-y-10">
           {(isWatching || isBroadcasting) && currentRoom && (
-            <div style={{ height: '500px', borderRadius: '24px', overflow: 'hidden', border: '1px solid rgba(255, 255, 255, 0.05)', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
-              <LiveChat 
-                streamId={activePrivateSession ? `private-session-${activePrivateSession.id}` : currentRoom.id} 
-                userId={currentRoom.userId} 
-                isPaid={currentRoom.isPaid} 
-                pricePerMessage={currentRoom.pricePerMessage} 
-              />
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center gap-4 px-2">
+                <span className="text-[10px] uppercase tracking-widest text-gray-500">Chat Height</span>
+                <input
+                  type="range"
+                  min={300}
+                  max={800}
+                  step={10}
+                  value={chatHeight}
+                  onChange={(e) => setChatHeight(Number(e.target.value))}
+                  className="w-full accent-purple-500"
+                />
+              </div>
+              <div 
+                className="shadow-2xl shadow-black/40 rounded-3xl overflow-hidden"
+                style={{ height: chatHeight }}
+              >
+                <LiveChat 
+                  streamId={activePrivateSession ? `private-session-${activePrivateSession.id}` : currentRoom.id} 
+                  userId={currentRoom.userId} 
+                  isPaid={currentRoom.isPaid} 
+                  pricePerMessage={currentRoom.pricePerMessage} 
+                />
+              </div>
             </div>
           )}
           
-          <section style={{ border: '1px solid rgba(255, 255, 255, 0.05)', padding: '2rem', borderRadius: '24px', backgroundColor: '#0F0F14', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
-            <h3 style={{ marginTop: 0, color: '#F4F4F5' }}>Badge Shop</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1.25rem' }}>
+          <section className="bg-black/40 backdrop-blur-xl border border-white/5 p-8 rounded-3xl shadow-2xl shadow-black/40">
+            <h3 className="mt-0 text-zinc-100">Badge Shop</h3>
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-6">
               {badges.map(badge => (
-                <div key={badge.id} style={{ padding: '1.25rem', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '16px', textAlign: 'center', backgroundColor: '#08080A', transition: 'transform 0.2s ease' }}>
+                <div key={badge.id} className="p-5 border border-white/5 rounded-2xl text-center bg-white/5 transition-transform duration-200 hover:scale-[1.02]">
                   <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>
                     {badge.name === 'VIP' ? '💎' : badge.name === 'TOP_FAN' ? '🔥' : '⭐'}
                   </div>
@@ -462,7 +590,7 @@ const LiveStreaming: React.FC = () => {
                   <p style={{ fontSize: '0.875rem', color: '#71717A', marginBottom: '1rem' }}>{badge.tokenCost} 🪙</p>
                   <button 
                     onClick={() => purchaseBadge(badge.id)}
-                    style={{ width: '100%', padding: '10px', backgroundColor: '#6366f1', color: 'white', border: 'none', borderRadius: '10px', cursor: 'pointer', fontSize: '0.875rem', fontWeight: '800', boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)' }}
+                    className="w-full py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-purple-600/20 transition-all duration-200"
                   >
                     Buy
                   </button>
@@ -482,6 +610,7 @@ const LiveStreaming: React.FC = () => {
           100% { transform: translateY(-500px) scale(1); opacity: 0; }
         }
       `}</style>
+      </div>
     </div>
   );
 };

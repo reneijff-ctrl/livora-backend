@@ -7,7 +7,7 @@ import { showToast } from '../components/Toast';
  * Configured with withCredentials=true to support cookie-based authentication and CSRF.
  */
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: 'http://localhost:8080/api',
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
@@ -54,10 +54,13 @@ const processQueue = (error: any, token: string | null = null) => {
  * Centralized error handler for all API requests.
  */
 const handleApiError = async (error: any) => {
+  if (axios.isCancel(error) || error?.name === 'AbortError') {
+    return Promise.reject(error);
+  }
   const originalRequest = error.config;
 
   if (error.response?.status === 401 && !originalRequest._retry) {
-    if (originalRequest.url === '/api/auth/refresh' || originalRequest.url === '/api/auth/login') {
+    if (originalRequest.url === '/auth/refresh' || originalRequest.url === '/auth/login') {
       clearTokens();
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
@@ -84,7 +87,7 @@ const handleApiError = async (error: any) => {
     const refreshToken = getRefreshToken();
     if (refreshToken) {
       try {
-        const response = await axios.post(`${apiClient.defaults.baseURL}/api/auth/refresh`, {
+        const response = await axios.post(`${apiClient.defaults.baseURL}/auth/refresh`, {
           refreshToken: refreshToken
         }, { withCredentials: true });
 
@@ -159,9 +162,38 @@ const handleApiError = async (error: any) => {
   return Promise.reject(error);
 };
 
+/**
+ * Utility function to normalize API response data to prevent runtime crashes.
+ * Ensures null/undefined values are converted to safe defaults (e.g., empty objects).
+ */
+function normalizeData(data: any): any {
+  if (data === null || data === undefined) {
+    return {}
+  }
+
+  if (Array.isArray(data)) {
+    return data ?? []
+  }
+
+  if (typeof data === "object") {
+    const normalized: any = {}
+    for (const key in data) {
+      normalized[key] = normalizeData(data[key])
+    }
+    return normalized
+  }
+
+  return data
+}
+
 // Add response interceptors
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.status !== 204) {
+      response.data = normalizeData(response.data)
+    }
+    return response
+  },
   handleApiError
 );
 

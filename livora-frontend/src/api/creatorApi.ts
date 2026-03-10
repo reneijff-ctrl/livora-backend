@@ -19,7 +19,9 @@ export const EARNINGS_REFRESH_INTERVAL = 60000; // 60 seconds fallback polling
  * @returns A promise that resolves to the creator's earnings data.
  */
 export const getCreatorEarnings = async (): Promise<CreatorEarnings> => {
-  const response = await apiClient.get<CreatorEarnings>('/api/creator/earnings');
+  const token = localStorage.getItem("token");
+  if (!token) return { todayTokens: 0, todayRevenue: 0, totalTokens: 0, totalRevenue: 0, pendingPayout: 0, lastUpdated: new Date().toISOString() };
+  const response = await apiClient.get<CreatorEarnings>('/creator/earnings');
   return response.data;
 };
 
@@ -30,12 +32,14 @@ export interface CreatorSettings {
 }
 
 export const getCreatorSettings = async (): Promise<CreatorSettings> => {
-  const response = await apiClient.get<CreatorSettings>('/api/creator/settings');
+  const token = localStorage.getItem("token");
+  if (!token) return { username: "", category: "", active: false };
+  const response = await apiClient.get<CreatorSettings>('/creator/settings');
   return response.data;
 };
 
 export const updateCreatorSettings = async (settings: CreatorSettings): Promise<CreatorSettings> => {
-  const response = await apiClient.put<CreatorSettings>('/api/creator/settings', settings);
+  const response = await apiClient.put<CreatorSettings>('/creator/settings', settings);
   return response.data;
 };
 
@@ -45,7 +49,7 @@ export const updateCreatorSettings = async (settings: CreatorSettings): Promise<
  * @returns A promise that resolves to the updated user data.
  */
 export const becomeCreator = async (): Promise<User> => {
-  const response = await apiClient.post<User>('/api/creator/onboard');
+  const response = await apiClient.post<User>('/creator/onboard');
   const user = response.data;
 
   if (user) {
@@ -86,7 +90,9 @@ export interface CreatorDashboard {
  * @returns A promise that resolves to the creator's dashboard data.
  */
 export const getCreatorDashboard = async (skipToast = false): Promise<CreatorDashboard> => {
-  const response = await apiClient.get('/api/creator/dashboard', {
+  const token = localStorage.getItem("token");
+  if (!token) return { creatorProfile: adaptCreator(null), stats: {} as any };
+  const response = await apiClient.get('/creator/dashboard', {
     // @ts-ignore
     _skipToast: skipToast
   });

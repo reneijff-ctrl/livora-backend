@@ -54,7 +54,8 @@ public class CreatorPayoutController {
             return ResponseEntity.ok(Map.of("onboardingUrl", ""));
         }
         log.info("STRIPE: Onboarding link requested by creator: {}", principal.getName());
-        User user = userService.getByEmail(principal.getName());
+        User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
 
         String stripeAccountId = stripeConnectService.createOrGetStripeAccount(user);
 

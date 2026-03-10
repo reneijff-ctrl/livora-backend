@@ -15,17 +15,17 @@ export interface UserBadge {
 
 const badgeService = {
   async getBadges(): Promise<Badge[]> {
-    const response = await apiClient.get<Badge[]>('/api/badges');
+    const response = await apiClient.get<Badge[]>('/badges');
     return response.data;
   },
 
   async purchaseBadge(badgeId: string): Promise<UserBadge> {
-    const response = await apiClient.post<UserBadge>(`/api/badges/purchase/${badgeId}`);
+    const response = await apiClient.post<UserBadge>(`/badges/purchase/${badgeId}`);
     return response.data;
   },
 
   async getMyBadges(): Promise<UserBadge[]> {
-    const response = await apiClient.get<UserBadge[]>('/api/badges/me');
+    const response = await apiClient.get<UserBadge[]>('/badges/me');
     return response.data;
   }
 };

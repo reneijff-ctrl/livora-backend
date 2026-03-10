@@ -17,8 +17,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const unsubscribe = authStore.subscribe(setAuthState);
     
     // On mount, fetch user data to verify authentication status
-    authStore.fetchUser().catch(() => {
-      // fetchUser handles logout and state cleanup on error (e.g. 401)
+    authStore.refresh().catch(() => {
+      // refresh handles logout and state cleanup on error (e.g. 401)
     });
     
     return unsubscribe;
@@ -40,10 +40,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     webSocketService.disconnect();
   }, []);
 
-  const bootstrap = useCallback(async () => { await authStore.fetchUser(); }, []);
-  const fetchMe = useCallback(async () => { await authStore.fetchMe(); }, []);
+  const bootstrap = useCallback(async () => { await authStore.refresh(); }, []);
+  const refresh = useCallback(async () => { await authStore.refresh(); }, []);
   const refreshTokenBalance = useCallback(async () => { return await authStore.refreshBalance(); }, []);
-  const refreshSubscription = useCallback(async () => { await authStore.fetchUser(); }, []);
+  const refreshSubscription = useCallback(async () => { await authStore.refresh(); }, []);
 
   const hasPremiumAccess = useCallback(() => {
     const user = authState.user;
@@ -64,10 +64,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     subscriptionStatus: authState.user?.subscription?.status || 'NONE',
     tokenBalance: authState.user?.tokenBalance || 0,
     bootstrap,
-    fetchMe,
+    refresh,
     refreshTokenBalance,
     refreshSubscription,
-  }), [authState, login, logout, bootstrap, fetchMe, refreshTokenBalance, refreshSubscription, hasPremiumAccess]);
+  }), [authState, login, logout, bootstrap, refresh, refreshTokenBalance, refreshSubscription, hasPremiumAccess]);
 
   return (
     <AuthContext.Provider value={value}>

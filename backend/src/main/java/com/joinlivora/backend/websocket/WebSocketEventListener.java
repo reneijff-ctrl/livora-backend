@@ -39,7 +39,7 @@ public class WebSocketEventListener {
             String destination = getDestinationForEventType(event.getEventType());
             if (destination != null) {
                 messagingTemplate.convertAndSendToUser(
-                        user.getEmail(),
+                        user.getId().toString(),
                         destination,
                         message
                 );
@@ -113,7 +113,7 @@ public class WebSocketEventListener {
             // In a real system, we'd find all active rooms and if the creator is a viewer, send a kill signal.
             // For now, we broadcast an ACCESS_DENIED signaling message to the creator's webrtc queue.
             messagingTemplate.convertAndSendToUser(
-                event.getUser().getEmail(),
+                event.getUser().getId().toString(),
                 "/queue/webrtc",
                 RealtimeMessage.builder()
                     .type("ACCESS_DENIED")

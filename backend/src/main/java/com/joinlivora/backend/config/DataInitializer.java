@@ -22,6 +22,7 @@ public class DataInitializer {
 
                 User user = new User();
                 user.setEmail("test@test.com");
+                user.setUsername("testuser");
                 user.setPassword(passwordEncoder.encode("password"));
                 user.setRole(Role.USER);
 
@@ -33,6 +34,7 @@ public class DataInitializer {
             if (userRepository.findByEmail("admin@test.com").isEmpty()) {
                 User admin = new User();
                 admin.setEmail("admin@test.com");
+                admin.setUsername("admin");
                 admin.setPassword(passwordEncoder.encode("password"));
                 admin.setRole(Role.ADMIN);
                 userRepository.save(admin);

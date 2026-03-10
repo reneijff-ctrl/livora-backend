@@ -12,6 +12,10 @@ public interface CreatorEarningsRepository extends JpaRepository<CreatorEarnings
     Optional<CreatorEarnings> findByUser(User user);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT e FROM CreatorEarnings e WHERE e.user = :user")
+    Optional<CreatorEarnings> findByUserWithLock(User user);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT e FROM CreatorEarnings e WHERE e.id = :id")
     Optional<CreatorEarnings> findByIdWithLock(UUID id);
 }

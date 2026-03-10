@@ -7,6 +7,11 @@ spring:
     pathmatch:
       matching-strategy: path_pattern_parser
   
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+  
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -74,6 +79,8 @@ server:
   error:
     include-stacktrace: never
     include-message: always
+  tomcat:
+    max-swallow-size: -1
   servlet:
     multipart:
       max-file-size: 5MB
@@ -106,10 +113,18 @@ stripe:
   token-success-url: ${FRONTEND_TOKEN_SUCCESS_URL:${FRONTEND_URL:http://localhost:3000}/tokens/success}
   token-cancel-url: ${FRONTEND_TOKEN_CANCEL_URL:${FRONTEND_URL:http://localhost:3000}/tokens/cancel}
 
+mediasoup:
+  url: ${MEDIASOUP_URL:http://localhost:4000}
+  internal-secret: ${MEDIASOUP_INTERNAL_SECRET:default_mediasoup_secret}
+  timeout:
+    connect: 3000
+    read: 5000
+
+file:
+  upload-dir: ${UPLOAD_DIR:uploads}
+
 livora:
   base-url: ${BASE_URL:http://localhost:8080}
-  upload:
-    dir: ${UPLOAD_DIR:uploads}
   tipping:
     min-tokens: 1
     max-per-minute: 5
@@ -124,10 +139,54 @@ livora:
     earnings-dry-run: ${EARNINGS_DRY_RUN:false}
   chat:
     slow-mode-interval-seconds: 3
+    moderation:
+      banned-words:
+        - scam
+        - phishing
+        - hack
+        - giveaway
+        - free tokens
+        - porn
+        - nsfw
+      caps-threshold: 0.7
+      repeated-chars-threshold: 6
+      duplicate-window-seconds: 30
+      duplicate-threshold: 3
+      toxic-keywords:
+        - badword1
+        - badword2
+      toxic-patterns:
+        - ".*f[u*][c*]k.*"
+    sentiment:
+      positive-keywords:
+        - love
+        - happy
+        - great
+        - awesome
+        - good
+        - best
+        - cool
+        - nice
+        - thanks
+        - thank
+        - wonderful
+      negative-keywords:
+        - hate
+        - sad
+        - bad
+        - worst
+        - awful
+        - terrible
+        - horrible
+        - angry
+        - dislike
+        - no
+        - stop
   security:
     enforce-https: ${ENFORCE_HTTPS:false}
     cors:
       allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://joinlivora.com}
+    trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
     rate-limit:
       anonymous: 30
       authenticated: 200
@@ -136,6 +195,11 @@ livora:
       websocket: 10000
       login: 5
       register: 3
+    max-sessions-per-ip: ${WEBSOCKET_MAX_SESSIONS_PER_IP:10}
+    max-global-sessions: ${WEBSOCKET_MAX_GLOBAL_SESSIONS:5000}
+    max-handshake-per-minute: ${WEBSOCKET_MAX_HANDSHAKE_PER_MINUTE:20}
+    max-joins-per-window: ${WEBSOCKET_MAX_JOINS_PER_WINDOW:100}
+    join-window-ms: ${WEBSOCKET_JOIN_WINDOW_MS:5000}
   payout:
     hold-rules:
       none:
@@ -155,6 +219,12 @@ livora:
         chargeback-rate: 1.0
         days: 14
     unlock-check-interval-ms: 600000
+  websocket:
+    broker:
+      host: ${STOMP_BROKER_HOST:localhost}
+      port: ${STOMP_BROKER_PORT:61613}
+      username: ${STOMP_BROKER_USERNAME:livora}
+      password: ${STOMP_BROKER_PASSWORD:livora}
   fraud:
     velocity:
       login:

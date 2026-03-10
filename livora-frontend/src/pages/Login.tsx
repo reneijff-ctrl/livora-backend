@@ -46,7 +46,7 @@ const Login: React.FC = () => {
     <div style={styles.container}>
       <SEO 
         title="Login" 
-        description="Sign in to your Livora account to access your dashboard and premium features."
+        description="Sign in to your Livora account to access your Viewer Hub and premium features."
         canonical="/login"
       />
       <div style={styles.card}>

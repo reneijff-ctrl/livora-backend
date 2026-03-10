@@ -1,5 +1,6 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
 import com.joinlivora.backend.exception.PaymentLockedException;
 import com.joinlivora.backend.exception.TrustChallengeException;
 import com.joinlivora.backend.fraud.dto.RiskDecisionResult;
@@ -16,6 +17,7 @@ import com.joinlivora.backend.user.User;
 import com.stripe.StripeClient;
 import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
+import com.stripe.net.RequestOptions;
 import com.stripe.param.checkout.SessionCreateParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +39,7 @@ public class PaymentService {
     private final AutoFreezePolicyService autoFreezePolicyService;
     private final com.joinlivora.backend.fraud.service.FraudRiskScoreService fraudRiskScoreService;
     private final com.joinlivora.backend.fraud.service.FraudRiskService fraudRiskService;
+    private final AdminRealtimeEventService adminRealtimeEventService;
 
     @Value("${stripe.premium-plan-id}")
     private String premiumPlanId;
@@ -128,8 +131,14 @@ public class PaymentService {
 
         builder.setPaymentIntentData(piBuilder.build());
 
+        long timestampBucket = System.currentTimeMillis() / 10000;
+        String idempotencyKey = "checkout_" + user.getId() + "_" + stripePriceId + "_" + timestampBucket;
+        RequestOptions options = RequestOptions.builder()
+                .setIdempotencyKey(idempotencyKey)
+                .build();
+
         try {
-            Session session = stripeClient.checkout().sessions().create(builder.build());
+            Session session = stripeClient.checkout().sessions().create(builder.build(), options);
             return session.getUrl();
         } catch (Exception e) {
             log.error("Stripe checkout session failed", e);
@@ -204,8 +213,14 @@ public class PaymentService {
             builder.setSubscriptionData(subBuilder.build());
         }
 
+        long timestampBucket = System.currentTimeMillis() / 10000;
+        String idempotencyKey = "checkout_" + user.getId() + "_" + priceId + "_" + timestampBucket;
+        RequestOptions options = RequestOptions.builder()
+                .setIdempotencyKey(idempotencyKey)
+                .build();
+
         try {
-            Session session = stripeClient.checkout().sessions().create(builder.build());
+            Session session = stripeClient.checkout().sessions().create(builder.build(), options);
             return session.getUrl();
         } catch (Exception e) {
             log.error("Stripe checkout session failed", e);
@@ -252,5 +267,10 @@ public class PaymentService {
             log.info("SECURITY [trust_evaluation]: Trust challenge required for payment for creator: {}. ExplanationId: {}", user.getEmail(), result.getExplanationId());
             throw new TrustChallengeException("Additional verification required to complete this action.");
         }
+    }
+
+    public void notifyPaymentCompleted(Payment payment) {
+        log.info("PAYMENT: Notifying admin of completed payment: {} {}", payment.getAmount(), payment.getCurrency());
+        adminRealtimeEventService.broadcastPaymentCompleted(payment);
     }
 }

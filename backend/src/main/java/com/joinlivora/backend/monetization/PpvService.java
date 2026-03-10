@@ -5,6 +5,7 @@ import com.joinlivora.backend.exception.ResourceNotFoundException;
 import com.joinlivora.backend.payout.CreatorEarningsService;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.util.UrlUtils;
 import com.stripe.StripeClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -46,8 +47,12 @@ public class PpvService {
         this.stripeClient = stripeClient;
     }
 
+    @Transactional(readOnly = true)
     public List<PpvContent> getCreatorPpvContent(User creator) {
-        return ppvContentRepository.findAllByCreatorAndActiveTrue(creator);
+        List<PpvContent> contents = ppvContentRepository.findAllByCreatorAndActiveTrue(creator);
+        // Ensure URLs are sanitized for the response
+        contents.forEach(c -> c.setContentUrl(UrlUtils.sanitizeUrl(c.getContentUrl())));
+        return contents;
     }
 
     public PpvContent getPpvContent(UUID id) {
@@ -68,7 +73,8 @@ public class PpvService {
 
         // In a real app, generate a signed URL here.
         // For now, return the secured URL (mocking signed URL behavior by adding a token)
-        return content.getContentUrl() + "?token=" + UUID.randomUUID().toString() + "&expires=" + (System.currentTimeMillis() + 3600000);
+        String baseUrl = UrlUtils.sanitizeUrl(content.getContentUrl());
+        return baseUrl + "?token=" + UUID.randomUUID().toString() + "&expires=" + (System.currentTimeMillis() + 3600000);
     }
 
     @Transactional

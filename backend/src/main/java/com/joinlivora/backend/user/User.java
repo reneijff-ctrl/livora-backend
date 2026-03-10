@@ -6,13 +6,18 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "users", indexes = {
-    @Index(name = "idx_user_email", columnList = "email", unique = true)
+    @Index(name = "idx_user_email", columnList = "email", unique = true),
+    @Index(name = "idx_user_role", columnList = "role"),
+    @Index(name = "idx_user_created_at", columnList = "created_at")
 })
 public class User {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(unique = true, nullable = false, length = 30)
+    private String username;
 
     @Column(unique = true, nullable = false)
     private String email;
@@ -98,8 +103,11 @@ public class User {
     }
 
     public String getUsername() {
-        if (email == null) return null;
-        return email.split("@")[0];
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
     }
 
     public String getPassword() {

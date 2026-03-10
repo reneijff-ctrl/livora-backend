@@ -24,6 +24,24 @@ public class CacheConfig {
                 .withCacheConfiguration("ipReputation",
                         RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofHours(24)))
                 .withCacheConfiguration("publicContent",
-                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(10)));
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(10)))
+                .withCacheConfiguration("adminDashboardData",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(15)))
+                .withCacheConfiguration("adminDashboardMetrics",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(15)))
+                .withCacheConfiguration("adminActivity",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(15)))
+                .withCacheConfiguration("adminDashboardCharts",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(1)))
+                .withCacheConfiguration("adminDashboardPayoutVolume",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(5)))
+                .withCacheConfiguration("viewer_access",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)))
+                .withCacheConfiguration("active_streams",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)))
+                .withCacheConfiguration("streams",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofSeconds(30)))
+                .withCacheConfiguration("adminDashboardFreezesPerDay",
+                        RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofMinutes(5)));
     }
 }

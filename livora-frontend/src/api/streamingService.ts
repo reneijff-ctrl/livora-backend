@@ -28,32 +28,32 @@ export interface LiveStream {
 
 const streamingService = {
   async getLiveStreams(): Promise<StreamRoom[]> {
-    const response = await apiClient.get<StreamRoom[]>('/api/streams/live');
+    const response = await apiClient.get<StreamRoom[]>('/streams/live');
     return response.data;
   },
 
   async getStream(id: string): Promise<StreamRoom> {
-    const response = await apiClient.get<StreamRoom>(`/api/streams/${id}`);
+    const response = await apiClient.get<StreamRoom>(`/streams/${id}`);
     return response.data;
   },
 
   async startStream(data: { title: string; description?: string; minChatTokens?: number; recordingEnabled?: boolean; isPaid?: boolean; pricePerMessage?: number }): Promise<StreamRoom> {
-    const response = await apiClient.post<StreamRoom>('/api/streams/creator/start', data);
+    const response = await apiClient.post<StreamRoom>('/streams/creator/start', data);
     return response.data;
   },
 
   async stopStream(): Promise<StreamRoom> {
-    const response = await apiClient.post<StreamRoom>('/api/streams/creator/stop');
+    const response = await apiClient.post<StreamRoom>('/streams/creator/stop');
     return response.data;
   },
 
   async getMyRoom(): Promise<StreamRoom> {
-    const response = await apiClient.get<StreamRoom>('/api/streams/creator/room');
+    const response = await apiClient.get<StreamRoom>('/streams/creator/room');
     return response.data;
   },
 
   async getLiveStatus(): Promise<{ isLive: boolean; viewerCount: number; streamTitle: string }> {
-    const response = await apiClient.get<{ isLive: boolean; viewerCount: number; streamTitle: string }>('/api/creator/live/status');
+    const response = await apiClient.get<{ isLive: boolean; viewerCount: number; streamTitle: string }>('/creator/live/status');
     return response.data;
   },
 

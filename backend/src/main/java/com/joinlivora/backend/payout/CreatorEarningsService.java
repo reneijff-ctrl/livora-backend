@@ -185,6 +185,13 @@ public class CreatorEarningsService {
         recordTokenEarning(viewer, creator, amount, sessionId, com.joinlivora.backend.fraud.model.RiskLevel.LOW, EarningSource.PRIVATE_SHOW);
     }
 
+    @Transactional
+    @CacheEvict(value = "creatorEarnings", key = "#creator.id")
+    public void recordPPVTokenEarning(User viewer, User creator, long amount, java.util.UUID contentId) {
+        // For PPV, we assume LOW risk by default as it's a direct user action
+        recordTokenEarning(viewer, creator, amount, contentId, com.joinlivora.backend.fraud.model.RiskLevel.LOW, EarningSource.PPV);
+    }
+
     private void recordTokenEarning(User viewer, User creator, long amount, java.util.UUID roomId, com.joinlivora.backend.fraud.model.RiskLevel riskLevel, EarningSource source) {
         BigDecimal gross = BigDecimal.valueOf(amount);
         BigDecimal fee = gross.multiply(getPlatformFeeRate()).setScale(0, RoundingMode.HALF_UP);
@@ -293,7 +300,7 @@ public class CreatorEarningsService {
                     .platformFee(earning.getPlatformFee().negate())
                     .netAmount(earning.getNetAmount().negate())
                     .currency(earning.getCurrency())
-                    .sourceType(earning.getSourceType())
+                    .sourceType(EarningSource.CHARGEBACK)
                     .stripeChargeId(earning.getStripeChargeId() + "_reversal")
                     .build();
             creatorEarningRepository.save(reversal);
@@ -407,8 +414,8 @@ public class CreatorEarningsService {
         }
     }
 
-    private void creditCreatorBalance(User creator, long tokens) {
-        CreatorEarnings earnings = creatorEarningsRepository.findByUser(creator)
+    public void creditCreatorBalance(User creator, long tokens) {
+        CreatorEarnings earnings = creatorEarningsRepository.findByUserWithLock(creator)
                 .orElse(CreatorEarnings.builder()
                         .user(creator)
                         .totalEarnedTokens(0)
@@ -421,8 +428,8 @@ public class CreatorEarningsService {
         creatorEarningsRepository.save(earnings);
     }
 
-    private void creditLockedBalance(User creator, long tokens) {
-        CreatorEarnings earnings = creatorEarningsRepository.findByUser(creator)
+    public void creditLockedBalance(User creator, long tokens) {
+        CreatorEarnings earnings = creatorEarningsRepository.findByUserWithLock(creator)
                 .orElse(CreatorEarnings.builder()
                         .user(creator)
                         .totalEarnedTokens(0)
@@ -435,42 +442,43 @@ public class CreatorEarningsService {
         creatorEarningsRepository.save(earnings);
     }
 
-    private void updateLiveStats(User creator, BigDecimal netAmount, long netTokens, EarningSource source) {
+    public void updateLiveStats(User creator, BigDecimal netAmount, long netTokens, EarningSource source) {
         LegacyCreatorProfile profile = creatorProfileRepository.findByUser(creator).orElse(null);
         if (profile == null) return;
 
-        CreatorStats stats = creatorStatsRepository.findById(profile.getId())
-                .orElse(CreatorStats.builder()
-                        .creatorId(profile.getId())
-                        .updatedAt(Instant.now())
+        UUID creatorId = profile.getId();
+        Instant now = Instant.now();
+
+        // Ensure stats record exists before atomic increment
+        if (!creatorStatsRepository.existsById(creatorId)) {
+            try {
+                creatorStatsRepository.save(CreatorStats.builder()
+                        .creatorId(creatorId)
+                        .updatedAt(now)
                         .build());
-
-        stats.setTotalNetEarnings(stats.getTotalNetEarnings().add(netAmount));
-        stats.setTotalNetTokens(stats.getTotalNetTokens() + netTokens);
-        stats.setTodayNetEarnings(stats.getTodayNetEarnings().add(netAmount));
-        stats.setTodayNetTokens(stats.getTodayNetTokens() + netTokens);
-
-        if (netAmount.compareTo(BigDecimal.ZERO) >= 0) {
-            if (source == EarningSource.SUBSCRIPTION) {
-                stats.setSubscriptionCount(stats.getSubscriptionCount() + 1);
-            } else if (source == EarningSource.TIP) {
-                stats.setTipsCount(stats.getTipsCount() + 1);
-            } else if (source == EarningSource.HIGHLIGHTED_CHAT) {
-                stats.setHighlightsCount(stats.getHighlightsCount() + 1);
-            }
-        } else {
-            // Reversal
-            if (source == EarningSource.SUBSCRIPTION) {
-                stats.setSubscriptionCount(Math.max(0, stats.getSubscriptionCount() - 1));
-            } else if (source == EarningSource.TIP) {
-                stats.setTipsCount(Math.max(0, stats.getTipsCount() - 1));
-            } else if (source == EarningSource.HIGHLIGHTED_CHAT) {
-                stats.setHighlightsCount(Math.max(0, stats.getHighlightsCount() - 1));
+                creatorStatsRepository.flush();
+            } catch (Exception e) {
+                // Ignore if created concurrently
             }
         }
 
-        stats.setUpdatedAt(Instant.now());
-        creatorStatsRepository.save(stats);
+        // Perform atomic increments
+        if (netAmount.compareTo(BigDecimal.ZERO) != 0) {
+            creatorStatsRepository.incrementTotalNetEarnings(creatorId, netAmount, now);
+        }
+        
+        if (netTokens != 0) {
+            creatorStatsRepository.incrementTotalNetTokens(creatorId, netTokens, now);
+        }
+
+        long delta = netAmount.compareTo(BigDecimal.ZERO) >= 0 ? 1 : -1;
+        if (source == EarningSource.SUBSCRIPTION) {
+            creatorStatsRepository.incrementSubscriptionCount(creatorId, delta, now);
+        } else if (source == EarningSource.TIP) {
+            creatorStatsRepository.incrementTipsCount(creatorId, delta, now);
+        } else if (source == EarningSource.HIGHLIGHTED_CHAT) {
+            creatorStatsRepository.incrementHighlightsCount(creatorId, delta, now);
+        }
     }
 
     @Transactional
@@ -509,13 +517,13 @@ public class CreatorEarningsService {
             final BigDecimal revenueToUnlock = totalRevenue;
             final BigDecimal eurToUnlockForNewBalance = totalEurForNewBalance;
             
-            creatorEarningsRepository.findByUser(creator).ifPresent(ce -> {
+            creatorEarningsRepository.findByUserWithLock(creator).ifPresent(ce -> {
                 ce.setAvailableTokens(ce.getAvailableTokens() + tokensToUnlock);
                 ce.setLockedTokens(Math.max(0, ce.getLockedTokens() - tokensToUnlock));
                 creatorEarningsRepository.save(ce);
             });
 
-            payoutCreatorEarningsRepository.findByCreator(creator).ifPresent(ce -> {
+            payoutCreatorEarningsRepository.findByUserWithLock(creator).ifPresent(ce -> {
                 ce.setAvailableBalance(ce.getAvailableBalance().add(eurToUnlockForNewBalance));
                 ce.setPendingBalance(ce.getPendingBalance().subtract(eurToUnlockForNewBalance).max(BigDecimal.ZERO));
                 payoutCreatorEarningsRepository.save(ce);
@@ -626,10 +634,11 @@ public class CreatorEarningsService {
     }
 
     @Transactional(readOnly = true)
-    public List<CreatorEarning> getRecentTransactions(User creator, int limit) {
+    public List<CreatorEarningDto> getRecentTransactions(User creator, int limit) {
         return creatorEarningRepository.findAllByCreatorOrderByCreatedAtDesc(creator)
                 .stream()
                 .limit(limit)
+                .map(this::mapToDto)
                 .toList();
     }
 
@@ -758,10 +767,13 @@ public class CreatorEarningsService {
                 .locked(entity.isLocked())
                 .createdAt(entity.getCreatedAt())
                 .status(entity.isLocked() ? "LOCKED" : "AVAILABLE")
+                .supporterName(entity.getUser() != null ? 
+                        (entity.getUser().getUsername() != null ? entity.getUser().getUsername() : entity.getUser().getEmail().split("@")[0]) : 
+                        "Anonymous")
                 .build();
     }
 
-    private BigDecimal convertToEur(BigDecimal amount, String currency) {
+    public BigDecimal convertToEur(BigDecimal amount, String currency) {
         if ("EUR".equalsIgnoreCase(currency)) {
             return amount;
         }
@@ -778,8 +790,9 @@ public class CreatorEarningsService {
         return earning.getPayoutHold().getStatus() == PayoutHoldStatus.RELEASED;
     }
 
-    private void creditPayoutEarnings(User creator, BigDecimal netAmount, boolean isLocked) {
-        com.joinlivora.backend.payout.CreatorEarnings earnings = payoutCreatorEarningsRepository.findByCreator(creator)
+    @Transactional
+    public void creditPayoutEarnings(User creator, BigDecimal netAmount, boolean isLocked) {
+        com.joinlivora.backend.payout.CreatorEarnings earnings = payoutCreatorEarningsRepository.findByUserWithLock(creator)
                 .orElse(com.joinlivora.backend.payout.CreatorEarnings.builder()
                         .creator(creator)
                         .availableBalance(BigDecimal.ZERO)
@@ -796,11 +809,11 @@ public class CreatorEarningsService {
         payoutCreatorEarningsRepository.save(earnings);
     }
 
-    private void updatePlatformBalances(BigDecimal fee, BigDecimal creatorEarning, String currency) {
+    public void updatePlatformBalances(BigDecimal fee, BigDecimal creatorEarning, String currency) {
         BigDecimal feeInEur = convertToEur(fee, currency);
         BigDecimal creatorEarningInEur = convertToEur(creatorEarning, currency);
         
-        PlatformBalance balance = platformBalanceRepository.findSingle()
+        PlatformBalance balance = platformBalanceRepository.findSingleWithLock()
                 .orElse(PlatformBalance.builder()
                         .totalFeesCollected(BigDecimal.ZERO)
                         .totalCreatorEarnings(BigDecimal.ZERO)

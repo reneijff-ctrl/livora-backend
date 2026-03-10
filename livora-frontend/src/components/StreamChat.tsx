@@ -5,23 +5,32 @@ import { showToast } from './Toast';
 import badgeService, { UserBadge } from '../api/badgeService';
 
 interface ChatMessage {
-  userId: string;
-  username: string;
-  message: string;
-  isPaid: boolean;
-  amount: number;
+  id?: string;
+  userId?: string;
+  username?: string;
+  senderUsername?: string;
+  message?: string;
+  content?: string;
+  isPaid?: boolean;
+  amount?: number;
   badgeType?: string;
-  createdAt: string;
+  createdAt?: string;
+  timestamp?: string;
   system?: boolean;
   moderated?: boolean;
+  highlight?: string;
+  type?: string;
 }
 
 interface StreamChatProps {
   streamId: string;
+  creatorUserId: string | number;
   minChatTokens?: number;
 }
 
-const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) => {
+const GIF_URL_REGEX = /https?:\/\/\S+\.gif(?:\?\S+)?/i;
+
+const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minChatTokens = 0 }) => {
   const { user, tokenBalance, refreshTokenBalance } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -29,29 +38,58 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
   const [paidAmount, setPaidAmount] = useState<number>(minChatTokens > 0 ? minChatTokens : 10);
   const [myBadges, setMyBadges] = useState<UserBadge[]>([]);
   const [isMuted, setIsMuted] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [showNewMessages, setShowNewMessages] = useState(false);
+  const isAtBottomRef = useRef(true);
 
   useEffect(() => {
     if (!streamId) return;
 
-    const unsubscribe = webSocketService.subscribe(`/topic/chat/stream-${streamId}`, (msg) => {
-      const data = JSON.parse(msg.body);
-      // Backend for stream chat sends the message directly, not wrapped in RealtimeMessage
-      // But system messages from ChatModerationService are ChatMessage wrapped in RealtimeMessage
+    const handleIncomingMessage = (msg: any) => {
+      const incoming = JSON.parse(msg.body);
       
-      let chatMsg = data;
-      if (data.type === 'chat' && data.chatMessage) {
-        chatMsg = data.chatMessage;
-      }
-
-      if (chatMsg.system) {
-        const content = chatMsg.content || chatMsg.message;
-        showToast(content, 'info');
-        if (content.includes('User muted') && user && content.includes(user.email)) {
-          setIsMuted(true);
+      if (
+        incoming.type === 'CHAT' ||
+        incoming.type === 'TIP' ||
+        incoming.type === 'BOT' ||
+        incoming.type === 'SYSTEM' ||
+        incoming.type === 'SUPER_TIP'
+      ) {
+        if (incoming.system || incoming.type === 'SYSTEM') {
+          const content = incoming.content || incoming.message;
+          if (content) {
+            showToast(content, 'info');
+            if (content.includes('User muted') && user && content.includes(user.username)) {
+              setIsMuted(true);
+            }
+          }
         }
+        setMessages((prev) => [...prev, incoming]);
+      } else {
+        // Support legacy/wrapped messages
+        const chatMsg = incoming.chatMessage || incoming;
+        if (chatMsg.system || chatMsg.systemMessage) {
+          const content = chatMsg.content || chatMsg.message;
+          if (content) {
+            showToast(content, 'info');
+            if (content.includes('User muted') && user && content.includes(user.username)) {
+              setIsMuted(true);
+            }
+          }
+        }
+        setMessages((prev) => [...prev, chatMsg]);
       }
-      setMessages((prev) => [...prev, chatMsg]);
+    };
+
+    const unsubscribe = webSocketService.subscribe(`/topic/chat/${creatorUserId}`, handleIncomingMessage);
+
+    const unsubscribePrivate = webSocketService.subscribe('/user/queue/chat', (msg) => {
+      const data = JSON.parse(msg.body);
+      // For stream chat, roomId might be stream-${streamId} or just streamId
+      const msgRoomId = data.roomId || (data.chatMessage && data.chatMessage.roomId);
+      if (String(msgRoomId) === String(streamId) || String(msgRoomId) === `stream-${streamId}`) {
+        handleIncomingMessage(msg);
+      }
     });
 
     const unsubNotifications = webSocketService.subscribe('/user/queue/notifications', (msg) => {
@@ -73,13 +111,45 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
 
     return () => {
       unsubscribe();
+      unsubscribePrivate();
       unsubNotifications();
     };
   }, [streamId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (scrollRef.current) {
+      if (isAtBottomRef.current) {
+        scrollRef.current.scrollTo({
+          top: scrollRef.current.scrollHeight,
+          behavior: 'smooth'
+        });
+      } else if (messages.length > 0) {
+        setShowNewMessages(true);
+      }
+    }
   }, [messages]);
+
+  const handleScroll = () => {
+    if (scrollRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+      const atBottom = scrollHeight - scrollTop - clientHeight < 100;
+      isAtBottomRef.current = atBottom;
+      if (atBottom) {
+        setShowNewMessages(false);
+      }
+    }
+  };
+
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+      setShowNewMessages(false);
+      isAtBottomRef.current = true;
+    }
+  };
 
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,8 +166,10 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
     // Identify highest priority badge
     const badgeType = myBadges.length > 0 ? myBadges[0].badge.name : undefined;
 
-    webSocketService.send(`/app/stream/${streamId}/chat`, {
-      message: input,
+    webSocketService.send('/app/chat.send', {
+      creatorUserId: creatorUserId,
+      content: input,
+      type: 'CHAT',
       isPaid: effectivePaid,
       amount: amount,
       badgeType: badgeType
@@ -128,26 +200,70 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, minChatTokens = 0 }) 
         {minChatTokens > 0 && <span style={{ fontSize: '0.7rem', color: '#6772e5' }}>Min: {minChatTokens} 🪙</span>}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      <div 
+        ref={scrollRef} 
+        onScroll={handleScroll}
+        style={{ flex: 1, overflowY: 'auto', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative' }}
+      >
         {messages.map((m, i) => (
-          <div key={i} style={{ 
-            padding: m.isPaid ? '0.5rem' : '0.2rem', 
-            borderRadius: '4px',
-            backgroundColor: m.isPaid ? `rgba(103, 114, 229, ${Math.min(0.3, m.amount / 1000)})` : 'transparent',
-            border: m.isPaid ? '1px solid #6772e5' : 'none'
+          <div key={i} className={`chat-bubble ${m.isPaid || m.type === 'TIP' ? 'chat-tip neon-tip' : ''} ${m.type === 'BOT' ? 'chat-bot chat-bot-scanline' : ''} ${m.highlight === 'POSITIVE' ? 'border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_15px_rgba(16,185,129,0.1)]' : ''} text-white/90`} style={{ 
+            marginBottom: '4px',
+            alignSelf: 'flex-start',
+            width: 'fit-content',
+            maxWidth: '90%'
           }}>
-            <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#555' }}>
+            <span className={`chat-username ${m.type === 'BOT' ? 'chat-username-bot' : ''}`} style={{ fontSize: '0.75rem', fontWeight: 'bold', marginRight: '8px' }}>
+              {m.type === 'BOT' && <span className="mr-1.5 animate-bounce inline-block">🤖</span>}
               {m.badgeType && <span style={{ marginRight: '4px' }}>[{m.badgeType}]</span>}
-              {m.username}:
+              {m.senderUsername || m.username}:
             </span>
-            <span style={{ marginLeft: '0.5rem', wordBreak: 'break-word', fontWeight: m.isPaid ? 'bold' : 'normal' }}>
-              {m.message}
+            <span className={m.type === 'BOT' ? 'animate-typewriter-subtle' : ''} style={{ marginLeft: '0.5rem', wordBreak: 'break-word', fontWeight: m.isPaid || m.type === 'TIP' ? 'bold' : 'normal', display: m.type === 'BOT' ? 'inline-block' : 'inline' }}>
+              {m.type === 'TIP' ? (
+                <span>💎 Tipped <span className="neon-gold font-black">{m.amount} tokens!</span></span>
+              ) : (
+                GIF_URL_REGEX.test(m.content || m.message || '') ? (
+                  <div className="animate-in fade-in duration-500" style={{ marginTop: '0.5rem', maxWidth: '200px' }}>
+                    <img 
+                      src={(m.content || m.message || '').match(GIF_URL_REGEX)![0]} 
+                      alt="GIF" 
+                      style={{ width: '100%', maxHeight: '150px', objectFit: 'cover', borderRadius: '12px' }} 
+                      loading="lazy"
+                    />
+                  </div>
+                ) : (
+                  m.content || m.message
+                )
+              )}
             </span>
-            {m.isPaid && <span style={{ float: 'right', fontSize: '0.7rem', color: '#6772e5' }}>{m.amount} 🪙</span>}
+            {(m.isPaid || m.type === 'TIP') && <span style={{ float: 'right', fontSize: '0.7rem', color: '#6772e5', marginLeft: '8px' }}>{m.amount} 🪙</span>}
           </div>
         ))}
-        <div ref={messagesEndRef} />
       </div>
+
+      {showNewMessages && (
+        <button 
+          onClick={scrollToBottom}
+          style={{
+            position: 'absolute',
+            bottom: '120px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            backgroundColor: '#6772e5',
+            color: 'white',
+            border: 'none',
+            borderRadius: '20px',
+            padding: '0.4rem 0.8rem',
+            fontSize: '0.75rem',
+            fontWeight: 'bold',
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            zIndex: 100,
+            animation: 'fadeIn 0.3s ease-out'
+          }}
+        >
+          New messages ↓
+        </button>
+      )}
 
       <form 
         onSubmit={handleSend} 

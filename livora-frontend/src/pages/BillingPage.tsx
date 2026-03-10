@@ -221,7 +221,7 @@ const BillingPage: React.FC = () => {
       </div>
 
       <div style={{ marginTop: '3rem' }}>
-        <Link to="/dashboard" style={{ color: '#71717A', textDecoration: 'none', fontWeight: '600' }}>← Back to Dashboard</Link>
+        <Link to="/dashboard" style={{ color: '#71717A', textDecoration: 'none', fontWeight: '600' }}>← Back to Viewer Hub</Link>
       </div>
 
       {showCancelModal && (

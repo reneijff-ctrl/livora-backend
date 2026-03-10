@@ -3,6 +3,7 @@ package com.joinlivora.backend.content;
 import com.joinlivora.backend.content.dto.ContentResponse;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.util.UrlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
@@ -84,14 +85,14 @@ public class ContentController {
     }
 
     private boolean hasAccess(User user, Content content) {
-        if (content.getAccessLevel() == ContentAccessLevel.FREE) return true;
+        if (content.getAccessLevel() == AccessLevel.FREE) return true;
         
-        if (content.getAccessLevel() == ContentAccessLevel.PREMIUM) {
+        if (content.getAccessLevel() == AccessLevel.PREMIUM) {
             return subscriptionService.getSubscriptionForUser(user).getStatus().name().equals("ACTIVE") || 
                    user.getRole().name().equals("ADMIN");
         }
         
-        if (content.getAccessLevel() == ContentAccessLevel.CREATOR) {
+        if (content.getAccessLevel() == AccessLevel.CREATOR) {
             return user.getRole().name().equals("CREATOR") || user.getRole().name().equals("ADMIN");
         }
         
@@ -103,11 +104,12 @@ public class ContentController {
                 .id(content.getId())
                 .title(content.getTitle())
                 .description(content.getDescription())
-                .thumbnailUrl(content.getThumbnailUrl())
+                .thumbnailUrl(UrlUtils.sanitizeUrl(content.getThumbnailUrl()))
                 // Do not expose mediaUrl directly in general list responses if possible, 
                 // or ensure it's not the raw storage URL
                 .mediaUrl(null) 
                 .accessLevel(content.getAccessLevel())
+                .type(content.getType())
                 .creatorId(content.getCreator().getId())
                 .creatorEmail(content.getCreator().getEmail())
                 .createdAt(content.getCreatedAt())

@@ -1,12 +1,16 @@
 package com.joinlivora.backend.content;
 
 import com.joinlivora.backend.audit.service.AuditService;
+import com.joinlivora.backend.content.dto.ContentAdminDTO;
 import com.joinlivora.backend.content.dto.ContentResponse;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.util.UrlUtils;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,14 +30,22 @@ import java.util.stream.Collectors;
 public class AdminContentController {
 
     private final ContentService contentService;
+    private final ContentRepository contentRepository;
     private final UserService userService;
     private final AuditService auditService;
 
     @GetMapping
-    public List<ContentResponse> getAllContent() {
-        return contentService.getAllContentForAdmin().stream()
-                .map(this::mapToResponse)
-                .collect(Collectors.toList());
+    public Page<ContentAdminDTO> getContent(Pageable pageable) {
+
+        Page<Content> page = contentRepository.findAllWithCreator(pageable);
+
+        return page.map(content -> new ContentAdminDTO(
+                content.getId(),
+                content.getCreator().getEmail(),
+                content.getTitle(),
+                content.getStatus().name(),
+                content.getCreatedAt()
+        ));
     }
 
     @PatchMapping("/{id}/disable")
@@ -78,19 +90,5 @@ public class AdminContentController {
         );
         
         return ResponseEntity.ok().build();
-    }
-
-    private ContentResponse mapToResponse(Content content) {
-        return ContentResponse.builder()
-                .id(content.getId())
-                .title(content.getTitle())
-                .description(content.getDescription())
-                .thumbnailUrl(content.getThumbnailUrl())
-                .mediaUrl(content.getMediaUrl())
-                .accessLevel(content.getAccessLevel())
-                .creatorId(content.getCreator().getId())
-                .creatorEmail(content.getCreator().getEmail())
-                .createdAt(content.getCreatedAt())
-                .build();
     }
 }

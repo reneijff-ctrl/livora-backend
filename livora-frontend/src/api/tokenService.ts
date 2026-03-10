@@ -1,4 +1,10 @@
 import apiClient from './apiClient';
+import { 
+  adaptTokenBalance, 
+  adaptTokenPackages, 
+  SafeTokenBalance, 
+  SafeTokenPackage 
+} from "@/adapters/WalletAdapter";
 
 export interface TokenPackage {
   id: string;
@@ -13,27 +19,27 @@ export interface TokenBalance {
 }
 
 const tokenService = {
-  async getPackages(): Promise<TokenPackage[]> {
-    const response = await apiClient.get<TokenPackage[]>('/api/tokens/packages');
-    return response.data;
+  async getPackages(): Promise<SafeTokenPackage[]> {
+    const response = await apiClient.get("/tokens/packages");
+    return adaptTokenPackages(response.data);
   },
 
-  async getBalance(): Promise<TokenBalance> {
-    const response = await apiClient.get<TokenBalance>('/api/tokens/balance');
-    return response.data;
+  async getBalance(): Promise<SafeTokenBalance> {
+    const response = await apiClient.get("/tokens/balance");
+    return adaptTokenBalance(response.data);
   },
 
   async createCheckoutSession(packageId: string): Promise<{ redirectUrl: string }> {
-    const response = await apiClient.post<{ redirectUrl: string }>('/api/tokens/checkout', { packageId });
+    const response = await apiClient.post<{ redirectUrl: string }>('/tokens/checkout', { packageId });
     return response.data;
   },
 
   async sendTip(roomId: string, amount: number, clientRequestId?: string): Promise<void> {
-    await apiClient.post('/api/tokens/tip', { roomId, amount, clientRequestId });
+    await apiClient.post('/tokens/tip', { roomId, amount, clientRequestId });
   },
 
   async sendTipByCreatorId(creatorId: number, amount: number): Promise<void> {
-    await apiClient.post('/api/tokens/tip', { creatorId, amount });
+    await apiClient.post('/tokens/tip', { creatorId, amount });
   }
 };
 

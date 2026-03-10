@@ -12,17 +12,22 @@ import java.util.UUID;
 public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     List<Payment> findAllByUserOrderByCreatedAtDesc(User user);
 
-    @Query("SELECT SUM(p.amount) FROM Payment p WHERE p.createdAt >= :since")
-    BigDecimal calculateRevenue(@Param("since") Instant since);
+    @Query("SELECT SUM(p.amount) FROM Payment p WHERE p.createdAt >= :since AND p.success = true")
+    BigDecimal calculateRevenue(@Param("since") java.time.Instant since);
 
-    @Query("SELECT SUM(p.amount) FROM Payment p WHERE p.createdAt BETWEEN :start AND :end")
-    BigDecimal calculateRevenueByPeriod(@Param("start") Instant start, @Param("end") Instant end);
+    default BigDecimal sumRevenueLast24h() {
+        return calculateRevenue(java.time.Instant.now().minus(1, java.time.temporal.ChronoUnit.DAYS));
+    }
 
-    @Query("SELECT COUNT(DISTINCT p.user.id) FROM Payment p WHERE p.createdAt >= :since")
+    @Query("SELECT SUM(p.amount) FROM Payment p WHERE p.createdAt BETWEEN :start AND :end AND p.success = true")
+    BigDecimal calculateRevenueByPeriod(@Param("start") java.time.Instant start, @Param("end") java.time.Instant end);
+
+    @Query("SELECT COUNT(DISTINCT p.user.id) FROM Payment p WHERE p.createdAt >= :since AND p.success = true")
     long countPayingUsers(@Param("since") Instant since);
 
     java.util.Optional<Payment> findByStripePaymentIntentId(String stripePaymentIntentId);
     boolean existsByStripePaymentIntentId(String stripePaymentIntentId);
+    boolean existsByStripeSessionId(String stripeSessionId);
     boolean existsByStripeInvoiceId(String stripeInvoiceId);
 
     long countByUserIdAndSuccessAndCreatedAtAfter(Long userId, boolean success, Instant after);
@@ -34,4 +39,10 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     List<String> findLastSuccessfulCountriesByUserId(@Param("userId") Long userId, org.springframework.data.domain.Pageable pageable);
 
     org.springframework.data.domain.Page<Payment> findAllByRiskLevelIn(java.util.Collection<com.joinlivora.backend.fraud.model.RiskLevel> riskLevels, org.springframework.data.domain.Pageable pageable);
+
+    org.springframework.data.domain.Page<Payment> findAllBySuccessTrue(org.springframework.data.domain.Pageable pageable);
+    
+    @Query("SELECT CAST(p.createdAt AS date), SUM(p.amount) FROM Payment p " +
+           "WHERE p.createdAt >= :after AND p.success = true GROUP BY CAST(p.createdAt AS date) ORDER BY CAST(p.createdAt AS date)")
+    java.util.List<Object[]> calculateRevenueGroupedByDay(@Param("after") Instant after);
 }

@@ -6,6 +6,7 @@ import { HelmetProvider } from 'react-helmet-async'
 import { AuthProvider } from './auth/AuthContext'
 import { WsProvider } from './ws/WsContext'
 import { WalletProvider } from './wallet/WalletContext'
+import { SoundProfileProvider } from './contexts/SoundProfileContext'
 import ErrorBoundary from './components/ErrorBoundary'
 import healthStore from './store/healthStore'
 
@@ -57,11 +58,13 @@ try {
       <HelmetProvider>
         <AuthProvider>
           <WsProvider>
-            <WalletProvider>
-              <RouterProvider 
-                router={router} 
-              />
-            </WalletProvider>
+            <SoundProfileProvider>
+              <WalletProvider>
+                <RouterProvider 
+                  router={router} 
+                />
+              </WalletProvider>
+            </SoundProfileProvider>
           </WsProvider>
         </AuthProvider>
       </HelmetProvider>

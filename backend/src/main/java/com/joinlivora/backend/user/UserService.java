@@ -54,6 +54,28 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(password));
         user.setRole(Role.USER);
 
+        // Generate username from email prefix (simplified version of migration logic)
+        String baseUsername = email.split("@")[0].toLowerCase().replaceAll("[^a-z0-9_]", "");
+        if (baseUsername.isBlank()) {
+            baseUsername = "user";
+        }
+        if (baseUsername.length() > 30) {
+            baseUsername = baseUsername.substring(0, 30);
+        }
+
+        String username = baseUsername;
+        int counter = 1;
+        while (userRepository.existsByUsername(username)) {
+            String suffix = "_" + counter;
+            if (baseUsername.length() + suffix.length() > 30) {
+                username = baseUsername.substring(0, 30 - suffix.length()) + suffix;
+            } else {
+                username = baseUsername + suffix;
+            }
+            counter++;
+        }
+        user.setUsername(username);
+
         return userRepository.save(user);
     }
 
@@ -66,9 +88,37 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
     }
 
+    public User findByEmail(String email) {
+        return getByEmail(email);
+    }
+
     public com.joinlivora.backend.user.dto.UserResponse getUserMe(String email) {
         User user = getByEmail(email);
         return new com.joinlivora.backend.user.dto.UserResponse(user.getId(), user.getEmail(), user.getRole());
+    }
+
+    /**
+     * Resolves a User from a generic subject string (Email, numeric UserId, or Username).
+     * This supports dual-mode parsing to ensure zero-downtime transition for tokens.
+     */
+    public java.util.Optional<User> resolveUserFromSubject(String subject) {
+        if (subject == null || subject.isBlank()) {
+            return java.util.Optional.empty();
+        }
+
+        // 1. Try Email (contains '@')
+        if (subject.contains("@")) {
+            return userRepository.findByEmail(subject);
+        }
+
+        // 2. Try Numeric ID
+        try {
+            Long userId = Long.parseLong(subject);
+            return userRepository.findById(userId);
+        } catch (NumberFormatException e) {
+            // 3. Fallback: Try Username
+            return userRepository.findByUsername(subject);
+        }
     }
 
     public User getById(Long id) {
@@ -122,7 +172,7 @@ public class UserService {
         if (user.getRole() == Role.CREATOR) {
             // Create LegacyCreatorProfile if it doesn't exist
             if (legacyCreatorProfileRepository.findByUser(user).isEmpty()) {
-                String baseUsername = user.getEmail().split("@")[0];
+                String baseUsername = user.getUsername();
                 LegacyCreatorProfile profile = LegacyCreatorProfile.builder()
                         .user(user)
                         .username(baseUsername)

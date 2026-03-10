@@ -1,3 +1,6 @@
+file:
+  upload-dir: uploads
+
 spring:
   data:
     redis:
@@ -6,12 +9,12 @@ spring:
   cache:
     type: none
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/joinlivora}
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:postgres}
+    url: jdbc:postgresql://localhost:5432/joinlivora
+    username: postgres
+    password: postgres
   jpa:
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
     properties:
       hibernate:
         temp:
@@ -27,6 +30,7 @@ spring:
   # to automatically fix checksum mismatches after manual migration edits.
   flyway:
     enabled: true
+    baseline-on-migrate: true
     clean-disabled: false
 
 security:
@@ -69,6 +73,11 @@ livora:
       websocket: 100000
       login: 100
       register: 100
+    max-sessions-per-ip: 100
+    max-global-sessions: 10000
+    max-handshake-per-minute: 200
+    max-joins-per-window: 1000
+    join-window-ms: 5000
 
 payments:
   stripe:

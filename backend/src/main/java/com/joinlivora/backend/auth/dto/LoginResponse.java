@@ -9,14 +9,16 @@ public class LoginResponse {
     private String role;
     private Long userId;
     private String email;
+    private String username;
 
-    public LoginResponse(String accessToken, String refreshToken, java.time.Instant expiresAt, String role, Long userId, String email) {
+    public LoginResponse(String accessToken, String refreshToken, java.time.Instant expiresAt, String role, Long userId, String email, String username) {
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.expiresAt = expiresAt;
         this.role = role;
         this.userId = userId;
         this.email = email;
+        this.username = username;
     }
 
     public String getAccessToken() {
@@ -41,5 +43,9 @@ public class LoginResponse {
 
     public String getEmail() {
         return email;
+    }
+
+    public String getUsername() {
+        return username;
     }
 }

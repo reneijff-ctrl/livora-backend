@@ -48,7 +48,7 @@ const SubscriptionPage: React.FC = () => {
             Thank you for supporting Livora. Your subscription status is: <strong style={{ color: '#10b981' }}>{subscriptionStatus}</strong>
           </p>
           <div style={{ display: 'flex', gap: '1.25rem', justifyContent: 'center' }}>
-            <Link to="/dashboard" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 'bold' }}>Dashboard</Link>
+            <Link to="/dashboard" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 'bold' }}>Viewer Hub</Link>
             <Link to="/billing" style={{ color: '#6366f1', textDecoration: 'none', fontWeight: 'bold' }}>Manage Billing</Link>
           </div>
         </div>
@@ -110,7 +110,7 @@ const SubscriptionPage: React.FC = () => {
           </div>
           
           <div style={{ marginTop: '3rem' }}>
-            <Link to="/dashboard" style={{ color: '#71717A', textDecoration: 'none', fontWeight: '600' }}>Back to Dashboard</Link>
+            <Link to="/dashboard" style={{ color: '#71717A', textDecoration: 'none', fontWeight: '600' }}>Back to Viewer Hub</Link>
           </div>
         </>
       )}

@@ -2,6 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/auth/useAuth';
 import { useWallet } from '@/wallet/WalletContext';
+import { safeRender } from '@/utils/safeRender';
 import { colors, gradients } from '@/utils/theme';
 
 const TokenDisplay: React.FC = () => {
@@ -11,8 +12,15 @@ const TokenDisplay: React.FC = () => {
     <div style={styles.balanceContainer}>
       <div style={styles.balanceBox}>
         <span style={styles.coinIcon}>🪙</span>
-        <span style={styles.balanceText}>{balance.toLocaleString()}</span>
+        <span style={styles.balanceText}>{safeRender(balance?.toLocaleString())}</span>
       </div>
+      <Link 
+        to="/tokens/purchase"
+        style={styles.buyButton}
+        className="hover:scale-105 active:scale-95 transition-transform"
+      >
+        + Buy
+      </Link>
       {lastDelta !== null && (
         <div 
           key={Date.now()} 
@@ -122,7 +130,7 @@ const Navbar: React.FC = () => {
             color: location.pathname === '/dashboard' ? colors.textPrimary : colors.textSecondary
           }}
         >
-          Dashboard
+          Viewer Hub
         </Link>
         <TokenDisplay />
         <button onClick={handleLogout} style={styles.logoutButton}>Logout</button>
@@ -131,14 +139,14 @@ const Navbar: React.FC = () => {
   };
 
   return (
-    <nav className="sticky top-0 z-50 w-full backdrop-blur-xl bg-black/40 border-b border-[#16161D] shadow-[0_1px_0_rgba(255,255,255,0.05)] py-4">
+    <nav className="sticky top-0 z-50 w-full backdrop-blur-xl bg-black/40 border-b border-[#16161D] shadow-[0_1px_0_rgba(255,255,255,0.05)] py-3">
       <div style={styles.container}>
         <div style={{ ...styles.logo, display: 'flex', alignItems: 'center' }}>
           <Link to="/" className="flex items-center">
             <img 
               src="/joinlivora_livewebcams.png"
               alt="JoinLivora Live Webcams"
-              className="h-[56px] w-auto hover:scale-105 transition-transform duration-300"
+              className="h-[64px] w-auto hover:scale-105 transition-transform duration-300"
             />
           </Link>
         </div>
@@ -239,6 +247,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '0.85rem',
     pointerEvents: 'none',
     textShadow: '0 2px 4px rgba(0,0,0,0.3)',
+  },
+  buyButton: {
+    marginLeft: '8px',
+    padding: '4px 10px',
+    backgroundColor: colors.accentPurple,
+    color: '#fff',
+    borderRadius: '8px',
+    fontSize: '0.75rem',
+    fontWeight: '800',
+    textDecoration: 'none',
+    transition: 'all 0.2s ease',
   },
 };
 

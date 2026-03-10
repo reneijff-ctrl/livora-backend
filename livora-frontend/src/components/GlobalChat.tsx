@@ -5,11 +5,18 @@ import chatRoomService, { ChatRoomDto } from '../api/chatRoomService';
 import { showToast } from './Toast';
 
 interface ChatMessage {
-  roomId: string;
-  sender: string;
-  message: string;
-  timestamp: string;
+  id?: string;
+  roomId?: string;
+  senderId?: string;
+  senderEmail?: string;
+  senderUsername?: string;
+  senderRole?: string;
+  message?: string;
+  content?: string;
+  timestamp?: string;
   systemMessage?: boolean;
+  type?: string;
+  amount?: number;
 }
 
 const GlobalChat: React.FC = () => {
@@ -43,18 +50,40 @@ const GlobalChat: React.FC = () => {
   useEffect(() => {
     if (!activeRoom) return;
 
-    const unsubChat = webSocketService.subscribe(`/topic/chat/${activeRoom.id}`, (msg) => {
-      const data = JSON.parse(msg.body);
-      // New format is ChatMessageDto directly
-      const chatMsg: ChatMessage = data;
-
-      if (chatMsg.systemMessage) {
-        showToast(chatMsg.message, 'info');
-        if (chatMsg.message.includes('User muted') && user && chatMsg.message.includes(user.email)) {
-          setIsMuted(true);
+    const unsubChat = webSocketService.subscribe(`/topic/chat/${activeRoom.creatorId}`, (msg) => {
+      const incoming = JSON.parse(msg.body);
+      
+      if (
+        incoming.type === 'CHAT' ||
+        incoming.type === 'TIP' ||
+        incoming.type === 'BOT' ||
+        incoming.type === 'SYSTEM' ||
+        incoming.type === 'SUPER_TIP'
+      ) {
+        if (incoming.systemMessage || incoming.type === 'SYSTEM') {
+          const content = incoming.content || incoming.message;
+          if (content) {
+            showToast(content, 'info');
+            if (content.includes('User muted') && user && content.includes(user.username)) {
+              setIsMuted(true);
+            }
+          }
         }
+        setMessages((prev) => [...prev, incoming]);
+      } else {
+        // Support legacy format
+        const chatMsg: ChatMessage = incoming;
+        if (chatMsg.systemMessage) {
+          const content = chatMsg.message || chatMsg.content;
+          if (content) {
+            showToast(content, 'info');
+            if (content.includes('User muted') && user && content.includes(user.username)) {
+              setIsMuted(true);
+            }
+          }
+        }
+        setMessages((prev) => [...prev, chatMsg]);
       }
-      setMessages((prev) => [...prev, chatMsg]);
     });
 
     const unsubPresence = webSocketService.subscribe('/topic/presence', (msg) => {
@@ -77,7 +106,10 @@ const GlobalChat: React.FC = () => {
     });
 
     // Send join message
-    webSocketService.send('/app/chat.join', { roomId: activeRoom.id });
+    webSocketService.send('/app/chat.join', { 
+      creatorUserId: activeRoom.creatorId,
+      roomId: activeRoom.id 
+    });
 
     return () => {
       unsubChat();
@@ -101,8 +133,9 @@ const GlobalChat: React.FC = () => {
     }
 
     webSocketService.send('/app/chat.send', {
-      roomId: activeRoom.id,
-      message: input,
+      creatorUserId: activeRoom.creatorId,
+      content: input,
+      type: 'CHAT'
     });
     setInput('');
   };
@@ -172,22 +205,29 @@ const GlobalChat: React.FC = () => {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
-        {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: '1rem', textAlign: m.sender === user?.email ? 'right' : 'left' }}>
-            <div style={{ fontSize: '0.7rem', color: '#888' }}>{m.sender}</div>
-            <div style={{ 
-              display: 'inline-block', 
-              padding: '0.5rem 1rem', 
-              borderRadius: '12px', 
-              backgroundColor: m.sender === user?.email ? '#6772e5' : '#e9ecef',
-              color: m.sender === user?.email ? '#fff' : '#333',
-              maxWidth: '80%',
-              wordBreak: 'break-word'
-            }}>
-              {m.message}
+        {messages.map((m, i) => {
+          const isMe = String(m.senderId) === String(user?.id);
+          return (
+            <div key={i} style={{ marginBottom: '1rem', textAlign: isMe ? 'right' : 'left' }}>
+              <div style={{ fontSize: '0.7rem', color: '#888' }}>{m.senderUsername}</div>
+              <div className={m.type === 'TIP' ? 'neon-tip chat-tip' : ''} style={{ 
+                display: 'inline-block', 
+                padding: '0.5rem 1rem', 
+                borderRadius: '12px', 
+                backgroundColor: m.type === 'TIP' ? undefined : (isMe ? '#6772e5' : '#e9ecef'),
+                color: m.type === 'TIP' ? '#fff' : (isMe ? '#fff' : '#333'),
+                maxWidth: '80%',
+                wordBreak: 'break-word'
+              }}>
+                {m.type === 'TIP' ? (
+                  <span>💎 Tipped <span className="neon-gold font-black">{m.amount} tokens!</span></span>
+                ) : (
+                  m.content || m.message
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 

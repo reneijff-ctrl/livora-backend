@@ -1,6 +1,6 @@
 package com.joinlivora.backend.monetization;
 
-import com.joinlivora.backend.streaming.StreamRoom;
+import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.user.User;
 import jakarta.persistence.*;
 import lombok.*;
@@ -42,7 +42,7 @@ public class Tip {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "room_id")
-    private StreamRoom room;
+    private Stream room;
 
     @Column(nullable = false)
     private BigDecimal amount;

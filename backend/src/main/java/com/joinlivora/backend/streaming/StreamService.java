@@ -5,29 +5,34 @@ import com.joinlivora.backend.creator.verification.VerificationStatus;
 import com.joinlivora.backend.creator.verification.CreatorVerificationRepository;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.analytics.AnalyticsEventType;
+import com.joinlivora.backend.livestream.event.StreamEndedEvent;
+import com.joinlivora.backend.livestream.event.StreamStartedEvent;
 import com.joinlivora.backend.streaming.dto.GoLiveRequest;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
+import com.joinlivora.backend.fraud.service.FraudRiskScoreService;
+import com.joinlivora.backend.livestream.domain.LivestreamSession;
 import com.joinlivora.backend.websocket.ChatMessage;
 import com.joinlivora.backend.websocket.RealtimeMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 public class StreamService {
 
-    private final StreamRoomRepository streamRoomRepository;
-    private final LiveStreamService liveStreamService;
+    private final com.joinlivora.backend.user.UserRepository userRepository;
+    private final com.joinlivora.backend.livestream.service.LiveStreamService liveStreamService;
     private final ChatRoomService chatRoomService;
     private final UserService userService;
     private final AnalyticsEventPublisher analyticsEventPublisher;
@@ -37,10 +42,13 @@ public class StreamService {
     private final com.joinlivora.backend.token.TokenService tokenService;
     private final LiveViewerCounterService liveViewerCounterService;
     private final CreatorVerificationRepository creatorVerificationRepository;
+    private final AdminRealtimeEventService adminRealtimeEventService;
+    private final StreamRepository streamRepository;
+    private final FraudRiskScoreService fraudRiskScoreService;
 
     public StreamService(
-            StreamRoomRepository streamRoomRepository,
-            LiveStreamService liveStreamService,
+            com.joinlivora.backend.user.UserRepository userRepository,
+            com.joinlivora.backend.livestream.service.LiveStreamService liveStreamService,
             ChatRoomService chatRoomService,
             UserService userService,
             AnalyticsEventPublisher analyticsEventPublisher,
@@ -49,8 +57,11 @@ public class StreamService {
             com.joinlivora.backend.creator.repository.CreatorRepository creatorRepository,
             com.joinlivora.backend.token.TokenService tokenService,
             LiveViewerCounterService liveViewerCounterService,
-            CreatorVerificationRepository creatorVerificationRepository) {
-        this.streamRoomRepository = streamRoomRepository;
+            CreatorVerificationRepository creatorVerificationRepository,
+            AdminRealtimeEventService adminRealtimeEventService,
+            StreamRepository streamRepository,
+            @org.springframework.context.annotation.Lazy FraudRiskScoreService fraudRiskScoreService) {
+        this.userRepository = userRepository;
         this.liveStreamService = liveStreamService;
         this.chatRoomService = chatRoomService;
         this.userService = userService;
@@ -61,30 +72,61 @@ public class StreamService {
         this.tokenService = tokenService;
         this.liveViewerCounterService = liveViewerCounterService;
         this.creatorVerificationRepository = creatorVerificationRepository;
+        this.adminRealtimeEventService = adminRealtimeEventService;
+        this.streamRepository = streamRepository;
+        this.fraudRiskScoreService = fraudRiskScoreService;
     }
 
     public List<StreamRoom> getLiveStreams() {
-        return streamRoomRepository.findAllByIsLiveTrue();
+        List<Stream> activeStreams = streamRepository.findActiveStreamsWithUser();
+        return activeStreams.stream()
+                .map(this::mapToStreamRoom)
+                .collect(Collectors.toList());
     }
 
     public StreamRoom getRoom(UUID id) {
-        return streamRoomRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Stream room not found"));
+        return streamRepository.findByIdWithCreator(id)
+                .map(this::mapToStreamRoom)
+                .orElseThrow(() -> new RuntimeException("Stream not found: " + id));
     }
 
     public java.util.Optional<StreamRoom> findByCreatorEmail(String email) {
-        return streamRoomRepository.findByCreatorEmail(email);
+        return userRepository.findByEmail(email).map(this::getCreatorRoom);
+    }
+
+    public java.util.Optional<StreamRoom> findByCreatorId(Long id) {
+        return userRepository.findById(id).map(this::getCreatorRoom);
     }
 
     public StreamRoom getCreatorRoom(User creator) {
-        return streamRoomRepository.findByCreator(creator)
-                .orElseGet(() -> streamRoomRepository.save(
-                        StreamRoom.builder()
-                                .creator(creator)
-                                .isLive(false)
-                                .viewerCount(0)
-                                .build()
-                ));
+        // Synthesize a room from the unified Stream if possible for compatibility
+        return streamRepository.findByCreatorAndIsLiveTrue(creator)
+                .map(this::mapToStreamRoom)
+                .orElse(StreamRoom.builder()
+                        .creator(creator)
+                        .isLive(false)
+                        .viewerCount(0)
+                        .build());
+    }
+
+    private StreamRoom mapToStreamRoom(Stream s) {
+        return StreamRoom.builder()
+                .id(s.getId())
+                .creator(s.getCreator())
+                .isLive(s.isLive())
+                .streamTitle(s.getTitle())
+                .description(s.getStreamCategory()) // Category as placeholder
+                .isPaid(s.isPaid())
+                .admissionPrice(s.getAdmissionPrice())
+                .thumbnailUrl(s.getThumbnailUrl())
+                .viewerCount((int) liveViewerCounterService.getViewerCount(s.getCreator().getId()))
+                .chatEnabled(s.isChatEnabled())
+                .slowMode(s.isSlowMode())
+                .slowModeInterval(s.getSlowModeInterval())
+                .maxViewers(s.getMaxViewers())
+                .createdAt(s.getCreatedAt())
+                .startedAt(s.getStartedAt())
+                .build();
     }
 
     @Transactional
@@ -124,7 +166,8 @@ public class StreamService {
         room.setStartedAt(null);
         room.setEndedAt(null);
         
-        StreamRoom saved = streamRoomRepository.save(room);
+        log.info("STREAM: Creator {} prepared stream with title: '{}'. Waiting for OBS.", creator.getEmail(), title);
+        StreamRoom saved = room;
         
         // Unified go-live flow
         creatorRepository.findByUser_Id(creator.getId()).ifPresent(c -> {
@@ -151,43 +194,56 @@ public class StreamService {
         return saved;
     }
 
-    private void broadcastSystemMessage(UUID streamId, String content) {
+    private void broadcastSystemMessage(UUID roomId, String content) {
+        StreamRoom room = getRoom(roomId);
+        Long creatorId = room.getCreatorId();
+
         ChatMessage systemMessage = ChatMessage.builder()
+                .id(java.util.UUID.randomUUID().toString())
                 .content(content)
                 .system(true)
                 .timestamp(Instant.now())
                 .build();
         
-        // Use RealtimeMessage for consistency if expected by frontend
+        // Use RealtimeMessage for consistency if expected by frontend (Using creatorId routing)
         RealtimeMessage realtimeMessage = RealtimeMessage.ofChat(systemMessage);
         
-        messagingTemplate.convertAndSend("/topic/chat/" + streamId, realtimeMessage);
+        messagingTemplate.convertAndSend("/topic/chat/" + creatorId, realtimeMessage);
     }
 
     @Transactional
-    public StreamRoom stopStream(User creator) {
+    public StreamRoom stopStream(User user) {
+        Long userId = user.getId();
+        User creator = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("Creator not found: " + userId));
+
+        // Update legacy StreamRoom
         StreamRoom room = getCreatorRoom(creator);
-        // room.setLive(false); // Removed as per instructions
+        room.setLive(false);
         room.setEndedAt(Instant.now());
         room.setViewerCount(0);
+        StreamRoom saved = room;
+
+        // Update unified Stream entity
+        streamRepository.findByCreatorIdAndIsLiveTrue(userId).ifPresent(stream -> {
+            stream.setLive(false);
+            stream.setEndedAt(Instant.now());
+            streamRepository.save(stream);
+            log.info("STREAM: Updated unified Stream entity {} to isLive=false", stream.getId());
+        });
         
-        StreamRoom saved = streamRoomRepository.save(room);
-        
-        // Also stop the core LiveStream (which handles notifications and chat deletion)
-        liveStreamService.stopStream(creator.getId());
+        // Also stop the core LiveStream (which handles notifications, chat deletion, and Redis cleanup)
+        liveStreamService.stopStream(userId);
 
         // Clear pay-to-watch access list
-        tokenService.clearAccess(creator.getId());
+        tokenService.clearAccess(userId);
 
-        // Reset viewer count in Redis
-        liveViewerCounterService.resetViewerCount(creator.getId());
-
-        log.info("STREAM: Creator {} stopped stream {}", creator.getEmail(), saved.getId());
+        log.info("STREAM: Creator {} stopped stream", creator.getEmail());
         
         analyticsEventPublisher.publishEvent(
                 AnalyticsEventType.VISIT, // Placeholder
                 creator,
-                Map.of("roomId", saved.getId(), "action", "STREAM_STOP")
+                Map.of("action", "STREAM_STOP")
         );
         
         return saved;
@@ -195,18 +251,17 @@ public class StreamService {
 
     @Transactional
     public void updateViewerCount(UUID roomId, int delta) {
-        // Update viewer count via entity load/save to ensure downstream listeners/tests observe the change
-        streamRoomRepository.findById(roomId).ifPresent(room -> {
-            int current = room.getViewerCount();
-            int next = current + delta;
-            room.setViewerCount(Math.max(0, next));
-            streamRoomRepository.save(room);
-        });
+        // No-op as stream_rooms table is gone and we use Redis for real-time counts
+        log.info("STREAM_LEGACY_WRITE_DEPRECATED: updateViewerCount called for roomId={}", roomId);
     }
 
     @Transactional(readOnly = true)
     public List<StreamRoom> getActiveRooms() {
-        return streamRoomRepository.findAllByIsLiveTrue();
+        return getLiveStreams();
+    }
+
+    public long getActiveStreamCount() {
+        return streamRepository.countByIsLiveTrue();
     }
 
     @Transactional
@@ -220,12 +275,40 @@ public class StreamService {
 
     @Transactional
     public void setSlowMode(UUID roomId, boolean enabled) {
-        StreamRoom room = getRoom(roomId);
-        room.setSlowMode(enabled);
-        streamRoomRepository.save(room);
+        log.info("STREAM: Setting slowMode to {} for roomId={}", enabled, roomId);
         
+        // Update unified Stream
+        streamRepository.findById(roomId).ifPresent(stream -> {
+            stream.setSlowMode(enabled);
+            streamRepository.save(stream);
+        });
+
         String status = enabled ? "enabled" : "disabled";
         broadcastSystemMessage(roomId, "Slow mode has been " + status + " by an administrator.");
         log.info("STREAM: Slow mode {} for room {}", status, roomId);
+    }
+
+    @EventListener
+    public void handleStreamStarted(StreamStartedEvent event) {
+        log.info("STREAM: Notifying admin of started stream: {}", event.getSession().getId());
+        LivestreamSession session = event.getSession();
+        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
+        int fraudRiskScore = session.getCreator() != null ? fraudRiskScoreService.getLatestScore(session.getCreator().getId()) : 0;
+        adminRealtimeEventService.broadcastStreamStarted(session, viewerCount, fraudRiskScore);
+    }
+
+    @EventListener
+    public void handleStreamEnded(StreamEndedEvent event) {
+        log.info("STREAM: Notifying admin of stopped stream: {}", event.getSession().getId());
+        LivestreamSession session = event.getSession();
+        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
+        adminRealtimeEventService.broadcastStreamStopped(session, viewerCount);
+    }
+
+    public void notifyStreamStarted(LivestreamSession session) {
+        log.info("STREAM: Notifying admin of started stream: {}", session.getId());
+        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
+        int fraudRiskScore = session.getCreator() != null ? fraudRiskScoreService.getLatestScore(session.getCreator().getId()) : 0;
+        adminRealtimeEventService.broadcastStreamStarted(session, viewerCount, fraudRiskScore);
     }
 }

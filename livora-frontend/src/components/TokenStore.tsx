@@ -43,53 +43,34 @@ const TokenStore: React.FC = () => {
   );
 
   if (packages.length === 0) return (
-    <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: '#0F0F14', borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-      <p style={{ color: '#71717A' }}>No token packages available at the moment. Please check back later.</p>
+    <div className="bg-black/40 backdrop-blur-xl border border-white/5 rounded-3xl p-8 text-center">
+      <p className="text-zinc-500">No token packages available at the moment. Please check back later.</p>
     </div>
   );
 
   return (
-    <div style={{ padding: '2rem', border: '1px solid rgba(255, 255, 255, 0.05)', borderRadius: '24px', backgroundColor: '#0F0F14', boxShadow: '0 20px 60px rgba(0,0,0,0.6)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>Token Store</h3>
+    <div className="bg-black/40 backdrop-blur-xl border border-white/5 rounded-3xl p-8 shadow-2xl shadow-black/40">
+      <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
+        <h3 className="m-0 text-xl font-bold text-zinc-100">Token Store</h3>
         <TokenBalance />
       </div>
       
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '1.25rem' }}>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
         {packages.map((pkg) => (
-          <div key={pkg.id} style={{ 
-            border: '1px solid rgba(255, 255, 255, 0.05)', 
-            padding: '1.5rem', 
-            borderRadius: '16px', 
-            textAlign: 'center',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '0.75rem',
-            backgroundColor: '#08080A',
-            transition: 'all 0.2s ease',
-            cursor: 'default'
-          }}>
-            <div style={{ fontSize: '1.25rem', fontWeight: 800, color: '#F4F4F5' }}>{pkg.tokenAmount} Tokens</div>
-            <div style={{ color: '#71717A', fontSize: '0.875rem', fontWeight: 500 }}>{pkg.name}</div>
-            <div style={{ fontSize: '1.125rem', fontWeight: 800, color: '#A855F7', margin: '0.25rem 0' }}>
+          <div key={pkg.id} className="bg-white/5 border border-white/5 p-6 rounded-2xl text-center flex flex-col gap-3 transition-all duration-200 hover:scale-[1.02]">
+            <div className="text-xl font-extrabold text-zinc-100">{pkg.tokenAmount} Tokens</div>
+            <div className="text-zinc-500 text-sm font-medium">{pkg.name}</div>
+            <div className="text-lg font-extrabold text-purple-400 my-1">
               {pkg.price.toFixed(2)} {pkg.currency.toUpperCase()}
             </div>
             <button
               onClick={() => handleBuy(pkg.id)}
               disabled={isBuying !== null}
-              style={{
-                backgroundColor: '#6366F1',
-                color: 'white',
-                border: 'none',
-                padding: '12px 8px',
-                borderRadius: '12px',
-                cursor: isBuying !== null ? 'not-allowed' : 'pointer',
-                fontWeight: 800,
-                marginTop: '0.5rem',
-                minHeight: '44px',
-                opacity: isBuying !== null ? 0.6 : 1,
-                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
-              }}
+              className={`w-full py-3 rounded-xl font-extrabold transition-all shadow-lg ${
+                isBuying === pkg.id 
+                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' 
+                  : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/20'
+              }`}
             >
               {isBuying === pkg.id ? 'Processing...' : 'Buy Now'}
             </button>

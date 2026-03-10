@@ -1,7 +1,5 @@
 package com.joinlivora.backend.monetization;
 
-import com.joinlivora.backend.exception.InsufficientBalanceException;
-import com.joinlivora.backend.exception.ResourceNotFoundException;
 import com.joinlivora.backend.monetization.dto.TipResult;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
@@ -24,7 +22,7 @@ import java.util.UUID;
 @Slf4j
 public class TipController {
 
-    private final TipService tipService;
+    private final TipOrchestrationService tipService;
     private final UserService userService;
 
     @PostMapping("/intent")
@@ -73,8 +71,9 @@ public class TipController {
         String clientRequestId = (String) payload.get("clientRequestId");
         String ipAddress = RequestUtil.getClientIP(request);
         String fingerprint = RequestUtil.getDeviceFingerprint(request);
+        String giftName = (String) payload.get("giftName");
 
-        TipResult result = tipService.sendTokenTip(viewer, roomId, amount, message, clientRequestId, ipAddress, fingerprint);
+        TipResult result = tipService.sendTokenTip(viewer, roomId, amount, message, clientRequestId, ipAddress, fingerprint, giftName);
         return ResponseEntity.ok(result);
     }
 

@@ -1,5 +1,5 @@
 package com.joinlivora.backend.content;
-
+import com.joinlivora.backend.util.UrlUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -18,7 +18,7 @@ public class MediaAccessService {
         long expiration = Instant.now().getEpochSecond() + 3600;
         String dummySignature = UUID.randomUUID().toString().substring(0, 8);
         
-        String signedUrl = content.getMediaUrl() + "?expires=" + expiration + "&signature=" + dummySignature;
+        String signedUrl = UrlUtils.sanitizeUrl(content.getMediaUrl()) + "?expires=" + expiration + "&signature=" + dummySignature;
         
         log.info("SECURITY: Generated signed URL for content {}. Expiration: {}", content.getId(), expiration);
         

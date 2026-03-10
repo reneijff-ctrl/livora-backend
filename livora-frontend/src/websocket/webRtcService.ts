@@ -1,3 +1,4 @@
+import { Device, Transport, Producer, Consumer } from 'mediasoup-client';
 import webSocketService from '../websocket/webSocketService';
 import { IMessage } from '@stomp/stompjs';
 
@@ -5,147 +6,250 @@ export enum SignalingType {
   OFFER = 'OFFER',
   ANSWER = 'ANSWER',
   ICE_CANDIDATE = 'ICE_CANDIDATE',
-  JOIN_ROOM = 'JOIN_ROOM',
-  LEAVE_ROOM = 'LEAVE_ROOM',
-  STREAM_START = 'STREAM_START',
-  STREAM_STOP = 'STREAM_STOP',
+  JOIN = 'JOIN',
+  LEAVE = 'LEAVE',
   ERROR = 'ERROR',
-  ACCESS_DENIED = 'ACCESS_DENIED'
+  
+  // Mediasoup signaling types
+  NEW_PRODUCER = 'NEW_PRODUCER',
+  GET_ROUTER_CAPABILITIES = 'GET_ROUTER_CAPABILITIES',
+  CREATE_TRANSPORT = 'CREATE_TRANSPORT',
+  CONNECT_TRANSPORT = 'CONNECT_TRANSPORT',
+  PRODUCE = 'PRODUCE',
+  CONSUME = 'CONSUME',
+  RESUME_CONSUMER = 'RESUME_CONSUMER',
+  RESTART_ICE = 'RESTART_ICE'
 }
 
 export interface SignalingMessage {
-  type: SignalingType;
+  type: string;
+  senderId: number;
   roomId: string;
-  senderId?: string;
-  receiverId?: string;
-  payload?: any;
-  message?: string;
+  streamId?: string;
+  data?: any; // generic field for mediasoup payloads
+  sdp?: any;
+  candidate?: any;
 }
 
 class WebRtcService {
-  private peerConnection: RTCPeerConnection | null = null;
+  private device: Device | null = null;
+  private sendTransport: Transport | null = null;
+  private recvTransport: Transport | null = null;
+  private producers: Map<string, Producer> = new Map();
+  private consumers: Map<string, Consumer> = new Map();
+  private statsIntervals: Map<string, number> = new Map();
+  
   private localStream: MediaStream | null = null;
-  private roomId: string | null = null;
   private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
   private onStreamStopCallback: (() => void) | null = null;
+  private webrtcUnsub: (() => void) | null = null;
+  private currentUserId: number | null = null;
+  private currentRoomId: string | null = null;
+  private pendingRequests: Map<string, { resolve: Function, reject: Function, timeout: any }> = new Map();
 
-  private iceServers = {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-    ]
-  };
+  /**
+   * Send a request and wait for a response.
+   */
+  async sendRequest(type: string, roomId: string, data: any = {}): Promise<any> {
+    const requestId = Math.random().toString(36).substring(2, 15);
+    const senderId = this.currentUserId || 0;
 
-  async startBroadcast(roomId: string, videoElement: HTMLVideoElement) {
-    this.roomId = roomId;
-    this.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    videoElement.srcObject = this.localStream;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(requestId);
+        reject(new Error(`Request timeout: ${type}`));
+      }, 10000);
 
-    this.setupPeerConnection();
-    
-    this.localStream.getTracks().forEach(track => {
-      this.peerConnection?.addTrack(track, this.localStream!);
+      this.pendingRequests.set(requestId, { resolve, reject, timeout });
+
+      this.sendSignal({
+        type,
+        senderId,
+        roomId,
+        data: { ...data, requestId }
+      });
     });
-
-    const offer = await this.peerConnection?.createOffer();
-    await this.peerConnection?.setLocalDescription(offer);
-
-    webSocketService.send('/app/webrtc/start', { roomId });
-    // In a real SFU, we would send the offer to SFU.
-    // Here we'll wait for viewers to join and then send offers to them or SFU.
   }
 
-  async joinStream(roomId: string, onRemoteStream: (stream: MediaStream) => void) {
-    this.roomId = roomId;
-    this.onRemoteStreamCallback = onRemoteStream;
-    
-    webSocketService.subscribe('/user/queue/webrtc', (msg: IMessage) => {
-      this.handleSignalingMessage(JSON.parse(msg.body));
-    });
+  /**
+   * Handle incoming signal and resolve pending requests if any.
+   */
+  handleIncomingSignal(signal: SignalingMessage) {
+    const { data } = signal;
+    if (data && data.requestId && this.pendingRequests.has(data.requestId)) {
+      const { resolve, reject, timeout } = this.pendingRequests.get(data.requestId)!;
+      clearTimeout(timeout);
+      this.pendingRequests.delete(data.requestId);
 
-    webSocketService.send('/app/webrtc/join', { roomId });
-  }
-
-  private setupPeerConnection() {
-    this.peerConnection = new RTCPeerConnection(this.iceServers);
-
-    this.peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        webSocketService.send('/app/webrtc/ice', {
-          type: SignalingType.ICE_CANDIDATE,
-          roomId: this.roomId,
-          payload: event.candidate
-        });
+      if (data.error) {
+        reject(new Error(data.error));
+      } else {
+        resolve(data);
       }
-    };
-
-    this.peerConnection.ontrack = (event) => {
-      if (this.onRemoteStreamCallback) {
-        this.onRemoteStreamCallback(event.streams[0]);
-      }
-    };
+      return true; // Handled as request response
+    }
+    return false;
   }
 
-  private async handleSignalingMessage(message: SignalingMessage) {
-    switch (message.type) {
-      case SignalingType.OFFER:
-        await this.handleOffer(message);
-        break;
-      case SignalingType.ANSWER:
-        await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
-        break;
-      case SignalingType.ICE_CANDIDATE:
-        await this.peerConnection?.addIceCandidate(new RTCIceCandidate(message.payload));
-        break;
-      case SignalingType.STREAM_STOP:
-        console.log('Stream stopped by creator');
-        this.cleanup();
-        if (this.onStreamStopCallback) this.onStreamStopCallback();
-        break;
-      case SignalingType.ACCESS_DENIED:
-        console.error('Access Denied:', message.message);
-        this.cleanup();
-        if (this.onAccessDeniedCallback) this.onAccessDeniedCallback(message.message || 'Access Denied');
-        break;
-      case SignalingType.ERROR:
-        console.error('Signaling Error:', message.message);
-        this.cleanup();
-        if (this.onAccessDeniedCallback) this.onAccessDeniedCallback(message.message || 'Error occurred');
-        break;
+  setCurrentUserId(userId: number) {
+    this.currentUserId = userId;
+  }
+
+  /**
+   * Initialize Mediasoup Device with router capabilities
+   */
+  async initDevice(routerRtpCapabilities: any) {
+    try {
+      console.log("routerCapabilities", routerRtpCapabilities);
+      this.device = new Device();
+      await this.device.load({ routerRtpCapabilities });
+      console.log("device loaded", this.device.loaded);
+      
+      if (!this.device.loaded) {
+        throw new Error("Mediasoup device failed to load capabilities");
+      }
+      
+      return this.device;
+    } catch (error: any) {
+      if (error.name === 'UnsupportedError') {
+        console.error('Browser not supported');
+      }
+      console.error('Failed to initialize Mediasoup device:', error);
+      throw error;
     }
   }
 
-  private onAccessDeniedCallback: ((msg: string) => void) | null = null;
-
-  setOnAccessDenied(callback: (msg: string) => void) {
-    this.onAccessDeniedCallback = callback;
+  getDevice() {
+    return this.device;
   }
 
-  setOnStreamStop(callback: () => void) {
-    this.onStreamStopCallback = callback;
-  }
+  /**
+   * Connect to the WebRTC signaling room topic.
+   */
+  async connect(roomId: string, onSignal: (msg: SignalingMessage) => void) {
+    if (this.webrtcUnsub) {
+      this.webrtcUnsub();
+      this.webrtcUnsub = null;
+    }
 
-  private async handleOffer(message: SignalingMessage) {
-    if (!this.peerConnection) this.setupPeerConnection();
+    this.currentRoomId = roomId;
+    const topic = `/topic/webrtc/room/${roomId}`;
+    console.debug(`WS: Subscribing to WebRTC signaling room: ${topic}`);
     
-    await this.peerConnection?.setRemoteDescription(new RTCSessionDescription(message.payload));
-    const answer = await this.peerConnection?.createAnswer();
-    await this.peerConnection?.setLocalDescription(answer);
-
-    webSocketService.send('/app/webrtc/answer', {
-      type: SignalingType.ANSWER,
-      roomId: this.roomId,
-      receiverId: message.senderId,
-      payload: answer
+    this.webrtcUnsub = webSocketService.subscribe(topic, (msg: IMessage) => {
+      try {
+        const signal = JSON.parse(msg.body);
+        
+        // Try to handle as a response to a pending request first
+        if (!this.handleIncomingSignal(signal)) {
+          onSignal(signal);
+        }
+      } catch (e) {
+        console.error("WS: Signaling parse error", e);
+      }
     });
+  }
+
+  /**
+   * Send a signaling message to the server for relay.
+   */
+  sendSignal(message: SignalingMessage) {
+    webSocketService.send('/app/webrtc.signal', message);
+  }
+
+  leaveStream() {
+    if (this.webrtcUnsub) {
+      this.webrtcUnsub();
+      this.webrtcUnsub = null;
+    }
+    this.cleanup();
   }
 
   cleanup() {
     this.localStream?.getTracks().forEach(track => track.stop());
-    this.peerConnection?.close();
-    this.peerConnection = null;
+    
+    this.producers.forEach(p => p.close());
+    this.producers.clear();
+    
+    this.consumers.forEach(c => {
+      const intervalId = this.statsIntervals.get(c.id);
+      if (intervalId) {
+        window.clearInterval(intervalId);
+        this.statsIntervals.delete(c.id);
+      }
+      c.close();
+    });
+    this.consumers.clear();
+    
+    this.sendTransport?.close();
+    this.sendTransport = null;
+    
+    this.recvTransport?.close();
+    this.recvTransport = null;
+    
+    this.device = null;
     this.localStream = null;
-    this.roomId = null;
+    this.currentRoomId = null;
+  }
+
+  public cleanupStatsIntervals() {
+    this.statsIntervals.forEach((intervalId) => {
+      window.clearInterval(intervalId);
+    });
+    this.statsIntervals.clear();
+  }
+
+  public registerStatsInterval(consumer: Consumer, callback: (stats: any) => void) {
+    const intervalId = window.setInterval(async () => {
+      if (consumer.closed) {
+        const id = this.statsIntervals.get(consumer.id);
+        if (id) {
+          window.clearInterval(id);
+          this.statsIntervals.delete(consumer.id);
+        }
+        return;
+      }
+
+      try {
+        const stats = await consumer.getStats();
+        callback(stats);
+      } catch (err) {
+        console.error(`Failed to get stats for consumer ${consumer.id}:`, err);
+      }
+    }, 2000);
+
+    this.statsIntervals.set(consumer.id, intervalId);
+    return intervalId;
+  }
+
+  public closeConsumer(consumerId: string) {
+    const consumer = this.consumers.get(consumerId);
+    if (consumer) {
+      const intervalId = this.statsIntervals.get(consumer.id);
+      if (intervalId) {
+        window.clearInterval(intervalId);
+        this.statsIntervals.delete(consumer.id);
+      }
+      consumer.close();
+      this.consumers.delete(consumerId);
+    }
+  }
+
+  public addConsumer(consumer: Consumer) {
+    this.consumers.set(consumer.id, consumer);
+  }
+
+  /**
+   * Helper to request ICE restart for a transport.
+   */
+  async restartIce(transportId: string) {
+    if (!this.currentRoomId) {
+      throw new Error("Cannot restart ICE: No active room session");
+    }
+
+    return this.sendRequest(SignalingType.RESTART_ICE, this.currentRoomId, {
+      transportId
+    });
   }
 }
 

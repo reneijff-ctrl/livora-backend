@@ -1,6 +1,8 @@
 import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
 import { refreshToken as refreshAccessToken } from '../api/authService';
 import { getRefreshToken } from '../auth/jwt';
+import { AdminRealtimeEventDTO } from '../types';
+import { authStore } from '../store/authStore';
 
 /**
  * WebSocketService - A singleton service for STOMP over WebSocket communications.
@@ -10,18 +12,44 @@ class WebSocketService {
   private isConnecting: boolean = false;
   private queuedMessages: { destination: string; body: any }[] = [];
   private receiptResolvers: Map<string, { resolve: () => void; reject: (err: any) => void }> = new Map();
-  private subscriptions: Set<{
-    destination: string;
-    callback: (message: IMessage) => void;
-    currentSubscription?: StompSubscription;
-  }> = new Set();
-  private refreshingToken: boolean = false;
+  private subscriptions: Map<string, {
+    callbacks: Set<(message: IMessage) => void>;
+    stompSubscription?: StompSubscription;
+    receiptPromise?: Promise<void>;
+  }> = new Map();
+  private isRefreshing = false;
   private lastAuthError: boolean = false;
+  private lastActiveStreams: any[] = [];
+  private onStateChangeCallbacks: Set<(connected: boolean) => void> = new Set();
   constructor() {
   }
 
   public isConnected(): boolean {
     return this.client ? this.client.connected : false;
+  }
+
+  public getActiveStreams(): any[] {
+    return this.lastActiveStreams;
+  }
+
+  /**
+   * Register a callback for connection state changes.
+   */
+  public subscribeStateChange(callback: (connected: boolean) => void): () => void {
+    this.onStateChangeCallbacks.add(callback);
+    return () => this.onStateChangeCallbacks.delete(callback);
+  }
+
+  private notifyStateChange() {
+    const connected = this.isConnected();
+    console.log(`WS: Notifying state change: ${connected}`);
+    this.onStateChangeCallbacks.forEach(cb => {
+      try {
+        cb(connected);
+      } catch (e) {
+        console.error("WS: Error in state change callback", e);
+      }
+    });
   }
 
   /**
@@ -66,8 +94,9 @@ class WebSocketService {
     };
 
     this.client.onConnect = () => {
-      console.log("WS: CONNECT success");
+      console.log("WS: [DEBUG] onConnect called. Socket is now OPEN.");
       this.isConnecting = false;
+      this.notifyStateChange();
       this.processQueuedMessages();
       // Re-subscribe to everything if this was a re-connection or client replacement
       this.reSubscribeAll();
@@ -77,6 +106,7 @@ class WebSocketService {
       const errorMsg = frame.headers["message"] || "Unknown STOMP error";
       console.error("WS: STOMP error", errorMsg);
       this.isConnecting = false;
+      this.notifyStateChange();
       const msgLower = (errorMsg || '').toLowerCase();
       if (msgLower.includes('expired')) {
         console.warn('WS: Detected expired token on STOMP error. Attempting refresh and reconnect.');
@@ -87,9 +117,10 @@ class WebSocketService {
     };
 
     this.client.onWebSocketClose = () => {
-      console.log("WS: WebSocket connection closed");
+      console.log("WS: [DEBUG] onWebSocketClose called. Connection lost or closed.");
       this.isConnecting = false;
-      if (this.lastAuthError && !this.refreshingToken) {
+      this.notifyStateChange();
+      if (this.lastAuthError && !this.isRefreshing) {
         console.warn('WS: WebSocket closed after auth error. Ensuring refresh and reconnect.');
         void this.refreshAndReconnect();
       }
@@ -114,11 +145,14 @@ class WebSocketService {
   }
 
   private async refreshAndReconnect() {
-    if (this.refreshingToken) {
+    if (this.isRefreshing) {
       console.log('WS: Token refresh already in progress, skipping.');
       return;
     }
-    this.refreshingToken = true;
+
+    const oldToken = localStorage.getItem("token");
+    this.isRefreshing = true;
+
     try {
       const rToken = getRefreshToken();
       if (!rToken) {
@@ -126,8 +160,16 @@ class WebSocketService {
         this.disconnect();
         return;
       }
+
       console.log('WS: Attempting to refresh access token for WebSocket...');
       await refreshAccessToken(rToken);
+
+      const newToken = localStorage.getItem("token");
+      if (oldToken === newToken) {
+        console.log('WS: Token did not change after refresh. Skipping reconnect.');
+        return;
+      }
+
       console.log('WS: Access token refreshed. Reconnecting WebSocket...');
       if (this.client) {
         try {
@@ -143,18 +185,59 @@ class WebSocketService {
       console.error('WS: Token refresh failed. Disconnecting WebSocket.', e);
       this.disconnect();
     } finally {
-      this.refreshingToken = false;
+      this.isRefreshing = false;
       this.lastAuthError = false;
     }
   }
 
   private reSubscribeAll() {
     console.log(`WS: Re-subscribing to ${this.subscriptions.size} destinations`);
-    this.subscriptions.forEach(subObj => {
+    this.subscriptions.forEach((entry, destination) => {
       if (this.client?.connected) {
-        subObj.currentSubscription = this.client.subscribe(subObj.destination, subObj.callback);
+        entry.stompSubscription = this.client.subscribe(destination, (message) => {
+          this.handleIncomingMessage(destination, message);
+        });
       }
     });
+  }
+
+  private handleIncomingMessage(destination: string, message: IMessage) {
+    if (destination === '/topic/admin/streams') {
+      try {
+        const data = JSON.parse(message.body);
+        if (Array.isArray(data)) {
+          this.lastActiveStreams = data;
+        }
+      } catch (err) {
+        console.error(`WS: Failed to parse active streams from ${destination}`, err);
+      }
+    }
+
+    const entry = this.subscriptions.get(destination);
+    if (entry) {
+      entry.callbacks.forEach(cb => {
+        try {
+          cb(message);
+        } catch (e) {
+          console.error(`WS: Error in callback for ${destination}`, e);
+        }
+      });
+    }
+  }
+
+  private internalUnsubscribe(destination: string, callback: (message: IMessage) => void) {
+    const entry = this.subscriptions.get(destination);
+    if (!entry) return;
+
+    entry.callbacks.delete(callback);
+    if (entry.callbacks.size === 0) {
+      console.log(`WS: Last subscriber for ${destination} removed. Unsubscribing STOMP.`);
+      if (entry.stompSubscription) {
+        entry.stompSubscription.unsubscribe();
+      }
+      this.subscriptions.delete(destination);
+      console.debug("Active WS subscriptions:", this.subscriptions.size);
+    }
   }
 
   public async waitForConnection(): Promise<void> {
@@ -183,25 +266,43 @@ class WebSocketService {
    * @param destination The topic or queue to subscribe to.
    * @param callback Function to handle incoming messages.
    */
-  public subscribe(destination: string, callback: (message: IMessage) => void): (() => void) & Promise<() => void> {
-    console.log(`WS: Creating new subscription with receipt to ${destination}`);
+  public subscribe(destination: string, callback: (message: IMessage) => void): (() => void) & Promise<() => void> & { unsubscribe: () => void } {
+    if (destination === '/user/queue/webrtc') {
+      console.log("WS: [DEBUG] Subscribing to WebRTC queue (/user/queue/webrtc)");
+    }
+    const existingEntry = this.subscriptions.get(destination);
+
+    if (existingEntry) {
+      console.log(`WS: Duplicate subscription attempt for ${destination} prevented. Multiplexing callback.`);
+      existingEntry.callbacks.add(callback);
+
+      const unsub = () => this.internalUnsubscribe(destination, callback);
+
+      const promise = (async () => {
+        if (existingEntry.receiptPromise) {
+          await existingEntry.receiptPromise;
+        }
+        return unsub;
+      })();
+
+      const result = unsub as any;
+      result.unsubscribe = unsub;
+      result.then = (onfulfilled?: any, onrejected?: any) => promise.then(onfulfilled, onrejected);
+      result.catch = (onrejected?: any) => promise.catch(onrejected);
+      result.finally = (onfinally?: any) => promise.finally(onfinally);
+
+      return result as (() => void) & Promise<() => void> & { unsubscribe: () => void };
+    }
+
+    // New subscription
+    const callbacks = new Set([callback]);
+    const entry: any = { callbacks };
+    this.subscriptions.set(destination, entry);
+    console.debug("Active WS subscriptions:", this.subscriptions.size);
+
+    const unsub = () => this.internalUnsubscribe(destination, callback);
+
     const receiptId = `sub-${Math.random().toString(36).substring(2, 9)}`;
-    
-    const subObj: {
-      destination: string;
-      callback: (message: IMessage) => void;
-      currentSubscription?: StompSubscription;
-    } = { destination, callback };
-
-    this.subscriptions.add(subObj);
-
-    const unsub = () => {
-      console.log(`WS: Unsubscribing from ${destination}`);
-      this.subscriptions.delete(subObj);
-      if (subObj.currentSubscription) {
-        subObj.currentSubscription.unsubscribe();
-      }
-    };
 
     const promise = (async () => {
       if (this.client?.connected) {
@@ -209,16 +310,18 @@ class WebSocketService {
           this.receiptResolvers.set(receiptId, { resolve, reject });
         });
 
-        subObj.currentSubscription = this.client.subscribe(destination, callback, { receipt: receiptId });
-        
+        entry.receiptPromise = receiptPromise;
+
+        entry.stompSubscription = this.client.subscribe(destination, (message) => {
+          this.handleIncomingMessage(destination, message);
+        }, { receipt: receiptId });
+
         console.log(`WS: Awaiting receipt for ${destination} (ID: ${receiptId})`);
         try {
           await receiptPromise;
           console.log(`WS: Receipt confirmed for ${destination}`);
         } catch (err) {
           console.error(`WS: Receipt failed for ${destination}`, err);
-          // We don't throw here to avoid breaking thenable contract, 
-          // but the subscription might not be fully active on the broker.
         }
       } else {
         console.warn(`WS: Subscribe called while disconnected for ${destination}. Subscription will be established on connect.`);
@@ -226,13 +329,13 @@ class WebSocketService {
       return unsub;
     })();
 
-    // Augment the unsubscribe function with Promise properties for backward compatibility + async support
     const result = unsub as any;
+    result.unsubscribe = unsub;
     result.then = (onfulfilled?: any, onrejected?: any) => promise.then(onfulfilled, onrejected);
     result.catch = (onrejected?: any) => promise.catch(onrejected);
     result.finally = (onfinally?: any) => promise.finally(onfinally);
 
-    return result as (() => void) & Promise<() => void>;
+    return result as (() => void) & Promise<() => void> & { unsubscribe: () => void };
   }
 
   /**
@@ -240,27 +343,61 @@ class WebSocketService {
    * Useful for WebRTC signaling where registration order is critical.
    */
   public async subscribeWithAck(destination: string, callback: (message: IMessage) => void): Promise<StompSubscription> {
-    const receiptId = `ack-${Math.random().toString(36).substring(2, 9)}`;
-    
+    const existingEntry = this.subscriptions.get(destination);
+
+    const unsub = () => this.internalUnsubscribe(destination, callback);
+
+    if (existingEntry) {
+      console.log(`WS: Duplicate subscribeWithAck attempt for ${destination} prevented. Multiplexing.`);
+      existingEntry.callbacks.add(callback);
+      if (existingEntry.receiptPromise) {
+        await existingEntry.receiptPromise;
+      }
+      return {
+        id: existingEntry.stompSubscription?.id || `multiplexed-${destination}`,
+        unsubscribe: () => unsub(),
+      } as StompSubscription;
+    }
+
     if (!this.client?.connected) {
       throw new Error("WS: Cannot subscribeWithAck while disconnected");
     }
 
+    const receiptId = `ack-${Math.random().toString(36).substring(2, 9)}`;
     const receiptPromise = new Promise<void>((resolve, reject) => {
       this.receiptResolvers.set(receiptId, { resolve, reject });
     });
 
-    const subscription = this.client.subscribe(destination, callback, { receipt: receiptId });
-    
-    const subObj = { destination, callback, currentSubscription: subscription };
-    this.subscriptions.add(subObj);
+    const callbacks = new Set([callback]);
+    const entry: any = { callbacks, receiptPromise };
+    this.subscriptions.set(destination, entry);
+    console.debug("Active WS subscriptions:", this.subscriptions.size);
+
+    const subscription = this.client.subscribe(destination, (message) => {
+      const e = this.subscriptions.get(destination);
+      if (e) {
+        e.callbacks.forEach(cb => {
+          try {
+            cb(message);
+          } catch (err) {
+            console.error(`WS: Error in callback for ${destination}`, err);
+          }
+        });
+      }
+    }, { receipt: receiptId });
+
+    entry.stompSubscription = subscription;
 
     try {
       await receiptPromise;
-      return subscription;
+      return {
+        id: subscription.id,
+        unsubscribe: () => unsub(),
+      } as StompSubscription;
     } catch (err) {
       console.error(`WS: subscribeWithAck failed for ${destination}`, err);
-      this.subscriptions.delete(subObj);
+      this.subscriptions.delete(destination);
+      console.debug("Active WS subscriptions:", this.subscriptions.size);
       subscription.unsubscribe();
       throw err;
     }
@@ -313,7 +450,66 @@ class WebSocketService {
       console.log("WS: No active client to deactivate.");
     }
     this.isConnecting = false;
+    this.notifyStateChange();
     console.log("WS: Disconnected and client cleared.");
+  }
+
+  /**
+   * Unsubscribe from a destination.
+   * @param sub The subscription reference returned by subscribe().
+   */
+  public unsubscribe(sub: any) {
+    if (sub && typeof sub.unsubscribe === 'function') {
+      sub.unsubscribe();
+    } else if (typeof sub === 'function') {
+      sub();
+    }
+  }
+
+  /**
+   * Subscribe to real-time administrative events.
+   * Only active if the user has ROLE_ADMIN.
+   * @param callback Function to handle AdminRealtimeEventDTO.
+   */
+  public subscribeToAdminEvents(callback: (event: AdminRealtimeEventDTO) => void): (() => void) | null {
+    const user = authStore.getState().user;
+    if (user?.role !== 'ADMIN') {
+      console.warn("WS: Attempted to subscribe to admin events without ROLE_ADMIN");
+      return null;
+    }
+
+    console.log("WS: Subscribing to admin events topic");
+    return this.subscribe('/topic/admin/events', (message) => {
+      try {
+        const event = JSON.parse(message.body) as AdminRealtimeEventDTO;
+        callback(event);
+      } catch (e) {
+        console.error("WS: Failed to parse admin event", e);
+      }
+    });
+  }
+
+  /**
+   * Subscribe to real-time abuse radar events.
+   * Only active if the user has ROLE_ADMIN.
+   * @param callback Function to handle Abuse events.
+   */
+  public subscribeToAbuseEvents(callback: (event: any) => void): (() => void) | null {
+    const user = authStore.getState().user;
+    if (user?.role !== 'ADMIN') {
+      console.warn("WS: Attempted to subscribe to abuse events without ROLE_ADMIN");
+      return null;
+    }
+
+    console.log("WS: Subscribing to admin abuse topic");
+    return this.subscribe('/topic/admin/abuse', (message) => {
+      try {
+        const event = JSON.parse(message.body);
+        callback(event);
+      } catch (e) {
+        console.error("WS: Failed to parse abuse event", e);
+      }
+    });
   }
 }
 

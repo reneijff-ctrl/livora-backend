@@ -1,6 +1,7 @@
 package com.joinlivora.backend.content.dto;
 
-import com.joinlivora.backend.content.ContentAccessLevel;
+import com.joinlivora.backend.content.AccessLevel;
+import com.joinlivora.backend.content.ContentType;
 import lombok.Builder;
 import lombok.Data;
 
@@ -16,8 +17,11 @@ public class ContentResponse implements Serializable {
     private String description;
     private String thumbnailUrl;
     private String mediaUrl; // Should be signed/limited
-    private ContentAccessLevel accessLevel;
+    private AccessLevel accessLevel;
+    private ContentType type;
     private Long creatorId;
     private String creatorEmail;
+    private Integer unlockPriceTokens;
     private Instant createdAt;
+    private boolean unlocked;
 }

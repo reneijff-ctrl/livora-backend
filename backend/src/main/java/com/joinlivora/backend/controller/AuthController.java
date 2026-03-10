@@ -25,18 +25,21 @@ public class AuthController {
 
     private final AuthService authService;
     private final CookieUtil cookieUtil;
+    private final com.joinlivora.backend.user.UserService userService;
     private final com.joinlivora.backend.token.TokenWalletService tokenWalletService;
     private final com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService;
     private final com.joinlivora.backend.presence.service.CreatorPresenceService creatorPresenceService;
     private final CreatorRepository creatorRepository;
 
     public AuthController(AuthService authService, CookieUtil cookieUtil, 
+                          com.joinlivora.backend.user.UserService userService,
                           com.joinlivora.backend.token.TokenWalletService tokenWalletService,
                           com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService,
                           com.joinlivora.backend.presence.service.CreatorPresenceService creatorPresenceService,
                           CreatorRepository creatorRepository) {
         this.authService = authService;
         this.cookieUtil = cookieUtil;
+        this.userService = userService;
         this.tokenWalletService = tokenWalletService;
         this.creatorProfileService = creatorProfileService;
         this.creatorPresenceService = creatorPresenceService;
@@ -60,6 +63,7 @@ public class AuthController {
         UserDto userDto = new UserDto(
                 loginResponse.getUserId(),
                 loginResponse.getEmail(),
+                loginResponse.getUsername(),
                 loginResponse.getRole()
         );
 
@@ -131,7 +135,9 @@ public class AuthController {
         if (principal == null) {
             return ResponseEntity.status(401).body(Map.of("message", "Not authenticated"));
         }
-        authService.resendVerification(principal.getName());
+        com.joinlivora.backend.user.User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
+        authService.resendVerification(user.getEmail());
         return ResponseEntity.ok(Map.of("message", "Verification email resent"));
     }
 
@@ -149,7 +155,8 @@ public class AuthController {
         if (principal == null) {
             return ResponseEntity.status(401).build();
         }
-        com.joinlivora.backend.user.User user = authService.getUserByEmail(principal.getName());
+        com.joinlivora.backend.user.User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
         com.joinlivora.backend.payment.dto.SubscriptionResponse sub = authService.getSubscriptionForUser(user);
         long tokenBalance = tokenWalletService.getAvailableBalance(user.getId());
         
@@ -163,6 +170,7 @@ public class AuthController {
         return ResponseEntity.ok(new UserMeResponse(
                 user.getId(),
                 user.getEmail(),
+                user.getUsername(),
                 user.getDisplayName(),
                 user.getRole(),
                 user.getStatus(),

@@ -6,5 +6,6 @@ public enum EarningSource {
     PPV,
     HIGHLIGHTED_CHAT,
     CHAT,
-    PRIVATE_SHOW
+    PRIVATE_SHOW,
+    CHARGEBACK
 }

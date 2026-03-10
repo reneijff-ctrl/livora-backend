@@ -19,23 +19,23 @@ export interface Payout {
 
 const payoutService = {
   async startOnboarding(): Promise<{ onboardingUrl: string }> {
-    const response = await apiClient.post<{ onboardingUrl: string }>('/api/creator/payouts/onboard');
+    const response = await apiClient.post<{ onboardingUrl: string }>('/creator/payouts/onboard');
     return response.data;
   },
 
   async getAccountStatus(): Promise<StripeAccount> {
-    const response = await apiClient.get<StripeAccount>('/api/creator/payouts/account');
+    const response = await apiClient.get<StripeAccount>('/creator/payouts/account');
     return response.data;
   },
 
 
   async getPayoutHistory(): Promise<Payout[]> {
-    const response = await apiClient.get<Payout[]>('/api/creator/payouts/history');
+    const response = await apiClient.get<Payout[]>('/creator/payouts/history');
     return response.data;
   },
 
   async getAllPayoutsAdmin(): Promise<Payout[]> {
-    const response = await apiClient.get<Payout[]>('/api/admin/payouts');
+    const response = await apiClient.get<Payout[]>('/admin/payouts');
     return response.data;
   }
 };

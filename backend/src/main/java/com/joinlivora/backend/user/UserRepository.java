@@ -12,8 +12,15 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificationExecutor<User> {
 
     Optional<User> findByEmail(String email);
+    Optional<User> findByUsername(String username);
     boolean existsByEmail(String email);
+    boolean existsByUsername(String username);
     long countByRole(Role role);
+    long countByCreatedAtAfter(java.time.Instant after);
+
+    default long countNewUsersToday() {
+        return countByCreatedAtAfter(java.time.Instant.now().minus(1, java.time.temporal.ChronoUnit.DAYS));
+    }
     Optional<User> findByEmailVerificationToken(String token);
     Optional<User> findByStripeAccountId(String stripeAccountId);
     Page<User> findAllByRole(Role role, Pageable pageable);
@@ -28,4 +35,7 @@ public interface UserRepository extends JpaRepository<User, Long>, JpaSpecificat
            "WHERE u.role = com.joinlivora.backend.user.Role.CREATOR " +
            "AND (u.id = :id OR lcp.username = :username OR u.email LIKE CONCAT(:username, '@%'))")
     Optional<User> findCreatorByIdOrUsername(@Param("id") Long id, @Param("username") String username);
+    @Query("SELECT CAST(u.createdAt AS date), COUNT(u) FROM User u " +
+           "WHERE u.createdAt >= :after GROUP BY CAST(u.createdAt AS date) ORDER BY CAST(u.createdAt AS date)")
+    java.util.List<Object[]> countNewUsersGroupedByDay(@Param("after") java.time.Instant after);
 }

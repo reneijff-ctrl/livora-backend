@@ -62,7 +62,7 @@ const paymentService = {
    * Returns the URL to redirect the user to Stripe Checkout.
    */
   async createCheckoutSession(planId?: string): Promise<CheckoutResponse> {
-    const response = await apiClient.post<CheckoutResponse>('/api/payments/checkout', { planId });
+    const response = await apiClient.post<CheckoutResponse>('/payments/checkout', { planId });
     return response.data;
   },
 
@@ -70,7 +70,7 @@ const paymentService = {
    * Fetches the available subscription plans.
    */
   async getPlans(): Promise<SubscriptionPlan[]> {
-    const response = await publicApiClient.get<SubscriptionPlan[]>('/api/subscriptions/plans');
+    const response = await publicApiClient.get<SubscriptionPlan[]>('/subscriptions/plans');
     return response.data;
   },
 
@@ -78,7 +78,7 @@ const paymentService = {
    * Fetches the current user's subscription status and details.
    */
   async getMySubscription(): Promise<SubscriptionResponse> {
-    const response = await apiClient.get<SubscriptionResponse>('/api/subscriptions/me');
+    const response = await apiClient.get<SubscriptionResponse>('/subscriptions/me');
     return response.data;
   },
 
@@ -86,21 +86,21 @@ const paymentService = {
    * Cancels the current user's active subscription.
    */
   async cancelSubscription(): Promise<void> {
-    await apiClient.post('/api/subscriptions/cancel');
+    await apiClient.post('/subscriptions/cancel');
   },
 
   /**
    * Resumes a canceled subscription.
    */
   async resumeSubscription(): Promise<void> {
-    await apiClient.post('/api/subscriptions/resume');
+    await apiClient.post('/subscriptions/resume');
   },
 
   /**
    * Opens the customer billing portal.
    */
   async openBillingPortal(): Promise<void> {
-    const response = await apiClient.get<{ url: string }>('/api/billing/portal');
+    const response = await apiClient.get<{ url: string }>('/billing/portal');
     if (response.data.url) {
       window.location.href = response.data.url;
     }
@@ -110,7 +110,7 @@ const paymentService = {
    * Fetches invoice history for the current user.
    */
   async fetchInvoices(): Promise<Invoice[]> {
-    const response = await apiClient.get<Invoice[]>('/api/billing/invoices');
+    const response = await apiClient.get<Invoice[]>('/billing/invoices');
     return response.data;
   },
 };

@@ -1,7 +1,8 @@
-import { User, Role, UserStatus, SubscriptionStatus } from '../types';
+import { User, SubscriptionStatus } from '../types';
 import api from '../api/apiClient';
 import AuthService from '../api/authService';
-import { getAccessToken } from '../auth/jwt';
+import { getAccessToken, setAccessToken, setRefreshToken } from '../auth/jwt';
+import { adaptCreator } from '../adapters/CreatorAdapter';
 
 /**
  * AuthState represents the centralized authentication state.
@@ -70,6 +71,63 @@ class AuthStore {
     this.notify();
   }
 
+  /**
+   * Sets the authentication state from a backend response containing a token and user data.
+   * This is the primary method for updating auth after login, token refresh, or role upgrade.
+   */
+  public setAuthFromBackend(response: { accessToken: string; refreshToken?: string; user: any }) {
+    const { accessToken, refreshToken, user } = response;
+
+    // 1. Save tokens to persistent storage
+    if (accessToken) {
+      setAccessToken(accessToken);
+    }
+    if (refreshToken) {
+      setRefreshToken(refreshToken);
+    }
+
+    // 2. Normalize and update user state
+    const normalizedUser = this.normalizeUser(user);
+
+    // 3. Update internal state and emit changes
+    this.setState({
+      token: accessToken || this.state.token,
+      user: normalizedUser,
+      isAuthenticated: !!(accessToken || this.state.token),
+      isLoading: false,
+      authLoading: false,
+      isInitialized: true,
+    });
+  }
+
+  private normalizeUser(user: any): User | null {
+    if (!user) return null;
+
+    const normalized = { ...user };
+    
+    // Ensure ID is a string
+    if (typeof normalized.id === 'number') {
+      normalized.id = normalized.id.toString();
+    }
+    
+    // Normalize role
+    if (normalized.role === 'USER') {
+      normalized.role = 'VIEWER';
+    }
+
+    // Adapt creator profile if present
+    if (normalized.creatorProfile) {
+      normalized.creatorProfile = adaptCreator(normalized.creatorProfile);
+    }
+    
+    // Add default subscription if missing
+    if (!normalized.subscription) {
+       normalized.subscription = { status: SubscriptionStatus.NONE };
+    }
+
+    return normalized as User;
+  }
+
   private notify() {
     this.listeners.forEach((listener) => listener({ ...this.state }));
   }
@@ -83,27 +141,15 @@ class AuthStore {
       // AuthService handles the API call and setting the token in localStorage via jwt.ts
       const response = await AuthService.login(email, password);
       
-      const token = getAccessToken();
-      
-      // Store basic user info from login response immediately
-      // This ensures role-based routing works before the full fetchUser completes
-      this.setState({ 
-        token, 
-        isAuthenticated: true, 
-        authLoading: true, // Keep loading true until full profile is fetched
-        isInitialized: true,
-        user: {
-          id: String(response.user.id),
-          email: response.user.email,
-          role: response.user.role === 'USER' ? 'VIEWER' : response.user.role as Role,
-          status: UserStatus.ACTIVE,
-          emailVerified: false, // Default until fetchUser confirms
-          subscription: { status: SubscriptionStatus.NONE }
-        } as User
+      // Use the centralized method to set auth state from backend response
+      this.setAuthFromBackend({
+        accessToken: response.token,
+        refreshToken: response.refreshToken,
+        user: response.user
       });
       
       // Fetch full user profile (subscription, balance, etc.)
-      await this.fetchUser();
+      await this.refresh();
     } catch (error) {
       this.setState({ isLoading: false });
       throw error;
@@ -111,9 +157,10 @@ class AuthStore {
   }
 
   /**
-   * Fetches the current user profile from the backend.
+   * Refreshes the full user profile from the backend.
+   * Alias for legacy fetchUser/fetchMe.
    */
-  async fetchUser(): Promise<User> {
+  async refresh(): Promise<User> {
     const currentToken = getAccessToken();
     if (!currentToken) {
       this.setState({ 
@@ -136,14 +183,16 @@ class AuthStore {
         return user;
       }
 
+      // Normalize and set the refreshed user
+      const normalizedUser = this.normalizeUser(user);
       this.setState({ 
-        user, 
+        user: normalizedUser, 
         isAuthenticated: true, 
         isLoading: false,
         authLoading: false,
         isInitialized: true 
       });
-      return user;
+      return normalizedUser as User;
     } catch (error: any) {
       // Prevent race condition for errors too
       if (getAccessToken() !== currentToken) {
@@ -162,7 +211,7 @@ class AuthStore {
    */
   async refreshBalance(): Promise<number> {
     try {
-      const response = await api.get<{ balance: number }>('/api/tokens/balance');
+      const response = await api.get<{ balance: number }>('/tokens/balance');
       if (this.state.user) {
         this.setState({
           user: { ...this.state.user, tokenBalance: response.data.balance }
@@ -173,13 +222,6 @@ class AuthStore {
       console.error('Failed to refresh balance', error);
       throw error;
     }
-  }
-
-  /**
-   * Refreshes the full user profile.
-   */
-  async fetchMe(): Promise<User> {
-    return this.fetchUser();
   }
 
   /**

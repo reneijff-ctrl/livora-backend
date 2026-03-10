@@ -12,7 +12,7 @@ interface ProtectedRouteProps {
  * If not authenticated, it redirects to the login page.
  */
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
-  const { isAuthenticated, isInitialized, user } = useAuth();
+  const { isAuthenticated, isInitialized } = useAuth();
   const location = useLocation();
 
   if (!isInitialized) {
@@ -23,16 +23,6 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
   if (!isAuthenticated) {
     // Redirect to login, but save the current location they were trying to go to
     return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  // Guard: Redirect creators in DRAFT status to onboarding
-  if (user?.role === 'CREATOR' && user?.creatorProfile?.status === 'DRAFT' && location.pathname !== '/creator/onboard') {
-    return <Navigate to="/creator/onboard" replace />;
-  }
-
-  // Guard: Redirect creators in PENDING status to waiting screen
-  if (user?.role === 'CREATOR' && user?.creatorProfile?.status === 'PENDING' && location.pathname !== '/creator/pending') {
-    return <Navigate to="/creator/pending" replace />;
   }
 
   return <>{children}</>;

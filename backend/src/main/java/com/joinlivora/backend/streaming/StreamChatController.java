@@ -1,5 +1,8 @@
 package com.joinlivora.backend.streaming;
 
+import com.joinlivora.backend.chat.dto.ModerateResult;
+import com.joinlivora.backend.chat.dto.ModerationSeverity;
+import com.joinlivora.backend.websocket.RealtimeMessage;
 import com.joinlivora.backend.monetization.dto.SuperTipRequest;
 import com.joinlivora.backend.exception.SuperTipException;
 import com.joinlivora.backend.exception.ChatAccessException;
@@ -15,6 +18,7 @@ import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import com.joinlivora.backend.payout.CreatorEarningsService;
 import com.joinlivora.backend.payment.PaymentRepository;
+import com.joinlivora.backend.streaming.service.StreamModerationService;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -58,6 +62,8 @@ public class StreamChatController {
     private final com.joinlivora.backend.analytics.AnalyticsEventPublisher analyticsEventPublisher;
     private final com.joinlivora.backend.abuse.AbuseDetectionService abuseDetectionService;
     private final com.joinlivora.backend.abuse.RestrictionService restrictionService;
+    private final StreamModerationService streamModerationService;
+    private final com.joinlivora.backend.streaming.service.StreamAssistantBotService streamAssistantBotService;
 
     // Optional V2 services for state gating (not required for tests/legacy wiring)
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -87,7 +93,9 @@ public class StreamChatController {
             com.joinlivora.backend.monetization.HighlightedMessageService highlightedMessageService,
             @org.springframework.context.annotation.Lazy com.joinlivora.backend.analytics.AnalyticsEventPublisher analyticsEventPublisher,
             com.joinlivora.backend.abuse.AbuseDetectionService abuseDetectionService,
-            com.joinlivora.backend.abuse.RestrictionService restrictionService) {
+            com.joinlivora.backend.abuse.RestrictionService restrictionService,
+            StreamModerationService streamModerationService,
+            com.joinlivora.backend.streaming.service.StreamAssistantBotService streamAssistantBotService) {
         this.messagingTemplate = messagingTemplate;
         this.userService = userService;
         this.tokenService = tokenService;
@@ -103,31 +111,10 @@ public class StreamChatController {
         this.analyticsEventPublisher = analyticsEventPublisher;
         this.abuseDetectionService = abuseDetectionService;
         this.restrictionService = restrictionService;
+        this.streamModerationService = streamModerationService;
+        this.streamAssistantBotService = streamAssistantBotService;
     }
 
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class ChatMessage {
-        private String id;
-        private String userId;
-        private String senderEmail;
-        private String message;
-        private boolean isPaid;
-        private long amount;
-        private String badgeType;
-        private Instant createdAt;
-        private boolean system;
-        private boolean moderated;
-
-        // Highlight fields
-        private boolean isHighlighted;
-        private com.joinlivora.backend.monetization.HighlightType highlightType;
-        private String clientRequestId;
-        private boolean priority;
-        private int highlightDuration;
-    }
 
     @Data
     @NoArgsConstructor
@@ -195,159 +182,6 @@ public class StreamChatController {
         return response;
     }
 
-    @MessageMapping("/stream/{streamId}/chat")
-    public void handleChatMessage(
-            @DestinationVariable UUID streamId,
-            @Payload @Valid ChatMessage message,
-            Principal principal,
-            SimpMessageHeaderAccessor headerAccessor
-    ) {
-        if (principal == null) return;
-        User user = userService.getByEmail(principal.getName());
-
-        // Enforcement of Abuse Restrictions
-        java.util.Optional<UserRestriction> activeRestriction = restrictionService.getActiveRestriction(new UUID(0L, user.getId()));
-        if (activeRestriction.isPresent()) {
-            RestrictionLevel level = activeRestriction.get().getRestrictionLevel();
-            if (level == RestrictionLevel.CHAT_MUTE || level == RestrictionLevel.TEMP_SUSPENSION) {
-                log.warn("Abuse: Restricted creator {} (Level: {}) attempted to send message in stream {}", user.getEmail(), level, streamId);
-                throw new UserRestrictedException(level, "Your chat access is restricted.", activeRestriction.get().getExpiresAt());
-            }
-        }
-
-        String roomId = "stream-" + streamId;
-        if (moderationService.isMuted(user.getId(), roomId)) {
-            log.warn("Moderation: Muted creator {} attempted to send message in stream {}", user.getEmail(), streamId);
-            return;
-        }
-
-        if (moderationService.isBanned(user.getId(), roomId)) {
-            log.warn("Moderation: Banned creator {} attempted to send message in stream {}", user.getEmail(), streamId);
-            return;
-        }
-
-        chatRoomService.validateAccess(roomId, user.getId());
-
-        StreamRoom room = streamService.getRoom(streamId);
-
-        // Slow Mode & Staff Validation
-        boolean isStaff = room.getCreator().getId().equals(user.getId()) ||
-                          user.getRole() == Role.ADMIN ||
-                          user.getRole() == Role.MODERATOR;
-
-        // Paid Chat Room Enforcement (room requires tokens per message)
-        chatRoomService.getRoomByName(roomId).ifPresent(chatRoom -> {
-            if (chatRoom.isPaid() && !isStaff && !message.isPaid() && !message.isHighlighted()) {
-                long price = chatRoom.getPricePerMessage() != null ? chatRoom.getPricePerMessage() : 0L;
-                if (price > 0) {
-                    // Preconditions: stream LIVE + chat ACTIVE
-                    enforcePaidActionPreconditions(room.getCreator().getId());
-
-                    tokenService.deductTokens(user, price, WalletTransactionType.CHAT, "Paid message in " + roomId);
-                    creatorEarningsService.recordChatEarning(user, room.getCreator(), price, streamId);
-                    log.info("CHAT: Deducted {} tokens for mandatory paid message from {} in room {}", price, user.getEmail(), roomId);
-                }
-            }
-        });
-
-        // Slow Mode Validation
-        boolean hasSlowModeBypass = isStaff || slowModeBypassService.isBypassing(user.getId(), streamId);
-
-        // If creator has abuse SLOW_MODE, they CANNOT bypass it
-        boolean hasAbuseSlowMode = activeRestriction.isPresent() && 
-                                   activeRestriction.get().getRestrictionLevel() == RestrictionLevel.SLOW_MODE;
-
-        if (hasAbuseSlowMode || (room.isSlowMode() && !hasSlowModeBypass)) {
-            chatRateLimitService.validateMessageRate(user.getId(), streamId);
-        }
-
-        message.setId(UUID.randomUUID().toString());
-        message.setUserId(user.getId().toString());
-        message.setSenderEmail(user.getEmail());
-        message.setCreatedAt(Instant.now());
-
-        // Capture IP, UA and Country from session attributes
-        String ipAddress = (String) headerAccessor.getSessionAttributes().get("ipAddress");
-        String userAgent = (String) headerAccessor.getSessionAttributes().get("userAgent");
-        String country = (String) headerAccessor.getSessionAttributes().get("country");
-
-        // Abuse detection: Message Spam
-        if (ipAddress != null) {
-            // Silent check for soft block
-            if (abuseDetectionService.isSoftBlocked(new java.util.UUID(0L, user.getId()), ipAddress)) {
-                log.info("SILENT_DETECTION: User {} or IP {} is soft-blocked in AbuseDetectionService", user.getId(), ipAddress);
-            }
-            abuseDetectionService.checkMessageSpam(new java.util.UUID(0L, user.getId()), ipAddress);
-        }
-
-        // Publish analytics event
-        analyticsEventPublisher.publishEvent(
-                com.joinlivora.backend.analytics.AnalyticsEventType.CHAT_MESSAGE_SENT,
-                user,
-                Map.of("roomId", streamId, "creator", room.getCreator().getId())
-        );
-
-        if (message.isHighlighted()) {
-            try {
-                // For Stripe payments, we use the amount provided.
-                // We'll use a generated message ID if none provided.
-                String messageId = message.getClientRequestId() != null ? message.getClientRequestId() : UUID.randomUUID().toString();
-                
-                String clientSecret = highlightedMessageService.createHighlightIntent(
-                        user, streamId, messageId, message.getMessage(),
-                        message.getHighlightType(),
-                        BigDecimal.valueOf(message.getAmount()),
-                        message.getClientRequestId(),
-                        ipAddress,
-                        country,
-                        userAgent
-                );
-
-                messagingTemplate.convertAndSendToUser(principal.getName(), "/queue/highlight-intent", Map.of(
-                        "clientSecret", clientSecret,
-                        "clientRequestId", message.getClientRequestId() != null ? message.getClientRequestId() : ""
-                ));
-                return; // Do not broadcast until paid
-            } catch (Exception e) {
-                log.error("Failed to create highlight intent", e);
-                if (e instanceof com.stripe.exception.StripeException) {
-                    throw new RuntimeException("Payment provider error", e);
-                }
-                throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
-            }
-        }
-
-        if (message.isPaid()) {
-            if (message.getAmount() <= 0) {
-                throw new RuntimeException("Paid message must have a positive amount");
-            }
-
-            // Preconditions: stream LIVE + chat ACTIVE
-            enforcePaidActionPreconditions(room.getCreator().getId());
-            
-            // Deduct tokens
-            tokenService.deductTokens(user, message.getAmount(), WalletTransactionType.CHAT, "Paid message in stream " + streamId);
-            
-            // Record earning for creator
-            creatorEarningsService.recordChatEarning(user, room.getCreator(), message.getAmount(), streamId);
-            
-            log.info("CHAT: Paid message from {} in stream {}: {} tokens", user.getEmail(), streamId, message.getAmount());
-        } else {
-            // Check if room has minimum chat tokens required
-            if (room.getMinChatTokens() != null && room.getMinChatTokens() > 0) {
-                if (!isStaff) {
-                    throw new RuntimeException("This stream requires a minimum of " + room.getMinChatTokens() + " tokens per message.");
-                }
-            }
-        }
-
-        // Broadcast to all subscribers of this stream's chat
-        messagingTemplate.convertAndSend("/topic/chat/" + streamId, Map.of(
-                "type", "chat",
-                "timestamp", Instant.now(),
-                "chatMessage", message
-        ));
-    }
 
     @MessageMapping("/stream/{streamId}/tip")
     public void handleChatTip(
@@ -359,7 +193,8 @@ public class StreamChatController {
         if (principal == null) {
             throw new AccessDeniedException("User must be authenticated to tip");
         }
-        User user = userService.getByEmail(principal.getName());
+        User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
 
         String roomId = "stream-" + streamId;
         if (moderationService.isBanned(user.getId(), roomId)) {
@@ -414,7 +249,8 @@ public class StreamChatController {
         if (principal == null) {
             throw new AccessDeniedException("User must be authenticated to send a SuperTip");
         }
-        User user = userService.getByEmail(principal.getName());
+        User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
 
         String roomId = "stream-" + streamId;
         if (moderationService.isBanned(user.getId(), roomId)) {
@@ -470,7 +306,7 @@ public class StreamChatController {
         } else {
             // Fallback if service not available
             if (liveStreamServiceV2 != null) {
-                com.joinlivora.backend.livestream.domain.LiveStream active = null;
+                Stream active = null;
                 try {
                     active = liveStreamServiceV2.getActiveStream(creatorUserId);
                 } catch (Exception ignored) {}

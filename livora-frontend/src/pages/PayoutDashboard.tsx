@@ -55,7 +55,7 @@ const PayoutDashboard: React.FC = () => {
       <SEO title="Creator Payouts" />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h1>💰 Creator Payouts</h1>
-        <Link to="/dashboard">Back to Dashboard</Link>
+        <Link to="/dashboard">Back to Viewer Hub</Link>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem', marginBottom: '3rem' }}>

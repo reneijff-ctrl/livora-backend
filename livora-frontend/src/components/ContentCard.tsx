@@ -2,6 +2,7 @@ import React from 'react';
 import { ContentItem } from '../api/contentService';
 import { useAuth } from '../auth/useAuth';
 import { Link } from 'react-router-dom';
+import { safeRender } from '@/utils/safeRender';
 
 import ImageWithFallback from '@/components/ImageWithFallback';
 
@@ -20,6 +21,13 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
   };
 
   const locked = isLocked();
+  
+  const getDisplayUrl = () => {
+    if (content.type === 'VIDEO' || content.type === 'CLIP') {
+      return content.thumbnailUrl;
+    }
+    return content.mediaUrl || content.thumbnailUrl;
+  };
 
   return (
     <div style={{ 
@@ -33,7 +41,7 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
     }}>
       <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', backgroundColor: '#eee' }}>
         <ImageWithFallback 
-          src={content.thumbnailUrl || undefined} 
+          src={getDisplayUrl() || undefined} 
           alt={content.title}
           style={{ 
             position: 'absolute', 
@@ -90,13 +98,13 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
             backgroundColor: content.accessLevel === 'FREE' ? '#e2e8f0' : content.accessLevel === 'PREMIUM' ? '#fef3c7' : '#e0e7ff',
             color: content.accessLevel === 'FREE' ? '#475569' : content.accessLevel === 'PREMIUM' ? '#92400e' : '#3730a3'
           }}>
-            {content.accessLevel}
+            {safeRender(content.accessLevel)}
           </span>
           <span style={{ fontSize: '0.75rem', color: '#666' }}>
-            {content.createdAt ? new Date(content.createdAt).toLocaleDateString() : 'N/A'}
+            {safeRender(content.createdAt ? new Date(content.createdAt).toLocaleDateString() : 'N/A')}
           </span>
         </div>
-        <h3 style={{ margin: '0.5rem 0', fontSize: '1.1rem' }}>{content.title}</h3>
+        <h3 style={{ margin: '0.5rem 0', fontSize: '1.1rem' }}>{safeRender(content.title)}</h3>
         <p style={{ 
           fontSize: '0.9rem', 
           color: '#444', 
@@ -106,7 +114,7 @@ const ContentCard: React.FC<ContentCardProps> = ({ content }) => {
           WebkitBoxOrient: 'vertical', 
           overflow: 'hidden' 
         }}>
-          {content.description}
+          {safeRender(content.description)}
         </p>
       </div>
       <div style={{ padding: '1rem', borderTop: '1px solid #eee' }}>

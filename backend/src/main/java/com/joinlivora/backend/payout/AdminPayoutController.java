@@ -2,6 +2,7 @@ package com.joinlivora.backend.payout;
 
 import com.joinlivora.backend.audit.service.AuditService;
 import com.joinlivora.backend.payout.dto.AdminPayoutDetailDTO;
+import com.joinlivora.backend.payout.dto.PayoutAdminDTO;
 import com.joinlivora.backend.payout.dto.PayoutOverrideRequest;
 import com.joinlivora.backend.payout.dto.PayoutRequestAdminDetailDTO;
 import com.joinlivora.backend.user.User;
@@ -9,6 +10,8 @@ import com.joinlivora.backend.user.UserService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -69,19 +72,16 @@ public class AdminPayoutController {
     }
 
     @GetMapping
-    public ResponseEntity<List<Map<String, Object>>> getAllPayouts() {
-        List<Payout> payouts = payoutRepository.findAll();
-        List<Map<String, Object>> response = payouts.stream().map(p -> {
-            Map<String, Object> map = new java.util.HashMap<>();
-            map.put("id", p.getId());
-            map.put("userEmail", p.getUser().getEmail());
-            map.put("tokenAmount", p.getTokenAmount());
-            map.put("eurAmount", p.getEurAmount());
-            map.put("status", p.getStatus());
-            map.put("createdAt", p.getCreatedAt());
-            return map;
-        }).toList();
-        return ResponseEntity.ok(response);
+    public Page<PayoutAdminDTO> getPayouts(Pageable pageable) {
+        Page<Payout> page = payoutRepository.findAllWithUser(pageable);
+
+        return page.map(p -> new PayoutAdminDTO(
+                p.getId(),
+                p.getUser().getEmail(),
+                p.getEurAmount(),
+                p.getStatus().name(),
+                p.getCreatedAt()
+        ));
     }
 
     @GetMapping("/status/{status}")

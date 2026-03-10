@@ -1,5 +1,10 @@
 import { useRef, useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation, Routes, Route } from 'react-router-dom';
+import CreatorSettingsPage from './pages/creator/CreatorSettingsPage';
+import AdminFraudSignalsPage from './pages/AdminFraudSignalsPage';
+import ProtectedRoute from './auth/ProtectedRoute';
+import RequireRole from './auth/RequireRole';
+import MainLayout from './components/MainLayout';
 import BackendHealth from './components/BackendHealth';
 import Loader from './components/Loader';
 import DashboardSkeleton from './components/DashboardSkeleton';
@@ -48,32 +53,34 @@ function App() {
 
   if (!isInitialized && !isHome && !isMinimalistPage) {
     // Show Dashboard Skeleton if trying to access dashboard during initialization
-    const dashboardPaths = ['/dashboard', '/user/dashboard', '/creator/dashboard', '/creator/onboard'];
+    const dashboardPaths = ['/dashboard', '/user/dashboard', '/creator/dashboard', '/creator/onboard', '/creator/settings', '/admin/fraud/signals'];
     if (dashboardPaths.includes(location.pathname)) {
       return (
-        <>
+        <div className="min-h-screen bg-[#08080A]">
           <AgeVerification />
           <Navbar />
-          <DashboardSkeleton />
+          <main className="flex-1 flex flex-col justify-center items-center">
+            <DashboardSkeleton />
+          </main>
           <Footer />
-        </>
+        </div>
       );
     }
     // For all other routes, keep UI visible and show skeleton grid
     return (
-      <>
+      <div className="min-h-screen bg-[#08080A]">
         <AgeVerification />
         <Navbar />
-        <div style={{ padding: '2rem' }}>
+        <main className="flex-1 flex flex-col justify-center items-center py-12">
           <Loader type="logo" />
-        </div>
+        </main>
         <Footer />
-      </>
+      </div>
     );
   }
 
   return (
-    <>
+    <div className="min-h-screen bg-[#08080A]" data-instance={instanceId}>
       <AgeVerification />
       {!isPublicRoute && <DevStatus />}
       {/* Global Backend Health Indicator */}
@@ -83,13 +90,28 @@ function App() {
         </div>
       )}
       
-      {/* Render the current route content (which may be MainLayout or a standalone page) */}
-      <div className="outlet-wrapper" data-instance={instanceId}>
+      {/* Core application routes handled in App.tsx layout */}
+      {['/creator/settings', '/admin/fraud/signals'].includes(location.pathname) ? (
+        <Routes>
+          <Route element={<MainLayout />}>
+            <Route path="/creator/settings" element={<ProtectedRoute><CreatorSettingsPage /></ProtectedRoute>} />
+            <Route 
+              path="/admin/fraud/signals" 
+              element={
+                <RequireRole role="ADMIN">
+                  <AdminFraudSignalsPage />
+                </RequireRole>
+              } 
+            />
+          </Route>
+        </Routes>
+      ) : (
+        /* Render the current route content (which may be MainLayout or a standalone page) */
         <Outlet />
-      </div>
+      )}
 
       <CookieBanner />
-    </>
+    </div>
   );
 }
 

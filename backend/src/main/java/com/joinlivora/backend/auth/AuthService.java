@@ -1,9 +1,11 @@
 package com.joinlivora.backend.auth;
 
+import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.analytics.AnalyticsEventType;
 import com.joinlivora.backend.audit.service.AuditService;
 import com.joinlivora.backend.auth.dto.*;
+import com.joinlivora.backend.auth.event.UserLogoutEvent;
 import com.joinlivora.backend.exception.TrustChallengeException;
 import com.joinlivora.backend.security.LoginFailureHandler;
 import com.joinlivora.backend.security.LoginSuccessHandler;
@@ -68,6 +70,7 @@ public class AuthService {
     private final com.joinlivora.backend.abuse.RestrictionService restrictionService;
     private final CreatorProfileService creatorProfileService;
     private final ApplicationEventPublisher eventPublisher;
+    private final AdminRealtimeEventService adminRealtimeEventService;
     private final Environment env;
 
     public AuthService(
@@ -89,6 +92,7 @@ public class AuthService {
             com.joinlivora.backend.abuse.RestrictionService restrictionService,
             CreatorProfileService creatorProfileService,
             ApplicationEventPublisher eventPublisher,
+            AdminRealtimeEventService adminRealtimeEventService,
             Environment env
     ) {
         this.authenticationManager = authenticationManager;
@@ -109,6 +113,7 @@ public class AuthService {
         this.restrictionService = restrictionService;
         this.creatorProfileService = creatorProfileService;
         this.eventPublisher = eventPublisher;
+        this.adminRealtimeEventService = adminRealtimeEventService;
         this.env = env;
     }
 
@@ -137,6 +142,9 @@ public class AuthService {
 
         // Trigger transactional email
         eventPublisher.publishEvent(new UserRegisteredEvent(this, user));
+
+        // Broadcast to admins
+        adminRealtimeEventService.broadcastUserRegistered(user);
     }
 
     @Transactional
@@ -263,10 +271,7 @@ public class AuthService {
             // Track LOGIN velocity AFTER authentication and BEFORE returning response
             velocityTrackerService.trackAction(authenticatedUser.getId(), VelocityActionType.LOGIN);
 
-            String accessToken = jwtService.generateToken(
-                    authenticatedUser.getEmail(),
-                    authenticatedUser.getRole().name()
-            );
+            String accessToken = jwtService.generateAccessToken(authenticatedUser);
 
             Instant expiresAt = Instant.now().plusSeconds(jwtService.getJwtExpiration());
 
@@ -292,7 +297,8 @@ public class AuthService {
                     expiresAt,
                     authenticatedUser.getRole().name(),
                     authenticatedUser.getId(),
-                    authenticatedUser.getEmail()
+                    authenticatedUser.getEmail(),
+                    authenticatedUser.getUsername()
             );
         } catch (BadCredentialsException e) {
             userService.incrementFailedAttempts(user);
@@ -351,6 +357,7 @@ public class AuthService {
             String email = refreshTokenService.getEmailFromToken(refreshToken);
             if (email != null) {
                 auditLogoutHandler.logLogout(email, httpRequest);
+                eventPublisher.publishEvent(new UserLogoutEvent(this, email));
                 evictAllCaches(email);
             }
             refreshTokenService.revokeToken(refreshToken);

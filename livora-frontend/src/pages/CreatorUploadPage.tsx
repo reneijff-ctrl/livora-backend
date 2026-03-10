@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import creatorService from '../api/creatorService';
+import axios from 'axios';
 import SEO from '../components/SEO';
 import { showToast } from '../components/Toast';
 import CreatorSidebar from '../components/CreatorSidebar';
@@ -8,27 +8,51 @@ import { useAuth } from '../auth/useAuth';
 
 const CreatorUploadPage: React.FC = () => {
   const { user } = useAuth();
-  const isAdmin = user?.role === 'ADMIN';
+  const canUpload = user?.role === 'CREATOR' || user?.role === 'ADMIN';
   const navigate = useNavigate();
   const [isUploading, setIsUploading] = useState(false);
-  const [formData, setFormData] = useState({
-    title: '',
-    description: '',
-    thumbnailUrl: '',
-    mediaUrl: '',
-    accessLevel: 'FREE' as const
-  });
+  
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [accessLevel, setAccessLevel] = useState<'FREE' | 'PREMIUM' | 'CREATOR'>('FREE');
+  const [unlockPriceTokens, setUnlockPriceTokens] = useState<number>(100);
+  const [selectedType, setSelectedType] = useState<'PHOTO' | 'VIDEO' | 'CLIP'>('PHOTO');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) return;
+    if (!canUpload || !selectedFile) {
+      if (!selectedFile) showToast('Please select a file to upload.', 'error');
+      return;
+    }
+    
     setIsUploading(true);
     try {
-      await creatorService.createContent(formData);
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("title", title);
+      formData.append("description", description);
+      formData.append("accessLevel", accessLevel);
+      formData.append("type", selectedType);
+      formData.append("unlockPriceTokens", unlockPriceTokens.toString());
+
+      await axios.post(
+        "http://localhost:8080/api/creators/content/upload",
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`
+          }
+        }
+      );
+
       showToast('Content uploaded successfully!', 'success');
       navigate('/creator/dashboard');
-    } catch (error) {
-      showToast('Failed to upload content.', 'error');
+    } catch (error: any) {
+      console.error('Failed to upload content:', error);
+      const message = error.response?.data?.message || 'Failed to upload content.';
+      showToast(message, 'error');
     } finally {
       setIsUploading(false);
     }
@@ -41,9 +65,9 @@ const CreatorUploadPage: React.FC = () => {
       <main style={styles.main}>
         <h1 style={styles.title}>Upload New Content</h1>
         
-        {!isAdmin && (
+        {!canUpload && (
           <div style={styles.infoBanner}>
-            ℹ️ Content uploading is currently in read-only mode for creators.
+            ℹ️ Upload is disabled due to account restrictions.
           </div>
         )}
 
@@ -53,59 +77,104 @@ const CreatorUploadPage: React.FC = () => {
             <input 
               type="text" 
               required 
-              value={formData.title} 
-              onChange={e => setFormData({ ...formData, title: e.target.value })}
-              style={{ ...styles.input, ...(!isAdmin ? styles.readOnlyInput : {}) }}
-              readOnly={!isAdmin}
+              value={title} 
+              onChange={e => setTitle(e.target.value)}
+              style={{ ...styles.input, ...(!canUpload ? styles.readOnlyInput : {}) }}
+              readOnly={!canUpload}
             />
           </div>
           <div>
             <label style={styles.label}>Description</label>
             <textarea 
               required 
-              value={formData.description} 
-              onChange={e => setFormData({ ...formData, description: e.target.value })}
-              style={{ ...styles.input, minHeight: '100px', ...(!isAdmin ? styles.readOnlyInput : {}) }}
-              readOnly={!isAdmin}
+              value={description} 
+              onChange={e => setDescription(e.target.value)}
+              style={{ ...styles.input, minHeight: '100px', ...(!canUpload ? styles.readOnlyInput : {}) }}
+              readOnly={!canUpload}
             />
           </div>
+
           <div>
-            <label style={styles.label}>Thumbnail URL</label>
+            <label style={styles.label}>Content File</label>
             <input 
-              type="url" 
-              required 
-              value={formData.thumbnailUrl} 
-              onChange={e => setFormData({ ...formData, thumbnailUrl: e.target.value })}
-              style={{ ...styles.input, ...(!isAdmin ? styles.readOnlyInput : {}) }}
-              readOnly={!isAdmin}
+              type="file" 
+              accept="image/*,video/*"
+              required={canUpload}
+              onChange={(e) => {
+                const selected = e.target.files?.[0];
+                if (!selected) return;
+
+                setSelectedFile(selected);
+
+                const url = URL.createObjectURL(selected);
+                setPreviewUrl(url);
+
+                if (selected.type.startsWith("video")) {
+                  setSelectedType("VIDEO");
+                } else {
+                  setSelectedType("PHOTO");
+                }
+              }}
+              style={{ ...styles.input, ...(!canUpload ? styles.readOnlyInput : {}) }}
+              disabled={!canUpload}
             />
           </div>
+
+          {previewUrl && (
+            <div style={styles.previewContainer}>
+              <label style={styles.label}>Preview</label>
+              {selectedType === "VIDEO" ? 
+                <video src={previewUrl} controls style={{ width: "100%", borderRadius: '10px' }} /> :
+                <img src={previewUrl} alt="preview" style={{ width: "100%", borderRadius: '10px' }} />
+              }
+            </div>
+          )}
+
           <div>
-            <label style={styles.label}>Media URL (Video)</label>
-            <input 
-              type="url" 
-              required 
-              value={formData.mediaUrl} 
-              onChange={e => setFormData({ ...formData, mediaUrl: e.target.value })}
-              style={{ ...styles.input, ...(!isAdmin ? styles.readOnlyInput : {}) }}
-              readOnly={!isAdmin}
-            />
+            <label style={styles.label}>Content Type</label>
+            <select
+              value={selectedType}
+              onChange={(e) => setSelectedType(e.target.value as any)}
+              style={{ ...styles.input, ...(!canUpload ? styles.readOnlyInput : {}) }}
+              disabled={!canUpload}
+            >
+              <option value="PHOTO">Photo</option>
+              <option value="VIDEO">Video</option>
+              <option value="CLIP">Clip</option>
+            </select>
           </div>
+
           <div>
             <label style={styles.label}>Access Level</label>
             <select 
-              value={formData.accessLevel} 
-              onChange={e => setFormData({ ...formData, accessLevel: e.target.value as any })}
-              style={{ ...styles.input, ...(!isAdmin ? styles.readOnlyInput : {}) }}
-              disabled={!isAdmin}
+              value={accessLevel} 
+              onChange={e => setAccessLevel(e.target.value as any)}
+              style={{ ...styles.input, ...(!canUpload ? styles.readOnlyInput : {}) }}
+              disabled={!canUpload}
             >
               <option value="FREE">Free</option>
               <option value="PREMIUM">Premium</option>
               <option value="CREATOR">Creator Only</option>
             </select>
           </div>
+
+          {accessLevel === "PREMIUM" && (
+            <div>
+              <label style={styles.label}>Unlock Price (Tokens)</label>
+              <input
+                type="number"
+                min={10}
+                max={5000}
+                value={unlockPriceTokens}
+                onChange={(e) => setUnlockPriceTokens(Number(e.target.value))}
+                placeholder="Unlock price in tokens"
+                style={{ ...styles.input, ...(!canUpload ? styles.readOnlyInput : {}) }}
+                readOnly={!canUpload}
+              />
+            </div>
+          )}
           
-          {isAdmin && (
+          {canUpload && (
             <button 
               type="submit" 
               disabled={isUploading}
@@ -137,6 +206,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: '2rem',
     maxWidth: '800px',
     margin: '0 auto',
+  },
+  previewContainer: {
+    marginTop: '0.5rem',
   },
   title: {
     fontSize: '1.875rem',

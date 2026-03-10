@@ -9,7 +9,7 @@ import { adaptCreator } from '../adapters/CreatorAdapter';
  */
 
 export const login = async (email: string, password: string): Promise<LoginResponse> => {
-  const response = await apiClient.post<LoginResponse>('/api/auth/login', { email, password });
+  const response = await apiClient.post<LoginResponse>('/auth/login', { email, password });
   if (response.data) {
     if (response.data.token) {
       setAccessToken(response.data.token);
@@ -24,7 +24,7 @@ export const login = async (email: string, password: string): Promise<LoginRespo
 export const logout = async (): Promise<void> => {
   try {
     // Attempt to notify backend to clear refresh token cookie
-    await apiClient.post('/api/auth/logout');
+    await apiClient.post('/auth/logout');
   } catch (error) {
     console.warn('Backend logout failed or session already expired', error);
   } finally {
@@ -34,7 +34,7 @@ export const logout = async (): Promise<void> => {
 };
 
 export const getCurrentUser = async (): Promise<User> => {
-  const response = await apiClient.get<User>('/api/auth/me');
+  const response = await apiClient.get<User>('/auth/me');
   const user = response.data;
   
   if (user) {
@@ -58,22 +58,22 @@ export const getCurrentUser = async (): Promise<User> => {
 };
 
 export const register = async (data: { email: string; password: string }): Promise<{ message: string }> => {
-  const response = await apiClient.post<{ message: string }>('/api/auth/register', data);
+  const response = await apiClient.post<{ message: string }>('/auth/register', data);
   return response.data;
 };
 
 export const verifyEmail = async (token: string): Promise<{ message: string }> => {
-  const response = await apiClient.post<{ message: string }>(`/api/auth/verify-email?token=${token}`);
+  const response = await apiClient.post<{ message: string }>(`/auth/verify-email?token=${token}`);
   return response.data;
 };
 
 export const resendVerification = async (): Promise<{ message: string }> => {
-  const response = await apiClient.post<{ message: string }>('/api/auth/resend-verification');
+  const response = await apiClient.post<{ message: string }>('/auth/resend-verification');
   return response.data;
 };
 
 export const refreshToken = async (token: string): Promise<{ accessToken: string; refreshToken: string }> => {
-  const response = await apiClient.post<{ accessToken: string; refreshToken: string }>('/api/auth/refresh', { refreshToken: token });
+  const response = await apiClient.post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken: token });
   if (response.data) {
     setAccessToken(response.data.accessToken);
     if (response.data.refreshToken) {

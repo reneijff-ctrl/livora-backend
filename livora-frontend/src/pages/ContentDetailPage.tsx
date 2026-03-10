@@ -52,15 +52,23 @@ const ContentDetailPage: React.FC = () => {
 
       <div style={{ backgroundColor: '#000', width: '100%', aspectRatio: '16/9', borderRadius: '8px', overflow: 'hidden', marginBottom: '2rem' }}>
         {mediaUrl ? (
-          <video 
-            src={mediaUrl} 
-            controls 
-            controlsList="nodownload"
-            style={{ width: '100%', height: '100%' }}
-            poster={content.thumbnailUrl}
-          >
-            Your browser does not support the video tag.
-          </video>
+          (content.type === 'VIDEO' || content.type === 'CLIP') ? (
+            <video 
+              src={mediaUrl} 
+              controls 
+              controlsList="nodownload"
+              style={{ width: '100%', height: '100%' }}
+              poster={content.thumbnailUrl}
+            >
+              Your browser does not support the video tag.
+            </video>
+          ) : (
+            <img 
+              src={mediaUrl} 
+              alt={content.title}
+              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+            />
+          )
         ) : (
           <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
             Initializing player...
@@ -82,7 +90,7 @@ const ContentDetailPage: React.FC = () => {
         <span style={{ color: '#666' }}>By {content.creatorEmail}</span>
         <span style={{ color: '#999', fontSize: '0.85rem' }}>{content.createdAt ? new Date(content.createdAt).toLocaleDateString() : 'N/A'}</span>
         <div style={{ marginLeft: 'auto' }}>
-           <TipButton userId={content.userId.toString()} creatorEmail={content.creatorEmail} />
+           <TipButton userId={content.userId?.toString() || ''} creatorEmail={content.creatorEmail} />
         </div>
       </div>
       

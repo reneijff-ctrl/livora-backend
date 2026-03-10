@@ -1,7 +1,7 @@
 package com.joinlivora.backend.token;
 
 import com.joinlivora.backend.user.User;
-import com.joinlivora.backend.streaming.StreamRoom;
+import com.joinlivora.backend.streaming.Stream;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
@@ -37,7 +37,7 @@ public class TipRecord {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "room_id")
-    private StreamRoom room;
+    private Stream room;
 
     @Column(nullable = false)
     private long amount;

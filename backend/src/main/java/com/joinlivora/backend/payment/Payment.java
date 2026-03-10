@@ -9,7 +9,11 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "payments", indexes = {
-    @Index(name = "idx_payment_user", columnList = "user_id")
+    @Index(name = "idx_payment_user", columnList = "user_id"),
+    @Index(name = "idx_payment_created_at", columnList = "created_at"),
+    @Index(name = "idx_payment_success", columnList = "success")
+}, uniqueConstraints = {
+    @UniqueConstraint(name = "uk_payments_stripe_session_id", columnNames = {"stripe_session_id"})
 })
 public class Payment {
 

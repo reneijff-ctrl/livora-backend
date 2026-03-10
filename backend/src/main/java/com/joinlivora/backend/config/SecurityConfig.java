@@ -79,7 +79,7 @@ public class SecurityConfig {
                     csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(requestHandler)
-                        .ignoringRequestMatchers("/", "/login", "/register", "/pricing", "/explore", "/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/verify-email", "/api/auth/forgot-password", "/api/auth/logout", "/api/public/**", "/api/creators/**", "/webhooks/stripe", "/api/stripe/webhook", "/stream/auth", "/stream/auth-done", "/stream/record-done", "/ws/**", "/api/health", "/actuator/health", "/api/creator/**", "/api/payments/**");
+                        .ignoringRequestMatchers("/", "/login", "/register", "/pricing", "/explore", "/api/auth/**", "/api/public/**", "/api/creators/**", "/webhooks/stripe", "/api/stripe/webhook", "/api/stream/auth", "/api/stream/auth-done", "/api/stream/record-done", "/ws/**", "/api/health", "/actuator/health", "/api/actuator/health", "/api/creator/**", "/api/payments/**");
                 }
             })
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -150,17 +150,21 @@ public class SecurityConfig {
                 })
             )
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/api/actuator/health").permitAll()
+                .requestMatchers("/api/creators/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/webhooks/stripe", "/api/stripe/webhook").permitAll()
-                .requestMatchers("/", "/login", "/register", "/pricing", "/explore", "/ws-test.html", "/actuator/health", "/api/health", "/ws/**", "/uploads/**").permitAll()
+                .requestMatchers("/", "/login", "/register", "/pricing", "/explore", "/ws-test.html", "/api/health", "/ws/**", "/uploads/**", "/thumbnails/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/creators/public").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/creators/me/**").authenticated()
                 .requestMatchers(HttpMethod.GET, "/api/creators/*/follow/status").authenticated()
                 .requestMatchers(HttpMethod.GET, "/api/creators/**", "/api/posts/public", "/api/posts/*").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/creators/*/follow").authenticated()
                 .requestMatchers(HttpMethod.DELETE, "/api/creators/*/follow").authenticated()
-                .requestMatchers("/api/auth/login", "/api/auth/register", "/api/auth/refresh", "/api/auth/verify-email", "/api/auth/forgot-password", "/api/auth/logout", "/api/auth/content/public/**", "/api/public/**", "/api/subscriptions/plans").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/leaderboards").permitAll()
-                .requestMatchers("/api/auth/me", "/api/auth/resend-verification").authenticated()
+                .requestMatchers("/api/creator/tip-goals/public/**").permitAll()
+                .requestMatchers("/api/creator/onboarding/**").authenticated()
                 .requestMatchers("/api/creator/stripe/**").hasRole("CREATOR")
                 .requestMatchers("/api/creator/**").hasAnyRole("CREATOR", "ADMIN")
                 .requestMatchers("/api/dashboard/creator/**").hasAnyRole("CREATOR", "ADMIN")
@@ -175,11 +179,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/user/**").hasRole("USER")
                 .requestMatchers("/api/**").authenticated()
                 .requestMatchers("/actuator/**").hasRole("ADMIN")
-                .requestMatchers("/stream/auth", "/stream/auth-done", "/stream/record-done").permitAll()
-                .requestMatchers("/stream/live", "/stream/{creatorId}", "/stream/room/{id}", "/stream/{id}/status").authenticated()
-                .requestMatchers("/stream/{id}/hls").authenticated()
-                .requestMatchers("/hls/**").authenticated()
-                .requestMatchers("/stream/**").hasAnyRole("CREATOR", "ADMIN")
+                .requestMatchers("/api/stream/auth", "/api/stream/auth-done", "/api/stream/record-done").permitAll()
+                .requestMatchers("/api/stream/live", "/api/stream/vod", "/api/stream/{creatorId}", "/api/stream/room/{id}", "/api/stream/{id}/status", "/api/stream/{id}/pinned", "/api/stream/creator/{creatorId}/pinned", "/api/stream/{id}/highlight").authenticated()
+                .requestMatchers("/api/stream/{id}/hls").authenticated()
+                .requestMatchers("/api/hls/**").authenticated()
+                .requestMatchers("/api/stream/**").hasAnyRole("CREATOR", "ADMIN")
                 .anyRequest().authenticated()
             );
 

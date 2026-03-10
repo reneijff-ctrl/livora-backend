@@ -1,6 +1,6 @@
 package com.joinlivora.backend.token;
 
-import com.joinlivora.backend.monetization.TipService;
+import com.joinlivora.backend.monetization.TipOrchestrationService;
 import com.joinlivora.backend.monetization.dto.TipResult;
 import com.joinlivora.backend.token.dto.TokenTipRequest;
 import com.joinlivora.backend.user.User;
@@ -9,7 +9,6 @@ import com.joinlivora.backend.payment.PaymentService;
 import com.joinlivora.backend.payment.dto.CheckoutResponse;
 import com.joinlivora.backend.wallet.*;
 import com.joinlivora.backend.util.RequestUtil;
-import com.stripe.exception.StripeException;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +31,8 @@ public class TokenController {
     private final UserService userService;
     private final PaymentService paymentService;
     private final TokenPackageRepository tokenPackageRepository;
-    private final TipService tipService;
-    private final com.joinlivora.backend.streaming.StreamRoomRepository streamRoomRepository;
+    private final TipOrchestrationService tipService;
+    private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
 
     @GetMapping("/packages")
     public ResponseEntity<List<TokenPackage>> getPackages() {
@@ -94,8 +93,8 @@ public class TokenController {
             return ResponseEntity.badRequest().body(Map.of("error", "Creator ID is required"));
         }
 
-        UUID roomId = streamRoomRepository.findByCreator_Id(creatorUserId)
-                .map(com.joinlivora.backend.streaming.StreamRoom::getId)
+        UUID roomId = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .map(com.joinlivora.backend.streaming.Stream::getId)
                 .orElse(null);
 
         if (roomId == null) {
@@ -114,7 +113,8 @@ public class TokenController {
                     tipRequest.getMessage(),
                     tipRequest.getClientRequestId(),
                     ipAddress,
-                    fingerprint
+                    fingerprint,
+                    tipRequest.getGiftName()
             );
             return ResponseEntity.ok(result);
         } catch (Exception e) {

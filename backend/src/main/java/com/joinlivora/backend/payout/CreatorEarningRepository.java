@@ -92,6 +92,8 @@ public interface CreatorEarningRepository extends JpaRepository<CreatorEarning, 
     
     long countByLockedTrueAndPayoutIsNullAndPayoutRequestIsNull();
 
+    List<CreatorEarning> findAllByUserAndCurrencyOrderByCreatedAtAsc(User user, String currency);
+
     @Query("SELECT e FROM CreatorEarning e WHERE e.creator = :creator AND e.locked = false AND (e.payoutHold IS NULL OR e.payoutHold.status = 'RELEASED')")
     List<CreatorEarning> findAvailableEarningsByCreator(@Param("creator") User creator);
 

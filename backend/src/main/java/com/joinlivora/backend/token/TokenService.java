@@ -2,8 +2,6 @@ package com.joinlivora.backend.token;
 
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserRepository;
-import com.joinlivora.backend.streaming.StreamRoom;
-import com.joinlivora.backend.streaming.StreamRoomRepository;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.analytics.AnalyticsEventType;
 import com.joinlivora.backend.exception.ResourceNotFoundException;
@@ -27,10 +25,9 @@ public class TokenService {
     private final TokenPackageRepository tokenPackageRepository;
     private final TipRecordRepository tipRecordRepository;
     private final CreatorEarningsRepository creatorEarningsRepository;
-    private final StreamRoomRepository streamRoomRepository;
+    private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
     private final UserRepository userRepository;
     private final TokenWalletService tokenWalletService;
-    private final WalletService walletService;
     private final AnalyticsEventPublisher analyticsEventPublisher;
     private final StringRedisTemplate redisTemplate;
 
@@ -42,7 +39,7 @@ public class TokenService {
     }
 
     public UserWallet getBalance(User user) {
-        return walletService.getOrCreateWallet(user.getId());
+        return tokenWalletService.getOrCreateWallet(user.getId());
     }
 
     @Transactional
@@ -92,8 +89,8 @@ public class TokenService {
     public boolean hasEnoughTokens(Long userId, Long creatorUserId) {
         if (userId.equals(creatorUserId)) return true;
 
-        StreamRoom room = streamRoomRepository.findByCreator_Id(creatorUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stream room not found"));
+        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
 
         if (!room.isPaid()) {
             return true;
@@ -104,7 +101,7 @@ public class TokenService {
             return true;
         }
 
-        return walletService.getBalance(userId) >= room.getAdmissionPrice().longValue();
+        return tokenWalletService.getTotalBalance(userId) >= room.getAdmissionPrice().longValue();
     }
 
     @Transactional
@@ -116,8 +113,8 @@ public class TokenService {
             return;
         }
 
-        StreamRoom room = streamRoomRepository.findByCreator_Id(creatorUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Stream room not found"));
+        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
 
         if (room.isPaid()) {
             spendTokens(userId, room.getAdmissionPrice().longValue(), 

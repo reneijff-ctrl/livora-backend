@@ -1,0 +1,29 @@
+# IntelliJ
+.idea/
+*.iml
+
+# Node / Frontend
+livora-frontend/node_modules/
+livora-frontend/dist/
+livora-frontend/.vite/
+
+# Logs
+*.log
+.output.txt
+app_startup.log
+startup*.log
+verification*.log
+
+# Env files
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQL dumps
+baseline.sql
+
+# Uploads
+uploads/

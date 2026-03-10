@@ -30,8 +30,11 @@
     "@stomp/stompjs": "^7.2.1",
     "@stripe/stripe-js": "^8.6.1",
     "axios": "^1.13.2",
+    "emoji-picker-react": "^4.18.0",
     "hls.js": "^1.6.15",
+    "mediasoup-client": "^3.7.15",
     "react-helmet-async": "^2.0.5",
-    "react-router-dom": "^7.12.0"
+    "react-router-dom": "^7.12.0",
+    "recharts": "^2.15.1"
   }
 }

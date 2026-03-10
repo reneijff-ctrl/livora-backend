@@ -213,7 +213,7 @@ const PricingPage: React.FC = () => {
             gap: '0.5rem'
           }}
         >
-          <span>←</span> {getDashboardRouteByRole(user?.role) !== '/' ? 'Back to Dashboard' : 'Back to Home'}
+          <span>←</span> {getDashboardRouteByRole(user?.role).includes('dashboard') || getDashboardRouteByRole(user?.role) === '/admin' ? 'Back to Dashboard' : (isAuthenticated ? 'Back to Viewer Hub' : 'Back to Home')}
         </Link>
       </div>
     </div>

@@ -15,15 +15,13 @@ interface AdminSubscription {
   id: string;
   userEmail: string;
   status: string;
-  stripeSubscriptionId: string;
   createdAt: string;
 }
 
 interface AdminPayout {
   id: string;
   userEmail: string;
-  tokenAmount: number;
-  eurAmount: number;
+  amount: number;
   status: string;
   createdAt: string;
 }
@@ -31,41 +29,76 @@ interface AdminPayout {
 const AdminPanel: React.FC = () => {
   const { user, authLoading } = useAuth();
   const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([]);
+  const [page, setPage] = useState(0);
+  const [subTotalPages, setSubTotalPages] = useState(1);
+
   const [payouts, setPayouts] = useState<AdminPayout[]>([]);
+  const [payoutPage, setPayoutPage] = useState(0);
+  const [payoutTotalPages, setPayoutTotalPages] = useState(1);
+
   const [content, setContent] = useState<ContentItem[]>([]);
+  const [contentPage, setContentPage] = useState(0);
+  const [contentTotalPages, setContentTotalPages] = useState(1);
+
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchSubscriptions = async (page: number) => {
     try {
-      const [subRes, payoutRes, contentRes] = await Promise.all([
-        apiClient.get<AdminSubscription[]>('/api/admin/subscriptions'),
-        apiClient.get<AdminPayout[]>('/api/admin/payouts'),
-        adminContentService.getAllContent()
-      ]);
-      setSubscriptions(subRes.data);
-      setPayouts(payoutRes.data);
-      setContent(contentRes);
-    } catch (error) {
-      console.error('Failed to fetch admin data', error);
-    } finally {
-      setIsLoading(false);
+      const res = await apiClient.get<any>(`/admin/subscriptions?page=${page}&size=20`);
+      setSubscriptions(res.data.content || []);
+      setSubTotalPages(res.data.totalPages || 1);
+    } catch (e) {
+      console.error('Failed to fetch subscriptions', e);
+    }
+  };
+
+  const fetchPayouts = async (page: number) => {
+    try {
+      const res = await apiClient.get<any>(`/admin/payouts?page=${page}&size=20`);
+      setPayouts(res.data.content || []);
+      setPayoutTotalPages(res.data.totalPages || 1);
+    } catch (e) {
+      console.error('Failed to fetch payouts', e);
+    }
+  };
+
+  const fetchContent = async (page: number) => {
+    try {
+      const res = await adminContentService.getAllContent(page, 20);
+      setContent(res.content || []);
+      setContentTotalPages(res.totalPages || 1);
+    } catch (e) {
+      console.error('Failed to fetch content', e);
     }
   };
 
   useEffect(() => {
-    // Requirement: Do NOT fetch dashboard data until role is resolved
-    if (!user || authLoading) {
-      return;
-    }
-    fetchData();
-  }, [user, authLoading]);
+    if (!user || authLoading) return;
+    setIsLoading(true);
+    fetchSubscriptions(page).finally(() => setIsLoading(false));
+  }, [user, authLoading, page]);
+
+  useEffect(() => {
+    if (!user || authLoading) return;
+    setIsLoading(true);
+    fetchPayouts(payoutPage).finally(() => setIsLoading(false));
+  }, [user, authLoading, payoutPage]);
+
+  useEffect(() => {
+    if (!user || authLoading) return;
+    setIsLoading(true);
+    fetchContent(contentPage).finally(() => setIsLoading(false));
+  }, [user, authLoading, contentPage]);
 
   const handleDisableContent = async (id: string) => {
     try {
       await adminContentService.disableContent(id);
       showToast('Content disabled.', 'success');
-      fetchData();
+      setContent(prev =>
+        prev.map(item =>
+          item.id === id ? { ...item, status: 'DISABLED' } : item
+        )
+      );
     } catch (error) {
       showToast('Failed to disable content.', 'error');
     }
@@ -76,7 +109,7 @@ const AdminPanel: React.FC = () => {
     try {
       await adminContentService.deleteContent(id);
       showToast('Content deleted.', 'success');
-      fetchData();
+      setContent(prev => prev.filter(item => item.id !== id));
     } catch (error) {
       showToast('Failed to delete content.', 'error');
     }
@@ -87,7 +120,7 @@ const AdminPanel: React.FC = () => {
       <SEO title="Admin Panel" canonical="/admin" />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <h1>🛡️ Admin Dashboard</h1>
-        <Link to="/dashboard">Back to Dashboard</Link>
+        <Link to="/dashboard">Back to Viewer Hub</Link>
       </div>
 
       <p>Welcome, <strong>{user?.email}</strong>!</p>
@@ -120,13 +153,14 @@ const AdminPanel: React.FC = () => {
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Title</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Creator</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Access</th>
+                    <th style={{ padding: '12px', border: '1px solid #ddd' }}>Status</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {content.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: '20px', textAlign: 'center' }}>No content found.</td>
+                      <td colSpan={5} style={{ padding: '20px', textAlign: 'center' }}>No content found.</td>
                     </tr>
                   ) : (
                     content.map((item) => (
@@ -135,12 +169,32 @@ const AdminPanel: React.FC = () => {
                         <td style={{ padding: '12px', border: '1px solid #ddd' }}>{item.creatorEmail}</td>
                         <td style={{ padding: '12px', border: '1px solid #ddd' }}>{item.accessLevel}</td>
                         <td style={{ padding: '12px', border: '1px solid #ddd' }}>
+                          <span style={{ 
+                            padding: '4px 8px', 
+                            borderRadius: '4px', 
+                            backgroundColor: item.status === 'ACTIVE' ? '#e6ffed' : '#fff1f0',
+                            color: item.status === 'ACTIVE' ? '#28a745' : '#cf1322',
+                            fontWeight: 'bold',
+                            fontSize: '0.85rem'
+                          }}>
+                            {item.status || 'ACTIVE'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px', border: '1px solid #ddd' }}>
                           <div style={{ display: 'flex', gap: '0.5rem' }}>
                             <button 
                               onClick={() => handleDisableContent(item.id)}
-                              style={{ padding: '4px 8px', cursor: 'pointer', backgroundColor: '#faad14', border: 'none', borderRadius: '4px', color: 'white' }}
+                              disabled={item.status === 'DISABLED'}
+                              style={{ 
+                                padding: '4px 8px', 
+                                cursor: item.status === 'DISABLED' ? 'not-allowed' : 'pointer', 
+                                backgroundColor: item.status === 'DISABLED' ? '#ddd' : '#faad14', 
+                                border: 'none', 
+                                borderRadius: '4px', 
+                                color: 'white' 
+                              }}
                             >
-                              Disable
+                              {item.status === 'DISABLED' ? 'Disabled' : 'Disable'}
                             </button>
                             <button 
                               onClick={() => handleDeleteContent(item.id)}
@@ -156,6 +210,11 @@ const AdminPanel: React.FC = () => {
                   )}
                 </tbody>
               </table>
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <button disabled={contentPage <= 0} onClick={() => setContentPage(contentPage - 1)}>Prev</button>
+                <span>Page {contentPage + 1} of {contentTotalPages}</span>
+                <button disabled={contentPage + 1 >= contentTotalPages} onClick={() => setContentPage(contentPage + 1)}>Next</button>
+              </div>
             </div>
           </section>
 
@@ -167,14 +226,13 @@ const AdminPanel: React.FC = () => {
                   <tr style={{ backgroundColor: '#f3f3f3', textAlign: 'left' }}>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>User Email</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Status</th>
-                    <th style={{ padding: '12px', border: '1px solid #ddd' }}>Stripe ID</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Created At</th>
                   </tr>
                 </thead>
                 <tbody>
                   {subscriptions.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: '20px', textAlign: 'center' }}>No subscriptions found.</td>
+                      <td colSpan={3} style={{ padding: '20px', textAlign: 'center' }}>No subscriptions found.</td>
                     </tr>
                   ) : (
                     subscriptions.map((sub) => (
@@ -192,13 +250,17 @@ const AdminPanel: React.FC = () => {
                             {sub.status}
                           </span>
                         </td>
-                        <td style={{ padding: '12px', border: '1px solid #ddd', fontSize: '0.9rem', color: '#666' }}>{sub.stripeSubscriptionId}</td>
                         <td style={{ padding: '12px', border: '1px solid #ddd', fontSize: '0.9rem' }}>{sub.createdAt ? new Date(sub.createdAt).toLocaleString() : 'N/A'}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <button disabled={page <= 0} onClick={() => setPage(page - 1)}>Prev</button>
+                <span>Page {page + 1} of {subTotalPages}</span>
+                <button disabled={page + 1 >= subTotalPages} onClick={() => setPage(page + 1)}>Next</button>
+              </div>
             </div>
           </section>
 
@@ -209,7 +271,6 @@ const AdminPanel: React.FC = () => {
                 <thead>
                   <tr style={{ backgroundColor: '#f3f3f3', textAlign: 'left' }}>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>User Email</th>
-                    <th style={{ padding: '12px', border: '1px solid #ddd' }}>Tokens</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Amount</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Status</th>
                     <th style={{ padding: '12px', border: '1px solid #ddd' }}>Date</th>
@@ -218,14 +279,13 @@ const AdminPanel: React.FC = () => {
                 <tbody>
                   {payouts.length === 0 ? (
                     <tr>
-                      <td colSpan={5} style={{ padding: '20px', textAlign: 'center' }}>No payouts found.</td>
+                      <td colSpan={4} style={{ padding: '20px', textAlign: 'center' }}>No payouts found.</td>
                     </tr>
                   ) : (
                     payouts.map((p) => (
                       <tr key={p.id}>
                         <td style={{ padding: '12px', border: '1px solid #ddd' }}>{p.userEmail}</td>
-                        <td style={{ padding: '12px', border: '1px solid #ddd' }}>{p.tokenAmount}</td>
-                        <td style={{ padding: '12px', border: '1px solid #ddd' }}>€{(p.eurAmount || 0).toFixed(2)}</td>
+                        <td style={{ padding: '12px', border: '1px solid #ddd' }}>€{(p.amount || 0).toFixed(2)}</td>
                         <td style={{ padding: '12px', border: '1px solid #ddd' }}>
                           <span style={{ 
                             padding: '4px 8px', 
@@ -244,6 +304,11 @@ const AdminPanel: React.FC = () => {
                   )}
                 </tbody>
               </table>
+              <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                <button disabled={payoutPage <= 0} onClick={() => setPayoutPage(payoutPage - 1)}>Prev</button>
+                <span>Page {payoutPage + 1} of {payoutTotalPages}</span>
+                <button disabled={payoutPage + 1 >= payoutTotalPages} onClick={() => setPayoutPage(payoutPage + 1)}>Next</button>
+              </div>
             </div>
           </section>
         </>
