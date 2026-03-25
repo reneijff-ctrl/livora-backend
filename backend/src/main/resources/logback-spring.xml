@@ -7,6 +7,9 @@
         <root level="INFO">
             <appender-ref ref="CONSOLE"/>
         </root>
+        <!-- Suppress noisy Spring broker/WebSocket internal messages during normal disconnect -->
+        <logger name="org.springframework.messaging.simp.broker" level="ERROR"/>
+        <logger name="org.springframework.web.socket.messaging" level="ERROR"/>
     </springProfile>
 
     <springProfile name="prod">
@@ -53,5 +56,8 @@
         
         <logger name="com.joinlivora.backend" level="INFO"/>
         <logger name="org.springframework.security" level="WARN"/>
+        <!-- Suppress noisy Spring broker/WebSocket internal messages during normal disconnect -->
+        <logger name="org.springframework.messaging.simp.broker" level="ERROR"/>
+        <logger name="org.springframework.web.socket.messaging" level="ERROR"/>
     </springProfile>
 </configuration>

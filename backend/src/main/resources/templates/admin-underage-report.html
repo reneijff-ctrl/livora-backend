@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>URGENT: Underage Content Report</title>
+</head>
+<body>
+    <h1>URGENT: Underage Content Report</h1>
+    <p>Dear Administrator,</p>
+    <p>A new report of <strong>UNDERAGE</strong> content has been submitted. The platform has taken immediate action by flagging the user and stopping any active streams.</p>
+    
+    <h3>Report Details:</h3>
+    <ul>
+        <li><strong>Report ID:</strong> <span th:text="${report.id}"></span></li>
+        <li><strong>Reported User ID:</strong> <span th:text="${report.reportedUserId}"></span></li>
+        <li><strong>Stream ID:</strong> <span th:text="${report.streamId}"></span></li>
+        <li><strong>Description:</strong> <span th:text="${report.description}"></span></li>
+        <li><strong>Created At:</strong> <span th:text="${report.createdAt}"></span></li>
+    </ul>
+
+    <p>Please review this report and the user's content immediately.</p>
+    
+    <p>Best regards,<br/>JoinLivora Security System</p>
+</body>
+</html>

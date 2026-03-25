@@ -62,8 +62,11 @@ public class LiveStreamController {
     @PreAuthorize("hasRole('ADMIN') or (hasRole('CREATOR') and @securityService.isActiveCreator(principal.userId))")
     public ResponseEntity<Map<String, String>> getIngestInfo(@AuthenticationPrincipal UserPrincipal principal) {
         User creator = userService.getById(principal.getUserId());
-        Stream stream = streamRepository.findByCreatorIdAndIsLiveTrueWithCreator(creator.getId())
-                .orElseThrow(() -> new RuntimeException("Stream not found"));
+        java.util.List<Stream> liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueWithCreator(creator.getId());
+        if (liveStreams.isEmpty()) {
+            throw new RuntimeException("Stream not found");
+        }
+        Stream stream = liveStreams.get(0);
 
         return ResponseEntity.ok(Map.of(
                 "server", "rtmp://api.joinlivora.com/live",

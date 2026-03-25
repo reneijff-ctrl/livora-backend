@@ -125,29 +125,50 @@ class WebRtcService {
 
   /**
    * Connect to the WebRTC signaling room topic.
+   * Subscribes to two destinations:
+   * 1. /user/queue/webrtc — for personal request-response signaling (requestId correlation)
+   * 2. /exchange/amq.topic/webrtc.room.{roomId} — for broadcast events (NEW_PRODUCER, etc.)
    */
   async connect(roomId: string, onSignal: (msg: SignalingMessage) => void) {
+    webSocketService.connect();
+    await webSocketService.waitForConnection();
+
     if (this.webrtcUnsub) {
       this.webrtcUnsub();
       this.webrtcUnsub = null;
     }
 
     this.currentRoomId = roomId;
-    const topic = `/topic/webrtc/room/${roomId}`;
-    console.debug(`WS: Subscribing to WebRTC signaling room: ${topic}`);
-    
-    this.webrtcUnsub = webSocketService.subscribe(topic, (msg: IMessage) => {
+
+    // Subscribe to personal queue for request-response signaling
+    const personalUnsub = webSocketService.subscribe('/user/queue/webrtc', (msg: IMessage) => {
       try {
         const signal = JSON.parse(msg.body);
-        
-        // Try to handle as a response to a pending request first
         if (!this.handleIncomingSignal(signal)) {
           onSignal(signal);
         }
       } catch (e) {
-        console.error("WS: Signaling parse error", e);
+        console.error("WS: Personal signaling parse error", e);
       }
     });
+
+    // Subscribe to room topic for broadcast events (NEW_PRODUCER, STREAM_STOP, etc.)
+    const roomTopic = `/exchange/amq.topic/webrtc.room.${roomId}`;
+    const roomUnsub = webSocketService.subscribe(roomTopic, (msg: IMessage) => {
+      try {
+        const signal = JSON.parse(msg.body);
+        if (!this.handleIncomingSignal(signal)) {
+          onSignal(signal);
+        }
+      } catch (e) {
+        console.error("WS: Room signaling parse error", e);
+      }
+    });
+
+    this.webrtcUnsub = () => {
+      personalUnsub();
+      roomUnsub();
+    };
   }
 
   /**

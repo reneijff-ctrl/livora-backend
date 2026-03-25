@@ -83,7 +83,7 @@ public class WebSocketEventListener {
                         ))
                         .build();
                 
-                messagingTemplate.convertAndSend("/topic/rooms/" + roomId + "/tips", tipBroadcast);
+                messagingTemplate.convertAndSend("/exchange/amq.topic/rooms." + roomId + ".tips", tipBroadcast);
             }
         }
     }
@@ -128,8 +128,8 @@ public class WebSocketEventListener {
         AnalyticsEventType type = event.getEventType();
         if (type == AnalyticsEventType.PAYMENT_SUCCEEDED || 
             type == AnalyticsEventType.SUBSCRIPTION_STARTED) {
-            messagingTemplate.convertAndSend("/topic/admin/payments", message);
-            messagingTemplate.convertAndSend("/topic/admin/metrics", Map.of(
+            messagingTemplate.convertAndSend("/exchange/amq.topic/admin.payments", message);
+            messagingTemplate.convertAndSend("/exchange/amq.topic/admin.metrics", Map.of(
                     "event", type.name(),
                     "timestamp", message.getTimestamp()
             ));

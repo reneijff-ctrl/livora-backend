@@ -222,8 +222,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     .build());
             return;
         } catch (Exception e) {
-            log.error("SECURITY: Authentication internal error from IP: {}. Error: {}", request.getRemoteAddr(), e.getMessage());
-            filterChain.doFilter(request, response);
+            log.error("SECURITY: Authentication internal error from IP: {}. Error: {}", request.getRemoteAddr(), e.getMessage(), e);
+            sendErrorResponse(response, ErrorResponse.builder()
+                    .timestamp(Instant.now())
+                    .status(HttpServletResponse.SC_INTERNAL_SERVER_ERROR)
+                    .error("Internal Server Error")
+                    .message("Authentication processing failed")
+                    .path(request.getRequestURI())
+                    .errorCode("AUTH_INTERNAL_ERROR")
+                    .build());
             return;
         }
 

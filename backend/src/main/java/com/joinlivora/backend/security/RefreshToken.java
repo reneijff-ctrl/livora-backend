@@ -9,7 +9,7 @@ import java.util.UUID;
 
 @Entity
 @Table(name = "refresh_tokens", indexes = {
-    @Index(name = "idx_refresh_token", columnList = "token", unique = true)
+    @Index(name = "idx_refresh_token_hash", columnList = "tokenHash", unique = true)
 })
 public class RefreshToken {
 
@@ -18,8 +18,8 @@ public class RefreshToken {
     @Column(name = "id", updatable = false, nullable = false, columnDefinition = "UUID")
     private UUID id;
 
-    @Column(nullable = false, unique = true)
-    private String token;
+    @Column(nullable = false, unique = true, length = 64)
+    private String tokenHash;
 
     @ManyToOne(optional = false, fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
@@ -34,6 +34,13 @@ public class RefreshToken {
     @Column
     private String replacedByToken;
 
+    /**
+     * Transient field to carry the plain token value back to the caller after creation.
+     * Never persisted to the database.
+     */
+    @Transient
+    private String plainToken;
+
     // ======================
     // GETTERS & SETTERS
     // ======================
@@ -46,12 +53,12 @@ public class RefreshToken {
         this.id = id;
     }
 
-    public String getToken() {
-        return token;
+    public String getTokenHash() {
+        return tokenHash;
     }
 
-    public void setToken(String token) {
-        this.token = token;
+    public void setTokenHash(String tokenHash) {
+        this.tokenHash = tokenHash;
     }
 
     public User getUser() {
@@ -84,5 +91,13 @@ public class RefreshToken {
 
     public void setReplacedByToken(String replacedByToken) {
         this.replacedByToken = replacedByToken;
+    }
+
+    public String getPlainToken() {
+        return plainToken;
+    }
+
+    public void setPlainToken(String plainToken) {
+        this.plainToken = plainToken;
     }
 }

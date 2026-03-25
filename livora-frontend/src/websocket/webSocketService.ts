@@ -1,4 +1,5 @@
 import { Client, IMessage, StompSubscription } from '@stomp/stompjs';
+import SockJS from 'sockjs-client';
 import { refreshToken as refreshAccessToken } from '../api/authService';
 import { getRefreshToken } from '../auth/jwt';
 import { AdminRealtimeEventDTO } from '../types';
@@ -15,12 +16,12 @@ class WebSocketService {
   private subscriptions: Map<string, {
     callbacks: Set<(message: IMessage) => void>;
     stompSubscription?: StompSubscription;
-    receiptPromise?: Promise<void>;
   }> = new Map();
   private isRefreshing = false;
   private lastAuthError: boolean = false;
   private lastActiveStreams: any[] = [];
   private onStateChangeCallbacks: Set<(connected: boolean) => void> = new Set();
+  private pendingSubscriptions: Array<{ destination: string; callback: (message: IMessage) => void }> = [];
   constructor() {
   }
 
@@ -64,8 +65,8 @@ class WebSocketService {
       return;
     }
 
-    // Guard: already connected or active
-    if (this.client?.connected || this.client?.active || this.isConnecting) {
+    // Guard: only skip if BOTH active and connected
+    if ((this.client?.active && this.client?.connected) || this.isConnecting) {
       console.log(`WS: Already connected or connecting. active=${this.client?.active}, connected=${this.client?.connected}, isConnecting=${this.isConnecting}`);
       return;
     }
@@ -75,12 +76,12 @@ class WebSocketService {
     this.lastAuthError = false;
 
     this.client = new Client({
-      brokerURL: "ws://localhost:8080/ws",
+      webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
       connectHeaders: {
         Authorization: `Bearer ${token}`,
       },
       reconnectDelay: 5000,
-      debug: (str) => console.log(str),
+      debug: (str) => console.log('STOMP:', str),
     });
 
     (this.client as any).onReceipt = (frame: any) => {
@@ -97,9 +98,10 @@ class WebSocketService {
       console.log("WS: [DEBUG] onConnect called. Socket is now OPEN.");
       this.isConnecting = false;
       this.notifyStateChange();
-      this.processQueuedMessages();
       // Re-subscribe to everything if this was a re-connection or client replacement
       this.reSubscribeAll();
+      this.flushPendingSubscriptions();
+      this.processQueuedMessages();
     };
 
     this.client.onStompError = (frame) => {
@@ -190,6 +192,16 @@ class WebSocketService {
     }
   }
 
+  private flushPendingSubscriptions() {
+    if (!this.pendingSubscriptions.length) return;
+    console.log(`WS: Flushing queued subscriptions: ${this.pendingSubscriptions.length}`);
+    const queued = [...this.pendingSubscriptions];
+    this.pendingSubscriptions = [];
+    queued.forEach(sub => {
+      this.subscribe(sub.destination, sub.callback);
+    });
+  }
+
   private reSubscribeAll() {
     console.log(`WS: Re-subscribing to ${this.subscriptions.size} destinations`);
     this.subscriptions.forEach((entry, destination) => {
@@ -202,7 +214,7 @@ class WebSocketService {
   }
 
   private handleIncomingMessage(destination: string, message: IMessage) {
-    if (destination === '/topic/admin/streams') {
+    if (destination === '/exchange/amq.topic/admin.streams') {
       try {
         const data = JSON.parse(message.body);
         if (Array.isArray(data)) {
@@ -241,7 +253,14 @@ class WebSocketService {
   }
 
   public async waitForConnection(): Promise<void> {
-    if (this.isConnected()) return Promise.resolve();
+    if (this.isConnected()) return;
+
+    if (!this.isConnected()) {
+      console.log("WS: waitForConnection ensuring connection is initiated.");
+      this.connect();
+    }
+
+    if (this.isConnected()) return;
 
     return new Promise((resolve) => {
       const checkInterval = setInterval(() => {
@@ -260,82 +279,55 @@ class WebSocketService {
   }
 
   /**
-   * Subscribe to a destination. Returns an unsubscribe function that is also a Promise (Thenable).
-   * The Promise resolves once the broker acknowledges the subscription via STOMP receipt.
-   * This maintains backward compatibility for synchronous calls while allowing await.
+   * Subscribe to a destination. Returns an unsubscribe function.
+   * Purely synchronous to prevent infinite promise loops.
+   * If not connected, queues the subscription until connection is established.
    * @param destination The topic or queue to subscribe to.
    * @param callback Function to handle incoming messages.
    */
-  public subscribe(destination: string, callback: (message: IMessage) => void): (() => void) & Promise<() => void> & { unsubscribe: () => void } {
+  public subscribe(destination: string, callback: (message: IMessage) => void): (() => void) & { unsubscribe: () => void } {
     if (destination === '/user/queue/webrtc') {
       console.log("WS: [DEBUG] Subscribing to WebRTC queue (/user/queue/webrtc)");
     }
+
+    if (!this.client?.connected) {
+      console.warn(`WS: Queuing subscription until connected: ${destination}`);
+      this.pendingSubscriptions.push({ destination, callback });
+      const cancel = () => {
+        this.pendingSubscriptions = this.pendingSubscriptions.filter(s => s.callback !== callback);
+      };
+      cancel.unsubscribe = cancel;
+      return cancel as (() => void) & { unsubscribe: () => void };
+    }
+
     const existingEntry = this.subscriptions.get(destination);
+    const unsub = () => this.internalUnsubscribe(destination, callback);
 
     if (existingEntry) {
       console.log(`WS: Duplicate subscription attempt for ${destination} prevented. Multiplexing callback.`);
       existingEntry.callbacks.add(callback);
-
-      const unsub = () => this.internalUnsubscribe(destination, callback);
-
-      const promise = (async () => {
-        if (existingEntry.receiptPromise) {
-          await existingEntry.receiptPromise;
-        }
-        return unsub;
-      })();
-
       const result = unsub as any;
       result.unsubscribe = unsub;
-      result.then = (onfulfilled?: any, onrejected?: any) => promise.then(onfulfilled, onrejected);
-      result.catch = (onrejected?: any) => promise.catch(onrejected);
-      result.finally = (onfinally?: any) => promise.finally(onfinally);
-
-      return result as (() => void) & Promise<() => void> & { unsubscribe: () => void };
+      return result;
     }
 
     // New subscription
     const callbacks = new Set([callback]);
-    const entry: any = { callbacks };
+    const stompSubscription = this.client.subscribe(destination, (message) => {
+      this.handleIncomingMessage(destination, message);
+    });
+
+    const entry: any = { 
+      callbacks,
+      stompSubscription
+    };
+    
     this.subscriptions.set(destination, entry);
     console.debug("Active WS subscriptions:", this.subscriptions.size);
 
-    const unsub = () => this.internalUnsubscribe(destination, callback);
-
-    const receiptId = `sub-${Math.random().toString(36).substring(2, 9)}`;
-
-    const promise = (async () => {
-      if (this.client?.connected) {
-        const receiptPromise = new Promise<void>((resolve, reject) => {
-          this.receiptResolvers.set(receiptId, { resolve, reject });
-        });
-
-        entry.receiptPromise = receiptPromise;
-
-        entry.stompSubscription = this.client.subscribe(destination, (message) => {
-          this.handleIncomingMessage(destination, message);
-        }, { receipt: receiptId });
-
-        console.log(`WS: Awaiting receipt for ${destination} (ID: ${receiptId})`);
-        try {
-          await receiptPromise;
-          console.log(`WS: Receipt confirmed for ${destination}`);
-        } catch (err) {
-          console.error(`WS: Receipt failed for ${destination}`, err);
-        }
-      } else {
-        console.warn(`WS: Subscribe called while disconnected for ${destination}. Subscription will be established on connect.`);
-      }
-      return unsub;
-    })();
-
     const result = unsub as any;
     result.unsubscribe = unsub;
-    result.then = (onfulfilled?: any, onrejected?: any) => promise.then(onfulfilled, onrejected);
-    result.catch = (onrejected?: any) => promise.catch(onrejected);
-    result.finally = (onfinally?: any) => promise.finally(onfinally);
-
-    return result as (() => void) & Promise<() => void> & { unsubscribe: () => void };
+    return result;
   }
 
   /**
@@ -350,9 +342,6 @@ class WebSocketService {
     if (existingEntry) {
       console.log(`WS: Duplicate subscribeWithAck attempt for ${destination} prevented. Multiplexing.`);
       existingEntry.callbacks.add(callback);
-      if (existingEntry.receiptPromise) {
-        await existingEntry.receiptPromise;
-      }
       return {
         id: existingEntry.stompSubscription?.id || `multiplexed-${destination}`,
         unsubscribe: () => unsub(),
@@ -363,13 +352,8 @@ class WebSocketService {
       throw new Error("WS: Cannot subscribeWithAck while disconnected");
     }
 
-    const receiptId = `ack-${Math.random().toString(36).substring(2, 9)}`;
-    const receiptPromise = new Promise<void>((resolve, reject) => {
-      this.receiptResolvers.set(receiptId, { resolve, reject });
-    });
-
     const callbacks = new Set([callback]);
-    const entry: any = { callbacks, receiptPromise };
+    const entry: any = { callbacks };
     this.subscriptions.set(destination, entry);
     console.debug("Active WS subscriptions:", this.subscriptions.size);
 
@@ -384,23 +368,14 @@ class WebSocketService {
           }
         });
       }
-    }, { receipt: receiptId });
+    });
 
     entry.stompSubscription = subscription;
 
-    try {
-      await receiptPromise;
-      return {
-        id: subscription.id,
-        unsubscribe: () => unsub(),
-      } as StompSubscription;
-    } catch (err) {
-      console.error(`WS: subscribeWithAck failed for ${destination}`, err);
-      this.subscriptions.delete(destination);
-      console.debug("Active WS subscriptions:", this.subscriptions.size);
-      subscription.unsubscribe();
-      throw err;
-    }
+    return {
+      id: subscription.id,
+      unsubscribe: () => unsub(),
+    } as StompSubscription;
   }
 
   /**
@@ -479,7 +454,7 @@ class WebSocketService {
     }
 
     console.log("WS: Subscribing to admin events topic");
-    return this.subscribe('/topic/admin/events', (message) => {
+    return this.subscribe('/exchange/amq.topic/admin.events', (message) => {
       try {
         const event = JSON.parse(message.body) as AdminRealtimeEventDTO;
         callback(event);
@@ -502,7 +477,7 @@ class WebSocketService {
     }
 
     console.log("WS: Subscribing to admin abuse topic");
-    return this.subscribe('/topic/admin/abuse', (message) => {
+    return this.subscribe('/exchange/amq.topic/admin.abuse', (message) => {
       try {
         const event = JSON.parse(message.body);
         callback(event);

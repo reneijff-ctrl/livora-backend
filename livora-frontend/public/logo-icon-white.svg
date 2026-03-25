@@ -1,0 +1,5 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- White icon for overlays: circle outline + bird mark -->
+  <circle cx="256" cy="256" r="240" stroke="white" stroke-width="24" fill="none"/>
+  <path d="M140 240C180 240 230 290 256 290C282 290 332 240 372 240C332 270 282 330 256 330C230 330 180 270 140 240Z" fill="white"/>
+</svg>

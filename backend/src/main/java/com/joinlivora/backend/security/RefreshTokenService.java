@@ -2,12 +2,14 @@ package com.joinlivora.backend.security;
 
 import com.joinlivora.backend.user.User;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -17,78 +19,97 @@ public class RefreshTokenService {
 
     private final RefreshTokenRepository refreshTokenRepository;
     private final long refreshTokenExpiration;
-    private final PasswordEncoder passwordEncoder;
 
     public RefreshTokenService(
             RefreshTokenRepository refreshTokenRepository,
-            @Value("${security.jwt.refresh-token-expiration}") long refreshTokenExpiration,
-            PasswordEncoder passwordEncoder
+            @Value("${security.jwt.refresh-token-expiration}") long refreshTokenExpiration
     ) {
         this.refreshTokenRepository = refreshTokenRepository;
         this.refreshTokenExpiration = refreshTokenExpiration;
-        this.passwordEncoder = passwordEncoder;
     }
 
     // =========================
-    // AANMAKEN REFRESH TOKEN
+    // SHA-256 HASHING
     // =========================
+
+    /**
+     * Computes SHA-256 hash of the plain token value.
+     * Returns a 64-character lowercase hex string.
+     */
+    public static String sha256(String plainToken) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(plainToken.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hexString = new StringBuilder(64);
+            for (byte b : hash) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not available", e);
+        }
+    }
+
+    // =========================
+    // CREATE REFRESH TOKEN
+    // =========================
+
     public RefreshToken create(User user) {
         String plainToken = UUID.randomUUID().toString();
-        
+        String hash = sha256(plainToken);
+
         RefreshToken token = new RefreshToken();
         token.setUser(user);
-        // Store hashed token in DB
-        token.setToken(passwordEncoder.encode(plainToken));
-        token.setExpiryDate(
-                Instant.now().plusSeconds(refreshTokenExpiration)
-        );
+        token.setTokenHash(hash);
+        token.setExpiryDate(Instant.now().plusSeconds(refreshTokenExpiration));
+        token.setRevoked(false);
 
         RefreshToken savedToken = refreshTokenRepository.save(token);
-        // Temporarily set the plain token so it can be sent to the client
-        // Note: This won't be saved to DB as the plain value
-        savedToken.setToken(plainToken);
+        // Carry the plain token value back to the caller via transient field
+        savedToken.setPlainToken(plainToken);
         return savedToken;
     }
 
     // =========================
-    // VALIDEREN + OPHALEN
+    // VERIFY + GET (O(1) lookup)
     // =========================
-    public RefreshToken verifyAndGet(String tokenValue) {
-        // Since tokens are hashed, we find all active tokens and match.
-        // In a production app, we would use a public ID to look up the token.
-        List<RefreshToken> activeTokens = refreshTokenRepository.findAllByRevokedFalse();
-        
-        RefreshToken token = activeTokens.stream()
-                .filter(t -> passwordEncoder.matches(tokenValue, t.getToken()))
-                .findFirst()
-                .orElseGet(() -> {
+
+    @Transactional(readOnly = true)
+    public RefreshToken verifyAndGet(String plainTokenValue) {
+        String hash = sha256(plainTokenValue);
+        RefreshToken token = refreshTokenRepository.findByTokenHash(hash)
+                .orElseThrow(() -> {
                     logger.warn("SECURITY: Invalid refresh token attempt detected");
-                    throw new TokenExpiredException("Invalid refresh token");
+                    return new TokenExpiredException("Invalid refresh token");
                 });
 
         if (token.getExpiryDate().isBefore(Instant.now())) {
             refreshTokenRepository.delete(token);
-            logger.info("SECURITY: Expired refresh token used and deleted for creator: {}", token.getUser().getEmail());
+            logger.info("SECURITY: Expired refresh token used and deleted for user: {}", token.getUser().getEmail());
             throw new TokenExpiredException("Refresh token expired");
         }
 
         return token;
     }
 
+    // =========================
+    // ROTATE (O(1) lookup)
+    // =========================
+
     @Transactional
-    public RefreshToken rotateRefreshToken(String oldTokenValue) {
-        // Find all tokens (including revoked ones to detect reuse)
-        List<RefreshToken> allTokens = refreshTokenRepository.findAll();
-        
-        RefreshToken oldToken = allTokens.stream()
-                .filter(t -> passwordEncoder.matches(oldTokenValue, t.getToken()))
-                .findFirst()
+    public RefreshToken rotateRefreshToken(String oldPlainTokenValue) {
+        String oldHash = sha256(oldPlainTokenValue);
+
+        RefreshToken oldToken = refreshTokenRepository.findByTokenHash(oldHash)
                 .orElseThrow(() -> new TokenExpiredException("Unauthorized: Refresh token is invalid"));
 
-        // Reuse Detection Logic
+        // Reuse detection: if this token was already revoked, someone is reusing a stolen token
         if (oldToken.isRevoked()) {
-            logger.warn("SECURITY CRITICAL: Refresh token reuse detected for creator: {}. Token ID: {}", oldToken.getUser().getEmail(), oldToken.getId());
-            // Invalidate ALL tokens for the creator to stop the potential attack
+            logger.warn("SECURITY CRITICAL: Refresh token reuse detected for user: {}. Token ID: {}",
+                    oldToken.getUser().getEmail(), oldToken.getId());
+            // Revoke ALL tokens for this user to stop potential attack
             refreshTokenRepository.revokeAllByUser(oldToken.getUser());
             throw new TokenExpiredException("Unauthorized: Refresh token is invalid or compromised");
         }
@@ -97,26 +118,53 @@ public class RefreshTokenService {
             throw new TokenExpiredException("Unauthorized: Refresh token is expired");
         }
 
-        // Rotation: Issue NEW token and revoke OLD one
+        // Create new token
         RefreshToken newToken = create(oldToken.getUser());
 
+        // Revoke old token
         oldToken.setRevoked(true);
-        // We store the hashed version of the NEW token as a referenceId if needed
-        // but since newToken.getToken() currently returns the plain value (see create)
-        // we should hash it or just store a marker.
-        oldToken.setReplacedByToken("ROTATED"); 
+        oldToken.setReplacedByToken(newToken.getTokenHash());
         refreshTokenRepository.save(oldToken);
 
         return newToken;
     }
 
     public RefreshToken rotate(RefreshToken oldToken) {
-        return rotateRefreshToken(oldToken.getToken());
+        // oldToken.getPlainToken() may be set if this was just created,
+        // otherwise we need the plain value from the caller
+        String plainValue = oldToken.getPlainToken();
+        if (plainValue == null) {
+            throw new IllegalStateException("Cannot rotate token without plain value");
+        }
+        return rotateRefreshToken(plainValue);
     }
 
     // =========================
-    // VERWIJDEREN (LOGOUT)
+    // REVOKE (O(1) lookup)
     // =========================
+
+    @Transactional
+    public void revokeToken(String plainTokenValue) {
+        String hash = sha256(plainTokenValue);
+        refreshTokenRepository.findByTokenHash(hash).ifPresent(token -> {
+            token.setRevoked(true);
+            refreshTokenRepository.save(token);
+            logger.info("SECURITY: Refresh token revoked for user: {}", token.getUser().getEmail());
+        });
+    }
+
+    @Transactional(readOnly = true)
+    public String getEmailFromToken(String plainTokenValue) {
+        String hash = sha256(plainTokenValue);
+        return refreshTokenRepository.findByTokenHash(hash)
+                .map(t -> t.getUser().getEmail())
+                .orElse(null);
+    }
+
+    // =========================
+    // DELETE (LOGOUT)
+    // =========================
+
     public void delete(RefreshToken token) {
         refreshTokenRepository.delete(token);
     }
@@ -125,21 +173,27 @@ public class RefreshTokenService {
         refreshTokenRepository.deleteByUser(user);
     }
 
-    public void revokeToken(String tokenValue) {
-        refreshTokenRepository.findByToken(tokenValue).ifPresent(token -> {
-            token.setRevoked(true);
-            refreshTokenRepository.save(token);
-        });
-    }
+    // =========================
+    // SCHEDULED CLEANUP
+    // =========================
 
-    public String getEmailFromToken(String tokenValue) {
-        // Since tokens are hashed, we need to find it by scanning active tokens
-        // This is not efficient, but matches existing logic in rotateRefreshToken
-        List<RefreshToken> activeTokens = refreshTokenRepository.findAllByRevokedFalse();
-        return activeTokens.stream()
-                .filter(t -> passwordEncoder.matches(tokenValue, t.getToken()))
-                .findFirst()
-                .map(t -> t.getUser().getEmail())
-                .orElse(null);
+    /**
+     * Runs every 6 hours. Deletes expired tokens and revoked tokens older than 7 days.
+     */
+    @Scheduled(fixedRate = 6 * 60 * 60 * 1000)
+    @Transactional
+    public void cleanupExpiredTokens() {
+        Instant now = Instant.now();
+
+        int expiredCount = refreshTokenRepository.deleteExpiredTokens(now);
+        if (expiredCount > 0) {
+            logger.info("CLEANUP: Deleted {} expired refresh tokens", expiredCount);
+        }
+
+        Instant revokedCutoff = now.minusSeconds(7 * 24 * 60 * 60);
+        int revokedCount = refreshTokenRepository.deleteRevokedTokensBefore(revokedCutoff);
+        if (revokedCount > 0) {
+            logger.info("CLEANUP: Deleted {} revoked refresh tokens older than 7 days", revokedCount);
+        }
     }
 }

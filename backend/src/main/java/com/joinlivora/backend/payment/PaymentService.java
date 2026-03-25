@@ -56,6 +56,9 @@ public class PaymentService {
     @Value("${stripe.token-cancel-url}")
     private String tokenCancelUrl;
 
+    @Value("${livora.trust.evaluation.enabled:true}")
+    private boolean trustEvaluationEnabled;
+
     @jakarta.annotation.PostConstruct
     public void validateConfig() {
         if (successUrl == null || !successUrl.startsWith("http")) {
@@ -257,6 +260,10 @@ public class PaymentService {
     }
 
     private void evaluateTrust(User user, String ipAddress, String fingerprintHash) {
+        if (!trustEvaluationEnabled) {
+            log.info("SECURITY: Trust evaluation is disabled (livora.trust.evaluation.enabled=false). Skipping for user: {}", user.getEmail());
+            return;
+        }
         RiskDecisionResult result = trustEvaluationService.evaluate(user, fingerprintHash, ipAddress);
         if (result.getDecision() == RiskDecision.BLOCK) {
             log.warn("SECURITY [trust_evaluation]: Blocked payment attempt for creator: {} from IP: {} with fingerprint: {}. ExplanationId: {}",

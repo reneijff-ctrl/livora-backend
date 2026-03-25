@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import tokenService, { TokenPackage } from '../api/tokenService';
+import tokenService from '../api/tokenService';
+import { SafeTokenPackage } from '../adapters/WalletAdapter';
 import TokenBalance from './TokenBalance';
 import { showToast } from './Toast';
+import { useWallet } from '../hooks/useWallet';
 
 const TokenStore: React.FC = () => {
-  const [packages, setPackages] = useState<TokenPackage[]>([]);
+  const [packages, setPackages] = useState<SafeTokenPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [isBuying, setIsBuying] = useState<string | null>(null);
+  const { balance } = useWallet();
 
   useEffect(() => {
     const fetchPackages = async () => {
@@ -26,6 +29,8 @@ const TokenStore: React.FC = () => {
     setIsBuying(packageId);
     try {
       const { redirectUrl } = await tokenService.createCheckoutSession(packageId);
+      // Store current balance before redirecting so success page can detect the increase
+      sessionStorage.setItem('livora_pre_purchase_balance', String(balance));
       window.location.href = redirectUrl;
     } catch (error: any) {
       console.error('Failed to start token checkout', error);
@@ -58,7 +63,7 @@ const TokenStore: React.FC = () => {
       <div className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-5">
         {packages.map((pkg) => (
           <div key={pkg.id} className="bg-white/5 border border-white/5 p-6 rounded-2xl text-center flex flex-col gap-3 transition-all duration-200 hover:scale-[1.02]">
-            <div className="text-xl font-extrabold text-zinc-100">{pkg.tokenAmount} Tokens</div>
+            <div className="text-xl font-extrabold text-zinc-100">{pkg.tokenAmount.toLocaleString()} Tokens</div>
             <div className="text-zinc-500 text-sm font-medium">{pkg.name}</div>
             <div className="text-lg font-extrabold text-purple-400 my-1">
               {pkg.price.toFixed(2)} {pkg.currency.toUpperCase()}

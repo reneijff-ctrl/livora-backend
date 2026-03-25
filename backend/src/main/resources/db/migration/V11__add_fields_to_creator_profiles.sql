@@ -1,0 +1,11 @@
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS real_name VARCHAR(255);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS gender VARCHAR(50);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS interested_in VARCHAR(255);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS languages VARCHAR(255);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS location VARCHAR(255);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS body_type VARCHAR(100);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS ethnicity VARCHAR(100);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS eye_color VARCHAR(50);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS hair_color VARCHAR(50);
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS height_cm INTEGER;
+ALTER TABLE creator_profiles ADD COLUMN IF NOT EXISTS weight_kg INTEGER;

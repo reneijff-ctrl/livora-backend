@@ -106,7 +106,7 @@ public class AuthController {
         authService.logout(refreshToken, httpRequest);
 
         // Clear Refresh Token Cookie
-        ResponseCookie refreshCookie = cookieUtil.deleteCookie("refreshToken", "/api/auth/refresh", "None");
+        ResponseCookie refreshCookie = cookieUtil.deleteCookie("refreshToken", "/", "Lax");
         response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());
 
         return ResponseEntity.ok(Map.of("message", "Logged out successfully"));

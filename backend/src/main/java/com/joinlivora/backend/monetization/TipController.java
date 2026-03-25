@@ -13,6 +13,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -24,6 +25,7 @@ public class TipController {
 
     private final TipOrchestrationService tipService;
     private final UserService userService;
+    private final WeeklyTipService weeklyTipService;
 
     @PostMapping("/intent")
     public ResponseEntity<?> createTipIntent(
@@ -88,5 +90,12 @@ public class TipController {
             "message", "Tip preview successful",
             "status", "PREVIEW_OK"
         ));
+    }
+
+    @GetMapping("/leaderboard/{creatorId}")
+    public ResponseEntity<List<WeeklyTipService.LeaderboardEntry>> getWeeklyLeaderboard(
+            @PathVariable Long creatorId
+    ) {
+        return ResponseEntity.ok(weeklyTipService.getTop5(creatorId));
     }
 }

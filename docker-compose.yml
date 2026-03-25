@@ -83,12 +83,16 @@ services:
       - "5672:5672"
       - "15672:15672"
       - "61613:61613"
+      - "15674:15674"
     environment:
       RABBITMQ_DEFAULT_USER: livora
       RABBITMQ_DEFAULT_PASS: livora
     command: >
-      sh -c "rabbitmq-plugins enable --offline rabbitmq_stomp &&
-      rabbitmq-server"
+      bash -c "
+      rabbitmq-plugins enable --offline rabbitmq_stomp &&
+      rabbitmq-plugins enable --offline rabbitmq_web_stomp &&
+      rabbitmq-server
+      "
     networks:
       - livora-network
 

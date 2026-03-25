@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react';
-import { Outlet, useLocation, Routes, Route } from 'react-router-dom';
+import { Outlet, useLocation, Routes, Route, useNavigate } from 'react-router-dom';
 import CreatorSettingsPage from './pages/creator/CreatorSettingsPage';
 import AdminFraudSignalsPage from './pages/AdminFraudSignalsPage';
 import ProtectedRoute from './auth/ProtectedRoute';
@@ -20,18 +20,31 @@ import { useAuth } from './auth/useAuth';
  * It handles the global loading state and provides common UI elements like Navbar.
  */
 function App() {
-  const { isInitialized } = useAuth();
+  const { isInitialized, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const instanceId = useRef(Math.random().toString(36).substring(2, 9)).current;
 
   console.log(`[APP-RENDER][${instanceId}] Rendering App. Location: ${location.pathname}${location.search}, Key: ${location.key}`);
 
   useEffect(() => {
+    // Listen for unauthorized events from apiClient
+    const handleUnauthorized = () => {
+      console.warn('[APP] Unauthorized access detected. Triggering logout and redirect.');
+      logout();
+      if (location.pathname !== '/login') {
+        navigate('/login', { state: { from: location }, replace: true });
+      }
+    };
+
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+
     console.log(`[APP-MOUNT][${instanceId}] App component mounted`);
     return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
       console.log(`[APP-UNMOUNT][${instanceId}] App component unmounting`);
     };
-  }, [instanceId]);
+  }, [instanceId, logout, navigate, location]);
 
   // Safety guard: Ensure no automatic navigation or conditional redirects 
   // occur when on the root path "/" as it must always remain public.

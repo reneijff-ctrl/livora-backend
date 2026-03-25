@@ -21,7 +21,7 @@ const AdminRealtimeDashboard: React.FC = () => {
     }
 
     // Subscribe to admin activity
-    const unsubActivity = webSocketService.subscribe('/topic/admin/activity', (msg) => {
+    const unsubActivity = webSocketService.subscribe('/exchange/amq.topic/admin.activity', (msg) => {
       const data = JSON.parse(msg.body);
       const newEvent: AdminEvent = {
         id: Date.now(),
@@ -33,7 +33,7 @@ const AdminRealtimeDashboard: React.FC = () => {
     });
 
     // Subscribe to admin payments
-    const unsubPayments = webSocketService.subscribe('/topic/admin/payments', (msg) => {
+    const unsubPayments = webSocketService.subscribe('/exchange/amq.topic/admin.payments', (msg) => {
       const data = JSON.parse(msg.body);
       const newEvent: AdminEvent = {
         id: Date.now(),
@@ -45,7 +45,7 @@ const AdminRealtimeDashboard: React.FC = () => {
     });
 
     // Subscribe to admin metrics
-    const unsubMetrics = webSocketService.subscribe('/topic/admin/metrics', (msg) => {
+    const unsubMetrics = webSocketService.subscribe('/exchange/amq.topic/admin.metrics', (msg) => {
       const data = JSON.parse(msg.body);
       setMetrics((prev: any) => ({ ...prev, lastEvent: data.event, lastTimestamp: data.timestamp }));
     });

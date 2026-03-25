@@ -76,7 +76,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void configureMessageBroker(MessageBrokerRegistry config) {
         // Broadcast topics: /topic/chat/{creatorUserId}, /topic/webrtc/{creatorUserId}
         // Use STOMP Broker Relay (RabbitMQ/Redis) instead of SimpleBroker for horizontal scaling
-        config.enableStompBrokerRelay("/topic", "/queue")
+        config.enableStompBrokerRelay("/queue", "/exchange")
                 .setRelayHost(brokerHost)
                 .setRelayPort(brokerPort)
                 .setClientLogin(brokerUsername)
@@ -86,8 +86,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setSystemHeartbeatReceiveInterval(10000)
                 .setSystemHeartbeatSendInterval(10000)
                 .setTaskScheduler(heartBeatScheduler())
-                .setUserDestinationBroadcast("/topic/unresolved-user-destination")
-                .setUserRegistryBroadcast("/topic/log-user-registry");
+                .setUserDestinationBroadcast("/exchange/amq.topic/unresolved-user-destination")
+                .setUserRegistryBroadcast("/exchange/amq.topic/log-user-registry");
 
         // Client-to-server messages: /app/chat.send, /app/webrtc.signal
         config.setApplicationDestinationPrefixes("/app");
@@ -163,7 +163,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
                         return super.beforeHandshake(request, response, wsHandler, attributes);
                     }
-                });
+                })
+                .withSockJS();
     }
 
     @Override

@@ -89,8 +89,11 @@ public class TokenService {
     public boolean hasEnoughTokens(Long userId, Long creatorUserId) {
         if (userId.equals(creatorUserId)) return true;
 
-        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
+        java.util.List<com.joinlivora.backend.streaming.Stream> streams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
+        if (streams.isEmpty()) {
+            throw new ResourceNotFoundException("Active stream not found");
+        }
+        com.joinlivora.backend.streaming.Stream room = streams.get(0);
 
         if (!room.isPaid()) {
             return true;
@@ -113,8 +116,11 @@ public class TokenService {
             return;
         }
 
-        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
-                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
+        java.util.List<com.joinlivora.backend.streaming.Stream> streams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
+        if (streams.isEmpty()) {
+            throw new ResourceNotFoundException("Active stream not found");
+        }
+        com.joinlivora.backend.streaming.Stream room = streams.get(0);
 
         if (room.isPaid()) {
             spendTokens(userId, room.getAdmissionPrice().longValue(), 

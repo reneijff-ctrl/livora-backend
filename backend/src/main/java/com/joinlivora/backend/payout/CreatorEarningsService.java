@@ -406,7 +406,7 @@ public class CreatorEarningsService {
                     .currentAggregatedEarnings(currentAggregatedEarnings)
                     .build();
 
-            String topic = "/topic/creator/" + creator.getId() + "/earnings";
+            String topic = "/exchange/amq.topic/creator." + creator.getId() + ".earnings";
             messagingTemplate.convertAndSend(topic, update);
             log.debug("MONETIZATION: Broadcasted earnings update to {}", topic);
         } catch (Exception e) {

@@ -13,8 +13,10 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/creator/payouts")
@@ -29,6 +31,7 @@ public class CreatorPayoutController {
     private final UserService userService;
     private final LegacyCreatorStripeAccountRepository creatorStripeAccountRepository;
     private final StripeConnectService stripeConnectService;
+    private final CreatorPayoutSettingsRepository creatorPayoutSettingsRepository;
 
     @Value("${app.frontend-url:http://localhost:3000}")
     private String frontendUrl;
@@ -58,6 +61,21 @@ public class CreatorPayoutController {
                 .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
 
         String stripeAccountId = stripeConnectService.createOrGetStripeAccount(user);
+        log.info("PAYOUT_DEBUG: onboard stripeAccountId={} for user={}", stripeAccountId, user.getId());
+
+        // Create CreatorPayoutSettings if missing
+        UUID creatorId = new UUID(0L, user.getId());
+        if (creatorPayoutSettingsRepository.findByCreatorId(creatorId).isEmpty()) {
+            CreatorPayoutSettings settings = CreatorPayoutSettings.builder()
+                    .creatorId(creatorId)
+                    .stripeAccountId(stripeAccountId)
+                    .payoutMethod(PayoutMethod.STRIPE_SEPA)
+                    .minimumPayoutAmount(BigDecimal.valueOf(50.00))
+                    .enabled(false)
+                    .build();
+            creatorPayoutSettingsRepository.save(settings);
+            log.info("PAYOUT_DEBUG: created CreatorPayoutSettings for creatorId={}", creatorId);
+        }
 
         String returnUrl = frontendUrl + "/creator/stripe/success";
         String refreshUrl = frontendUrl + "/creator/stripe/retry";

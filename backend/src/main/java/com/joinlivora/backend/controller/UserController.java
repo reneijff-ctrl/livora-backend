@@ -4,10 +4,7 @@ import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.util.Map;
@@ -31,6 +28,26 @@ public class UserController {
                 "role", user.getRole(),
                 "fraudRiskLevel", user.getFraudRiskLevel()
         ));
+    }
+
+    @PatchMapping("/username")
+    public ResponseEntity<?> updateUsername(@RequestBody Map<String, String> body, Principal principal) {
+        if (principal == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Not authenticated"));
+        }
+        User user = userService.resolveUserFromSubject(principal.getName())
+                .orElseThrow(() -> new com.joinlivora.backend.exception.ResourceNotFoundException("User not found"));
+
+        String newUsername = body.get("username");
+        try {
+            User updated = userService.updateUsername(user, newUsername);
+            return ResponseEntity.ok(Map.of(
+                    "username", updated.getUsername(),
+                    "message", "Username updated successfully"
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/profile")

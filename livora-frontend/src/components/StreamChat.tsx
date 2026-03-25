@@ -47,6 +47,14 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
 
     const handleIncomingMessage = (msg: any) => {
       const incoming = JSON.parse(msg.body);
+
+      // Support batched messages from server
+      if (incoming.type === 'CHAT_BATCH' && Array.isArray(incoming.messages)) {
+        for (const m of incoming.messages) {
+          handleIncomingMessage({ body: JSON.stringify(m) });
+        }
+        return;
+      }
       
       if (
         incoming.type === 'CHAT' ||
@@ -81,7 +89,7 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
       }
     };
 
-    const unsubscribe = webSocketService.subscribe(`/topic/chat/${creatorUserId}`, handleIncomingMessage);
+    const unsubscribe = webSocketService.subscribe(`/exchange/amq.topic/chat.${creatorUserId}`, handleIncomingMessage);
 
     const unsubscribePrivate = webSocketService.subscribe('/user/queue/chat', (msg) => {
       const data = JSON.parse(msg.body);

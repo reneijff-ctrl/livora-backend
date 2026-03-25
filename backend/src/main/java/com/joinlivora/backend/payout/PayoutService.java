@@ -77,9 +77,11 @@ public class PayoutService {
      * - Exclude pending transactions (subtract pending payouts)
      */
     public BigDecimal calculateAvailablePayout(UUID creatorId) {
-        CreatorEarnings earnings = creatorEarningsRepository.findById(creatorId)
-                .orElseThrow(() -> new ResourceNotFoundException("Creator earnings record not found for ID: " + creatorId));
-        User user = earnings.getUser();
+        log.info("PAYOUT_DEBUG: calculateAvailablePayout called for creatorId={}", creatorId);
+        long userId = creatorId.getLeastSignificantBits();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found for creatorId: " + creatorId));
+        log.info("PAYOUT_DEBUG: resolved user={} from creatorId={}", user.getId(), creatorId);
 
         // 1. Sum net earnings
         BigDecimal totalNetTokens = creatorEarningRepository.sumTotalNetTokensByCreator(user);
@@ -92,13 +94,15 @@ public class PayoutService {
                 totalNetTokens.multiply(CreatorEarningsService.TOKEN_TO_EUR_RATE)
         );
 
-        // 2. Subtract already paid payouts
-        BigDecimal paidAmount = payoutRepository.sumEurAmountByUserAndStatus(user, PayoutStatus.COMPLETED);
+        // 2. Subtract already paid payouts (from CreatorPayout — the table executePayout writes to)
+        BigDecimal paidAmount = creatorPayoutRepository.sumAmountByCreatorIdAndStatus(creatorId, PayoutStatus.COMPLETED);
         if (paidAmount == null) paidAmount = BigDecimal.ZERO;
+        log.info("PAYOUT_DEBUG: paidAmount={} for creatorId={}", paidAmount, creatorId);
 
         // 3. Exclude pending transactions (subtract pending payouts)
-        BigDecimal pendingAmount = payoutRepository.sumEurAmountByUserAndStatus(user, PayoutStatus.PENDING);
+        BigDecimal pendingAmount = creatorPayoutRepository.sumAmountByCreatorIdAndStatus(creatorId, PayoutStatus.PENDING);
         if (pendingAmount == null) pendingAmount = BigDecimal.ZERO;
+        log.info("PAYOUT_DEBUG: pendingAmount={} for creatorId={}", pendingAmount, creatorId);
 
         return totalEarningsEur.subtract(paidAmount).subtract(pendingAmount);
     }
@@ -109,13 +113,17 @@ public class PayoutService {
      */
     @Transactional
     public CreatorPayout executePayout(UUID creatorId, BigDecimal amount, String currency) throws Exception {
+        log.info("PAYOUT_DEBUG: executePayout called for creatorId={}, amount={}, currency={}", creatorId, amount, currency);
         CreatorPayoutSettings settings = creatorPayoutSettingsRepository.findByCreatorId(creatorId)
                 .orElseThrow(() -> new ResourceNotFoundException("Payout settings not found for creator: " + creatorId));
 
-        // Use lock to prevent concurrent payouts for the same creator
-        CreatorEarnings earnings = creatorEarningsRepository.findByIdWithLock(creatorId)
-                .orElseThrow(() -> new ResourceNotFoundException("Creator earnings not found: " + creatorId));
-        User user = earnings.getUser();
+        // Resolve User from creatorId and lock earnings by user
+        long userId = creatorId.getLeastSignificantBits();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found for creatorId: " + creatorId));
+        log.info("PAYOUT_DEBUG: executePayout resolved user={} from creatorId={}", user.getId(), creatorId);
+        CreatorEarnings earnings = creatorEarningsRepository.findByUserWithLock(user)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator earnings not found for user: " + user.getId()));
 
         kycAccessService.assertCreatorCanReceivePayout(user.getId());
 
@@ -237,14 +245,23 @@ public class PayoutService {
         return payout;
     }
 
+    /**
+     * @deprecated This method creates orphaned PENDING CreatorPayout records and permanently locks
+     * CreatorEarning rows with no subsequent process to execute, finalize, or clean them up.
+     * Use {@link #executePayout(UUID, BigDecimal, String)} instead, which creates a Stripe transfer
+     * and completes the full payout lifecycle.
+     */
+    @Deprecated
     @Transactional
     public CreatorPayout requestPayout(UUID creatorId, BigDecimal amount, String currency) {
-        CreatorEarnings earnings = creatorEarningsRepository.findById(creatorId)
-                .orElseThrow(() -> new ResourceNotFoundException("Creator earnings record not found for ID: " + creatorId));
+        log.info("PAYOUT_DEBUG: requestPayout called for creatorId={}, amount={}, currency={}", creatorId, amount, currency);
+        // Resolve User from canonical creatorId (same pattern as calculateAvailablePayout and executePayout)
+        long userId = creatorId.getLeastSignificantBits();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found for creatorId: " + creatorId));
+        log.info("PAYOUT_DEBUG: requestPayout resolved user={} from creatorId={}", user.getId(), creatorId);
 
-        kycAccessService.assertCreatorCanReceivePayout(earnings.getUser().getId());
-
-        User user = earnings.getUser();
+        kycAccessService.assertCreatorCanReceivePayout(user.getId());
 
         // 1. Create and persist payout record as PENDING
         CreatorPayout payout = CreatorPayout.builder()

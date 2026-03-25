@@ -14,6 +14,7 @@ import com.joinlivora.backend.streaming.dto.GoLiveRequest;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.fraud.service.FraudRiskScoreService;
 import com.joinlivora.backend.livestream.domain.LivestreamSession;
+import com.joinlivora.backend.streaming.service.StreamAssistantBotService;
 import com.joinlivora.backend.websocket.ChatMessage;
 import com.joinlivora.backend.websocket.RealtimeMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,7 @@ public class StreamService {
     private final AdminRealtimeEventService adminRealtimeEventService;
     private final StreamRepository streamRepository;
     private final FraudRiskScoreService fraudRiskScoreService;
+    private final StreamAssistantBotService streamAssistantBotService;
 
     public StreamService(
             com.joinlivora.backend.user.UserRepository userRepository,
@@ -60,7 +62,8 @@ public class StreamService {
             CreatorVerificationRepository creatorVerificationRepository,
             AdminRealtimeEventService adminRealtimeEventService,
             StreamRepository streamRepository,
-            @org.springframework.context.annotation.Lazy FraudRiskScoreService fraudRiskScoreService) {
+            @org.springframework.context.annotation.Lazy FraudRiskScoreService fraudRiskScoreService,
+            StreamAssistantBotService streamAssistantBotService) {
         this.userRepository = userRepository;
         this.liveStreamService = liveStreamService;
         this.chatRoomService = chatRoomService;
@@ -75,6 +78,7 @@ public class StreamService {
         this.adminRealtimeEventService = adminRealtimeEventService;
         this.streamRepository = streamRepository;
         this.fraudRiskScoreService = fraudRiskScoreService;
+        this.streamAssistantBotService = streamAssistantBotService;
     }
 
     public List<StreamRoom> getLiveStreams() {
@@ -100,13 +104,15 @@ public class StreamService {
 
     public StreamRoom getCreatorRoom(User creator) {
         // Synthesize a room from the unified Stream if possible for compatibility
-        return streamRepository.findByCreatorAndIsLiveTrue(creator)
-                .map(this::mapToStreamRoom)
-                .orElse(StreamRoom.builder()
-                        .creator(creator)
-                        .isLive(false)
-                        .viewerCount(0)
-                        .build());
+        List<Stream> liveStreams = streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(creator);
+        if (!liveStreams.isEmpty()) {
+            return mapToStreamRoom(liveStreams.get(0));
+        }
+        return StreamRoom.builder()
+                .creator(creator)
+                .isLive(false)
+                .viewerCount(0)
+                .build();
     }
 
     private StreamRoom mapToStreamRoom(Stream s) {
@@ -208,11 +214,16 @@ public class StreamService {
         // Use RealtimeMessage for consistency if expected by frontend (Using creatorId routing)
         RealtimeMessage realtimeMessage = RealtimeMessage.ofChat(systemMessage);
         
-        messagingTemplate.convertAndSend("/topic/chat/" + creatorId, realtimeMessage);
+        messagingTemplate.convertAndSend("/exchange/amq.topic/chat." + creatorId, realtimeMessage);
     }
 
     @Transactional
     public StreamRoom stopStream(User user) {
+        return stopStream(user, "creator");
+    }
+
+    @Transactional
+    public StreamRoom stopStream(User user, String reason) {
         Long userId = user.getId();
         User creator = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Creator not found: " + userId));
@@ -225,18 +236,23 @@ public class StreamService {
         StreamRoom saved = room;
 
         // Update unified Stream entity
-        streamRepository.findByCreatorIdAndIsLiveTrue(userId).ifPresent(stream -> {
+        List<Stream> liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(userId);
+        if (!liveStreams.isEmpty()) {
+            Stream stream = liveStreams.get(0);
             stream.setLive(false);
             stream.setEndedAt(Instant.now());
             streamRepository.save(stream);
             log.info("STREAM: Updated unified Stream entity {} to isLive=false", stream.getId());
-        });
+        }
         
         // Also stop the core LiveStream (which handles notifications, chat deletion, and Redis cleanup)
-        liveStreamService.stopStream(userId);
+        liveStreamService.stopStream(userId, reason);
 
         // Clear pay-to-watch access list
         tokenService.clearAccess(userId);
+
+        // Clean up assistant bot in-memory state to prevent memory leaks
+        streamAssistantBotService.onStreamEnded(userId);
 
         log.info("STREAM: Creator {} stopped stream", creator.getEmail());
         
@@ -299,10 +315,10 @@ public class StreamService {
 
     @EventListener
     public void handleStreamEnded(StreamEndedEvent event) {
-        log.info("STREAM: Notifying admin of stopped stream: {}", event.getSession().getId());
+        log.info("STREAM: Notifying admin of stopped stream: {} reason: {}", event.getSession().getId(), event.getReason());
         LivestreamSession session = event.getSession();
         int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
-        adminRealtimeEventService.broadcastStreamStopped(session, viewerCount);
+        adminRealtimeEventService.broadcastStreamStopped(session, viewerCount, event.getReason(), event.getStreamId());
     }
 
     public void notifyStreamStarted(LivestreamSession session) {

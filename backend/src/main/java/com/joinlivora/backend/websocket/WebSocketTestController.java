@@ -46,7 +46,7 @@ public class WebSocketTestController {
         log.info("WebSocket: Admin broadcast from {}: {}", principal.getName(), message);
         
         messagingTemplate.convertAndSend(
-                "/topic/announcements",
+                "/exchange/amq.topic/announcements",
                 RealtimeMessage.of("announcement", Map.of("content", message, "admin", principal.getName()))
         );
     }

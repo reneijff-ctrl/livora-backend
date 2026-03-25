@@ -6,6 +6,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executor;
+import org.springframework.security.task.DelegatingSecurityContextAsyncTaskExecutor;
 
 @Configuration
 public class AsyncConfig {
@@ -33,6 +34,32 @@ public class AsyncConfig {
         executor.setThreadNamePrefix("WebRTC-Signal-");
         // CallerRunsPolicy ensures that if the pool is full, the message is processed
         // by the WebSocket thread, providing natural backpressure instead of dropping signaling messages.
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
+
+    @Bean(name = "mediasoupExecutor")
+    public Executor mediasoupExecutor() {
+
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(8);
+        executor.setMaxPoolSize(32);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("Mediasoup-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+
+        return new DelegatingSecurityContextAsyncTaskExecutor(executor);
+    }
+
+    @Bean(name = "chatPersistenceExecutor")
+    public Executor chatPersistenceExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(16);
+        executor.setQueueCapacity(1000);
+        executor.setThreadNamePrefix("ChatPersist-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;

@@ -1,0 +1,25 @@
+### GET Authenticated Creator Profile (Current User)
+# This endpoint returns the profile of the logged-in creator.
+# Requires: Authorization header with valid JWT token.
+GET http://localhost:8080/api/creator/profile/me
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+### GET Creator Profile (Alternative)
+# Also returns the profile of the logged-in user.
+# Supports both CREATOR and ADMIN roles.
+GET http://localhost:8080/api/creator/profile
+Authorization: Bearer {{auth_token}}
+Accept: application/json
+
+### GET Public Creator Profile by Username
+# This endpoint is PUBLIC and does not require authentication.
+# Accessible via browser address bar.
+GET http://localhost:8080/api/public/creators/profile/johndoe
+Accept: application/json
+
+### GET Public Creator Profile by ID
+# This endpoint is PUBLIC and does not require authentication.
+# Accessible via browser address bar.
+GET http://localhost:8080/api/public/creators/profile/1
+Accept: application/json

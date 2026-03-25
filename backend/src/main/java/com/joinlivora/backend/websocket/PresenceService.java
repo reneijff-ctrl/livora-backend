@@ -28,12 +28,16 @@ import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.socket.messaging.SessionConnectEvent;
 import org.springframework.web.socket.messaging.SessionDisconnectEvent;
 import org.springframework.web.socket.messaging.SessionSubscribeEvent;
 import org.springframework.web.socket.messaging.SessionUnsubscribeEvent;
 
+import com.joinlivora.backend.creator.follow.repository.CreatorFollowRepository;
+import com.joinlivora.backend.streaming.service.StreamModeratorService;
+import com.joinlivora.backend.user.dto.PublicViewerResponse;
 import com.joinlivora.backend.user.dto.UserResponse;
 import java.security.Principal;
 import java.time.Duration;
@@ -60,6 +64,8 @@ public class PresenceService {
     private final CreatorProfileService creatorProfileService;
     private final OnlineCreatorRegistry onlineCreatorRegistry;
     private final LiveViewerCounterService liveViewerCounterService;
+    private final CreatorFollowRepository creatorFollowRepository;
+    private final StreamModeratorService streamModeratorService;
 
     @Autowired
     public PresenceService(
@@ -72,7 +78,9 @@ public class PresenceService {
             LiveStreamService liveStreamService,
             @Lazy CreatorProfileService creatorProfileService,
             OnlineCreatorRegistry onlineCreatorRegistry,
-            LiveViewerCounterService liveViewerCounterService) {
+            LiveViewerCounterService liveViewerCounterService,
+            CreatorFollowRepository creatorFollowRepository,
+            @Lazy StreamModeratorService streamModeratorService) {
         this.sessionRegistry = sessionRegistry;
         this.presenceTracking = presenceTracking;
         this.viewerCountService = viewerCountService;
@@ -83,6 +91,8 @@ public class PresenceService {
         this.creatorProfileService = creatorProfileService;
         this.onlineCreatorRegistry = onlineCreatorRegistry;
         this.liveViewerCounterService = liveViewerCounterService;
+        this.creatorFollowRepository = creatorFollowRepository;
+        this.streamModeratorService = streamModeratorService;
     }
 
     /**
@@ -109,13 +119,15 @@ public class PresenceService {
             new SessionRegistryService(),
             new PresenceTrackingService(redisTemplate, onlineStatusService),
             new ViewerCountService(liveViewerCounterService),
-            new PresenceEventOrchestrator(messagingTemplate, analyticsEventPublisher, streamAssistantBotService, chatRoomServiceV2, createAlwaysAvailableBrokerListener()),
+            new PresenceEventOrchestrator(messagingTemplate, analyticsEventPublisher, streamAssistantBotService, chatRoomServiceV2, createAlwaysAvailableBrokerListener(), null),
             userService,
             streamService,
             liveStreamService,
             null, // Will be lazily resolved in production or remains null in tests if not needed
             onlineCreatorRegistry,
-            liveViewerCounterService
+            liveViewerCounterService,
+            null,
+            null
         );
     }
 
@@ -146,6 +158,7 @@ public class PresenceService {
 
 
     @EventListener
+    @Transactional(readOnly = true)
     public void handleWebSocketConnectListener(SessionConnectEvent event) {
         SimpMessageHeaderAccessor headerAccessor = SimpMessageHeaderAccessor.wrap(event.getMessage());
         String sessionId = headerAccessor.getSessionId();
@@ -285,7 +298,7 @@ public class PresenceService {
                 }
                 eventOrchestrator.broadcastCreatorLeft(userId, creatorId);
             } catch (Exception e) {
-                log.error("Error pausing chat rooms for creator {}: {}", creatorId, e.getMessage());
+                log.warn("Could not pause chat rooms for creator {} during disconnect (may be expected): {}", creatorId, e.getMessage());
             }
         }
 
@@ -353,16 +366,16 @@ public class PresenceService {
         UUID streamId = null;
 
         try {
-            if (destination.startsWith("/topic/viewers/")) {
-                String idStr = destination.substring("/topic/viewers/".length());
+            if (destination.startsWith("/exchange/amq.topic/viewers.")) {
+                String idStr = destination.substring("/exchange/amq.topic/viewers.".length());
                 try {
                     streamId = UUID.fromString(idStr);
                 } catch (Exception e) {
                     try { creatorUserId = Long.parseLong(idStr); } catch (Exception ignored) {}
                 }
-            } else if (destination.startsWith("/topic/stream/") && destination.endsWith("/video")) {
-                String idPart = destination.substring("/topic/stream/".length(), destination.length() - "/video".length());
-                if (idPart.endsWith("/")) idPart = idPart.substring(0, idPart.length() - 1);
+            } else if (destination.startsWith("/exchange/amq.topic/stream.") && destination.endsWith(".video")) {
+                String idPart = destination.substring("/exchange/amq.topic/stream.".length(), destination.length() - ".video".length());
+                if (idPart.endsWith(".")) idPart = idPart.substring(0, idPart.length() - 1);
                 streamId = UUID.fromString(idPart);
             }
         } catch (Exception ignored) {}
@@ -377,7 +390,7 @@ public class PresenceService {
                 eventOrchestrator.publishAnalyticsEvent(AnalyticsEventType.STREAM_JOIN, user, Map.of("roomId", streamId, "creator", creatorUserId));
                 
                 String botUserName = user != null ? (user.getDisplayName() != null ? user.getDisplayName() : user.getEmail().split("@")[0]) : "anonymous";
-                eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName);
+                eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
 
                 // Reintroduce "new account join clustering"
                 if (user != null && user.getCreatedAt() != null) {
@@ -387,11 +400,23 @@ public class PresenceService {
                     }
                 }
             } catch (Exception e) {
-                log.error("Error handling stream join: {}", e.getMessage());
+                log.debug("Error handling stream join (stream may have ended): {}", e.getMessage());
             }
         }
 
         if (creatorUserId != null) {
+            // When creatorUserId was resolved from a Long (not UUID), streamId is null
+            // and notifyStreamJoin was not called above — call it here for chat history replay
+            if (streamId == null) {
+                try {
+                    User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
+                    String botUserName = user != null ? (user.getDisplayName() != null ? user.getDisplayName() : user.getEmail().split("@")[0]) : "viewer";
+                    eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
+                } catch (Exception e) {
+                    log.debug("Error notifying stream join for creatorUserId {} (stream may have ended): {}", creatorUserId, e.getMessage());
+                }
+            }
+
             Long streamSessionId = liveViewerCounterService != null ? liveViewerCounterService.getActiveSessionId(creatorUserId) : null;
             if (streamSessionId != null && sessionRegistry.markStreamJoined(sessionId, streamSessionId)) {
                 User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
@@ -405,17 +430,17 @@ public class PresenceService {
         UUID streamId = null;
 
         try {
-            if (destination.startsWith("/topic/viewers/")) {
-                String idStr = destination.substring("/topic/viewers/".length());
+            if (destination.startsWith("/exchange/amq.topic/viewers.")) {
+                String idStr = destination.substring("/exchange/amq.topic/viewers.".length());
                 try { streamId = UUID.fromString(idStr); } catch (Exception e) {
                     try { creatorUserId = Long.parseLong(idStr); } catch (Exception ignored) {}
                 }
-            } else if (destination.startsWith("/topic/stream/") && destination.endsWith("/video")) {
-                String idPart = destination.substring("/topic/stream/".length(), destination.length() - "/video".length());
-                if (idPart.endsWith("/")) idPart = idPart.substring(0, idPart.length() - 1);
+            } else if (destination.startsWith("/exchange/amq.topic/stream.") && destination.endsWith(".video")) {
+                String idPart = destination.substring("/exchange/amq.topic/stream.".length(), destination.length() - ".video".length());
+                if (idPart.endsWith(".")) idPart = idPart.substring(0, idPart.length() - 1);
                 streamId = UUID.fromString(idPart);
-            } else if (destination.startsWith("/topic/chat/")) {
-                String idStr = destination.substring("/topic/chat/".length());
+            } else if (destination.startsWith("/exchange/amq.topic/chat.")) {
+                String idStr = destination.substring("/exchange/amq.topic/chat.".length());
                 try { creatorUserId = Long.parseLong(idStr); } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
@@ -430,7 +455,7 @@ public class PresenceService {
                 User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
                 eventOrchestrator.publishAnalyticsEvent(AnalyticsEventType.STREAM_LEAVE, user, Map.of("roomId", streamId, "creator", creatorUserId, "duration", durationSeconds));
             } catch (Exception e) {
-                log.error("Error handling stream leave: {}", e.getMessage());
+                log.debug("Error handling stream leave (stream may have ended): {}", e.getMessage());
             }
         }
 
@@ -475,19 +500,111 @@ public class PresenceService {
     public List<UserResponse> getUserInfoBySessionIds(Set<String> sessionIds) {
         if (sessionIds == null || sessionIds.isEmpty()) return java.util.Collections.emptyList();
         
-        Map<Long, UserResponse> uniqueUsers = new java.util.HashMap<>();
+        Set<Long> uniqueUserIds = new java.util.HashSet<>();
+        Map<Long, String> userPrincipals = new java.util.HashMap<>();
         
         for (String sessionId : sessionIds) {
             Long userId = sessionRegistry.getUserId(sessionId);
-            if (userId != null) {
-                if (!uniqueUsers.containsKey(userId)) {
-                    String principalId = sessionRegistry.getPrincipal(sessionId);
-                    uniqueUsers.put(userId, new UserResponse(userId, principalId, Role.USER));
-                }
+            if (userId != null && uniqueUserIds.add(userId)) {
+                userPrincipals.put(userId, sessionRegistry.getPrincipal(sessionId));
             }
         }
         
-        return new java.util.ArrayList<>(uniqueUsers.values());
+        if (uniqueUserIds.isEmpty()) return java.util.Collections.emptyList();
+        
+        List<User> users = userService.findAllByIds(uniqueUserIds);
+        return users.stream()
+                .map(u -> new UserResponse(
+                        u.getId(),
+                        userPrincipals.getOrDefault(u.getId(), u.getEmail()),
+                        u.getUsername(),
+                        u.getDisplayName(),
+                        Role.USER))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns viewer list for a creator using the hybrid merge approach (same as getPublicViewerList)
+     * but returning UserResponse objects for the creator dashboard.
+     * Merges user IDs from Redis userViewers hash AND viewers SET + sessionRegistry reverse lookup
+     * to ensure no connected viewers are dropped.
+     */
+    public List<UserResponse> getCreatorViewerList(Long creatorUserId) {
+        Set<Long> uniqueUserIds = new java.util.HashSet<>();
+
+        // Source 1: userViewers hash (authoritative userId -> sessionId mapping written by Lua)
+        Set<Long> hashUserIds = liveViewerCounterService.getAuthenticatedViewerUserIds(creatorUserId);
+        uniqueUserIds.addAll(hashUserIds);
+
+        // Source 2: viewers SET -> sessionRegistry reverse lookup (fallback)
+        Set<String> sessionIds = liveViewerCounterService.getViewers(creatorUserId);
+        for (String sid : sessionIds) {
+            Long uid = sessionRegistry.getUserId(sid);
+            if (uid != null) {
+                uniqueUserIds.add(uid);
+            }
+        }
+
+        log.debug("VIEWER_LIST_DEBUG: getCreatorViewerList creatorUserId={}, hashUserIds={}, setSessionIds={}, mergedUserIds={}",
+                creatorUserId, hashUserIds, sessionIds, uniqueUserIds);
+
+        if (uniqueUserIds.isEmpty()) return java.util.Collections.emptyList();
+
+        List<User> users = userService.findAllByIds(uniqueUserIds);
+        return users.stream()
+                .filter(u -> u.getRole() == null || u.getRole() != Role.ADMIN)
+                .map(u -> new UserResponse(
+                        u.getId(),
+                        u.getEmail(),
+                        u.getUsername(),
+                        u.getDisplayName(),
+                        Role.USER))
+                .collect(Collectors.toList());
+    }
+
+    public List<PublicViewerResponse> getPublicViewerList(Long creatorUserId) {
+        // Strategy: merge user IDs from two sources for maximum reliability:
+        // 1. userViewers hash (authoritative userId -> sessionId mapping written by Lua)
+        // 2. viewers SET + sessionRegistry reverse lookup (fallback for any hash read issues)
+        Set<Long> uniqueUserIds = new java.util.HashSet<>();
+
+        // Source 1: userViewers hash (direct userId keys)
+        Set<Long> hashUserIds = liveViewerCounterService.getAuthenticatedViewerUserIds(creatorUserId);
+        uniqueUserIds.addAll(hashUserIds);
+
+        // Source 2: viewers SET -> sessionRegistry reverse lookup (original approach)
+        Set<String> sessionIds = liveViewerCounterService.getViewers(creatorUserId);
+        for (String sid : sessionIds) {
+            Long uid = sessionRegistry.getUserId(sid);
+            if (uid != null) {
+                uniqueUserIds.add(uid);
+            }
+        }
+
+        log.info("VIEWER_LIST_DEBUG: creatorUserId={}, hashUserIds={}, setSessionIds={}, mergedUserIds={}",
+                creatorUserId, hashUserIds, sessionIds, uniqueUserIds);
+
+        if (uniqueUserIds.isEmpty()) return java.util.Collections.emptyList();
+
+        List<User> users = userService.findAllByIds(uniqueUserIds);
+
+        log.info("VIEWER_LIST_DEBUG: loadedUsers={}", users.stream().map(u -> u.getId() + ":" + u.getUsername()).collect(Collectors.joining(",")));
+
+        Set<Long> followerIds = (creatorFollowRepository != null && !uniqueUserIds.isEmpty())
+                ? creatorFollowRepository.findFollowerIdsByCreatorIdAndFollowerIds(creatorUserId, uniqueUserIds)
+                : java.util.Collections.emptySet();
+
+        Set<Long> moderatorIds = (streamModeratorService != null)
+                ? streamModeratorService.getModeratorIds(creatorUserId)
+                : java.util.Collections.emptySet();
+
+        List<PublicViewerResponse> result = users.stream()
+                .filter(u -> u.getRole() == null || u.getRole() != Role.ADMIN)
+                .map(u -> new PublicViewerResponse(u.getId(), u.getUsername(), u.getDisplayName(), followerIds.contains(u.getId()), moderatorIds.contains(u.getId())))
+                .collect(Collectors.toList());
+
+        log.info("VIEWER_LIST_DEBUG: returning {} viewer DTOs", result.size());
+        return result;
     }
 
     @Scheduled(fixedRate = 30000)

@@ -76,8 +76,13 @@ const creatorService = {
    * This method is public and handles paginated responses from the backend.
    * Results are cached for 5 minutes to prevent redundant requests on filter changes.
    */
-  async getPublicCreators(category?: string, country?: string, page = 0, size = 48, search?: string, signal?: AbortSignal): Promise<{ content: ICreator[]; totalPages: number; hasNext: boolean }> {
-    const cacheKey = `creators-${category || 'all'}-${country || 'all'}-${page}-${size}-${search || ''}`;
+  async getPublicCreators(
+    category?: string, country?: string, page = 0, size = 48, search?: string,
+    signal?: AbortSignal, liveOnly?: boolean, paidFilter?: string, sort?: string,
+    bodyType?: string, hairColor?: string, eyeColor?: string, ethnicity?: string,
+    interestedIn?: string, language?: string
+  ): Promise<{ content: ICreator[]; totalPages: number; hasNext: boolean }> {
+    const cacheKey = `creators-${category || 'all'}-${country || 'all'}-${page}-${size}-${search || ''}-${liveOnly ?? 'any'}-${paidFilter || 'all'}-${sort || 'relevance'}-${bodyType || 'all'}-${hairColor || 'all'}-${eyeColor || 'all'}-${ethnicity || 'all'}-${interestedIn || 'all'}-${language || 'all'}`;
     
     // Check cache first
     const cached = PAGE_CACHE.get(cacheKey);
@@ -87,7 +92,7 @@ const creatorService = {
 
     try {
       const response = await publicApiClient.get<any>('/creators', {
-        params: { category, country, page, size, search },
+        params: { category, country, page, size, search, liveOnly, paidFilter, sort, bodyType, hairColor, eyeColor, ethnicity, interestedIn, language },
         signal
       });
       // Handle 204 No Content or missing data
@@ -231,6 +236,14 @@ const creatorService = {
     const token = localStorage.getItem("token");
     if (!token) return { followed: false, followersCount: 0 };
     const response = await apiClient.get<FollowStatus>(`/creators/${creatorId}/follow/status`);
+    return response.data;
+  },
+
+  /**
+   * Gets the live viewer list for a creator's stream.
+   */
+  async getViewers(creatorUserId: number): Promise<{ id: number; username: string; displayName: string | null; isFollower?: boolean; isModerator?: boolean }[]> {
+    const response = await apiClient.get<{ id: number; username: string; displayName: string | null; isFollower?: boolean; isModerator?: boolean }[]>(`/creators/${creatorUserId}/viewers`);
     return response.data;
   },
 

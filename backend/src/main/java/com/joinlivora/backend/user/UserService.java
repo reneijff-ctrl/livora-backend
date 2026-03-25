@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -126,6 +128,11 @@ public class UserService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
     }
 
+    public List<User> findAllByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        return userRepository.findAllById(ids);
+    }
+
     // =========================
     // UPGRADE ROLE
     // =========================
@@ -226,6 +233,34 @@ public class UserService {
     @CacheEvict(value = "users", key = "#user.email")
     public void updateUser(User user) {
         userRepository.save(user);
+    }
+
+    /**
+     * Updates the username for the given user after validation and uniqueness check.
+     * Rules: 3-20 chars, letters/numbers/underscore/dot only, case-insensitive unique.
+     */
+    @CacheEvict(value = "users", key = "#user.email")
+    public User updateUsername(User user, String newUsername) {
+        if (newUsername == null || newUsername.trim().isEmpty()) {
+            throw new IllegalArgumentException("Username is required");
+        }
+        String trimmed = newUsername.trim();
+        if (trimmed.length() < 3 || trimmed.length() > 20) {
+            throw new IllegalArgumentException("Username must be between 3 and 20 characters");
+        }
+        if (!trimmed.matches("^[a-zA-Z0-9_.]+$")) {
+            throw new IllegalArgumentException("Username can only contain letters, numbers, underscores, and dots");
+        }
+        // Skip update if unchanged
+        if (trimmed.equals(user.getUsername())) {
+            return user;
+        }
+        // Case-insensitive uniqueness check
+        if (userRepository.existsByUsernameIgnoreCase(trimmed)) {
+            throw new IllegalArgumentException("Username is already taken");
+        }
+        user.setUsername(trimmed);
+        return userRepository.save(user);
     }
 
     // =========================

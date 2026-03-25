@@ -17,7 +17,7 @@ import TokenBalance from '../components/TokenBalance';
 import VodGallery from '../components/VodGallery';
 import PrivateShowCreatorHandler from '../components/PrivateShowCreatorHandler';
 import PrivateShowSessionOverlay from '../components/PrivateShowSessionOverlay';
-import { PrivateSession, PrivateSessionStatus } from '../api/privateShowService';
+import privateShowService, { PrivateSession, PrivateSessionStatus } from '../api/privateShowService';
 
 const LiveStreaming: React.FC = () => {
   const navigate = useNavigate();
@@ -32,6 +32,8 @@ const LiveStreaming: React.FC = () => {
   const [tipAmount, setTipAmount] = useState<number>(10);
   const [streamData, setStreamData] = useState({ title: '', description: '', minChatTokens: 0, isPaid: false, pricePerMessage: 0 });
   const [activePrivateSession, setActivePrivateSession] = useState<PrivateSession | null>(null);
+  const [isStartingSession, setIsStartingSession] = useState(false);
+  const [isEndingSession, setIsEndingSession] = useState(false);
   const [chatHeight, setChatHeight] = useState(420);
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -60,7 +62,7 @@ const LiveStreaming: React.FC = () => {
   useEffect(() => {
     loadInitialData();
 
-    const unsubscribe = subscribe('/topic/streams', (_msg) => {
+    const unsubscribe = subscribe('/exchange/amq.topic/streams', (_msg) => {
       loadInitialData();
     });
 
@@ -73,7 +75,7 @@ const LiveStreaming: React.FC = () => {
   useEffect(() => {
     if (!currentRoom) return;
 
-    const unsubscribeTips = subscribe(`/topic/chat/${currentRoom.userId}`, (msg) => {
+    const unsubscribeTips = subscribe(`/exchange/amq.topic/chat.${currentRoom.userId}`, (msg) => {
       const data = JSON.parse(msg.body);
       if (data.type === 'TIP') {
         const newTip = {
@@ -96,7 +98,7 @@ const LiveStreaming: React.FC = () => {
   useEffect(() => {
     if (!currentRoom) return;
 
-    const unsubscribeViewers = subscribe(`/topic/viewers/${currentRoom.id}`, (msg) => {
+    const unsubscribeViewers = subscribe(`/exchange/amq.topic/viewers.${currentRoom.id}`, (msg) => {
       const data = JSON.parse(msg.body);
       if (data.viewerCount !== undefined) {
         setCurrentRoom(prev => prev ? { ...prev, viewerCount: data.viewerCount } : null);
@@ -116,19 +118,27 @@ const LiveStreaming: React.FC = () => {
   useEffect(() => {
     if (!connected || !user) return;
 
-    const unsubscribe = subscribe('/user/queue/private-show/notifications', (message) => {
+    const unsubscribe = subscribe('/user/queue/private-show-status', (message) => {
       const data = JSON.parse(message.body);
-      if (data.type === 'PRIVATE_SHOW_STARTED') {
+      if (data.type === 'PRIVATE_SHOW_ACCEPTED') {
         setActivePrivateSession({
           id: data.payload.sessionId,
-          status: PrivateSessionStatus.ACTIVE,
-          userId: Number(user.id),
-          viewerId: 0, // Not strictly needed here for UI
+          status: PrivateSessionStatus.ACCEPTED,
+          creatorId: Number(user.id),
+          viewerId: data.payload.viewerId || 0,
           pricePerMinute: data.payload.pricePerMinute || 0,
-          requestedAt: new Date().toISOString()
         });
+      } else if (data.type === 'PRIVATE_SHOW_STARTED') {
+        setActivePrivateSession(prev => ({
+          id: data.payload.sessionId,
+          status: PrivateSessionStatus.ACTIVE,
+          creatorId: Number(user.id),
+          viewerId: prev?.viewerId || 0,
+          pricePerMinute: prev?.pricePerMinute || data.payload.pricePerMinute || 0,
+        }));
       } else if (data.type === 'PRIVATE_SHOW_ENDED') {
         setActivePrivateSession(null);
+        setIsStartingSession(false);
       }
     });
 
@@ -136,6 +146,41 @@ const LiveStreaming: React.FC = () => {
       if (unsubscribe) unsubscribe.unsubscribe();
     };
   }, [connected, subscribe, user]);
+
+  const handleStartSession = async () => {
+    if (!activePrivateSession || isStartingSession) return;
+    setIsStartingSession(true);
+    try {
+      const updated = await privateShowService.startSession(activePrivateSession.id);
+      setActivePrivateSession({
+        id: updated.id,
+        viewerId: updated.viewerId,
+        creatorId: updated.creatorId,
+        pricePerMinute: updated.pricePerMinute,
+        status: PrivateSessionStatus.ACTIVE,
+      });
+      showToast('Private session started', 'success');
+    } catch (error) {
+      console.error('Failed to start private session', error);
+      showToast('Failed to start session', 'error');
+    } finally {
+      setIsStartingSession(false);
+    }
+  };
+
+  const handleEndSession = async () => {
+    if (!activePrivateSession || isEndingSession) return;
+    setIsEndingSession(true);
+    try {
+      await privateShowService.endSession(activePrivateSession.id);
+      showToast('Private session ended', 'success');
+    } catch (e) {
+      console.error('Failed to end private session', e);
+      showToast('Failed to end session', 'error');
+    } finally {
+      setIsEndingSession(false);
+    }
+  };
 
   const handleSignalingData = async (signal: SignalingMessage, roomId: string) => {
     console.debug("STREAMING: Received signaling message (SFU mode):", signal.type);
@@ -331,16 +376,52 @@ const LiveStreaming: React.FC = () => {
       <div className="px-8 xl:px-12 py-6 font-sans text-zinc-100">
         <SEO title="Live Streaming" />
       
-      <PrivateShowCreatorHandler />
+      <PrivateShowCreatorHandler onSessionAccepted={(session) => {
+        setActivePrivateSession({
+          id: session.id,
+          viewerId: session.viewerId,
+          creatorId: session.creatorId,
+          pricePerMinute: session.pricePerMinute,
+          status: PrivateSessionStatus.ACCEPTED,
+        });
+      }} />
 
-      {activePrivateSession && (
-        <div className="backdrop-blur-sm">
-          <PrivateShowSessionOverlay 
-            sessionId={activePrivateSession.id}
-            pricePerMinute={activePrivateSession.pricePerMinute}
-            isCreator={true}
-            onSessionEnded={() => setActivePrivateSession(null)}
-          />
+      {activePrivateSession?.status === PrivateSessionStatus.ACCEPTED && (
+        <div className="mb-6 p-4 bg-purple-600/20 border border-purple-500/30 rounded-2xl flex items-center justify-between">
+          <div className="text-sm text-purple-200">
+            <span className="font-bold text-white">Private session accepted</span>
+            <span className="ml-2 text-purple-300">— {activePrivateSession.pricePerMinute} 🪙/min</span>
+          </div>
+          <button
+            onClick={handleStartSession}
+            disabled={isStartingSession}
+            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/50 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm shadow-lg shadow-purple-600/20 transition-all duration-200"
+          >
+            {isStartingSession ? 'Starting...' : '▶ Start Private Session'}
+          </button>
+        </div>
+      )}
+
+      {activePrivateSession?.status === PrivateSessionStatus.ACTIVE && (
+        <div className="mb-6">
+          <div className="mb-3 p-4 bg-red-600/15 border border-red-500/30 rounded-2xl flex items-center justify-between">
+            <span className="px-2.5 py-1 bg-red-500/15 border border-red-500/40 rounded-full text-red-400 text-sm font-bold">🔴 Private Active</span>
+            <button
+              onClick={handleEndSession}
+              disabled={isEndingSession}
+              className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm shadow-lg transition-all duration-200"
+            >
+              {isEndingSession ? 'Ending...' : 'End Private Session'}
+            </button>
+          </div>
+          <div className="backdrop-blur-sm">
+            <PrivateShowSessionOverlay
+              sessionId={activePrivateSession.id}
+              pricePerMinute={activePrivateSession.pricePerMinute}
+              isCreator={true}
+              onSessionEnded={() => setActivePrivateSession(null)}
+            />
+          </div>
         </div>
       )}
       

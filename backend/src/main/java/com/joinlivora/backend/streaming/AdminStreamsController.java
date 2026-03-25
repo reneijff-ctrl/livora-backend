@@ -4,6 +4,7 @@ import com.joinlivora.backend.admin.dto.AdminStreamDTO;
 import com.joinlivora.backend.admin.dto.StreamRiskStatusDTO;
 import com.joinlivora.backend.audit.service.AuditService;
 import com.joinlivora.backend.fraud.service.FraudRiskScoreService;
+import com.joinlivora.backend.privateshow.*;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.streaming.service.StreamRiskMonitorService;
 import com.joinlivora.backend.user.User;
@@ -43,6 +44,9 @@ public class AdminStreamsController {
     private final LiveViewerCounterService viewerCounterService;
     private final FraudRiskScoreService fraudRiskScoreService;
     private final StreamRiskMonitorService streamRiskMonitorService;
+    private final PrivateSessionRepository privateSessionRepository;
+    private final PrivateSpySessionRepository privateSpySessionRepository;
+    private final CreatorPrivateSettingsService creatorPrivateSettingsService;
 
     @GetMapping({"", "/active"})
     public ResponseEntity<Page<AdminStreamDTO>> getActiveStreams(Pageable pageable) {
@@ -61,6 +65,28 @@ public class AdminStreamsController {
         int fraudRiskScore = fraudRiskScoreService.getLatestScore(creatorId);
         int messageRate = 0; // Placeholder for future message rate tracking
 
+        // Private session info
+        boolean privateActive = false;
+        Long privatePricePerMinute = null;
+        int activeSpyCount = 0;
+        boolean spyEnabled = false;
+
+        try {
+            CreatorPrivateSettings settings = creatorPrivateSettingsService.getOrCreate(creatorId);
+            spyEnabled = settings.isEnabled() && settings.isAllowSpyOnPrivate();
+        } catch (Exception e) {
+            log.debug("Could not load private settings for creator {}: {}", creatorId, e.getMessage());
+        }
+
+        var activeSession = privateSessionRepository
+                .findFirstByCreator_IdAndStatusOrderByStartedAtDesc(creatorId, PrivateSessionStatus.ACTIVE);
+        if (activeSession.isPresent()) {
+            PrivateSession ps = activeSession.get();
+            privateActive = true;
+            privatePricePerMinute = ps.getPricePerMinute();
+            activeSpyCount = privateSpySessionRepository.countByPrivateSession_IdAndStatus(ps.getId(), SpySessionStatus.ACTIVE);
+        }
+
         return AdminStreamDTO.builder()
                 .streamId(stream.getId())
                 .creatorId(creatorId)
@@ -73,6 +99,10 @@ public class AdminStreamsController {
                 .durationSeconds(durationSeconds)
                 .fraudRiskScore(fraudRiskScore)
                 .messageRate(messageRate)
+                .privateActive(privateActive)
+                .privatePricePerMinute(privatePricePerMinute)
+                .spyEnabled(spyEnabled)
+                .activeSpyCount(activeSpyCount)
                 .build();
     }
 
@@ -85,7 +115,7 @@ public class AdminStreamsController {
         Stream stream = streamRepository.findByIdWithCreator(id)
                 .orElseThrow(() -> new RuntimeException("Stream not found"));
         
-        streamService.stopStream(stream.getCreator());
+        streamService.stopStream(stream.getCreator(), "admin");
         
         User admin = userService.getByEmail(adminDetails.getUsername());
         auditService.logEvent(

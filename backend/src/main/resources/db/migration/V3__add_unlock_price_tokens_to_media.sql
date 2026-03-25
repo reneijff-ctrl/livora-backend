@@ -1,0 +1,2 @@
+ALTER TABLE content
+ADD COLUMN unlock_price_tokens INTEGER NOT NULL DEFAULT 100;

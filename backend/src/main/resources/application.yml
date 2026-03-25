@@ -1,6 +1,11 @@
 spring:
   application:
     name: joinlivora-backend
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: livora
+    password: livora
   profiles:
     active: dev
   mvc:
@@ -114,8 +119,8 @@ stripe:
   token-cancel-url: ${FRONTEND_TOKEN_CANCEL_URL:${FRONTEND_URL:http://localhost:3000}/tokens/cancel}
 
 mediasoup:
-  url: ${MEDIASOUP_URL:http://localhost:4000}
-  internal-secret: ${MEDIASOUP_INTERNAL_SECRET:default_mediasoup_secret}
+  base-url: ${MEDIASOUP_BASE_URL:http://localhost:4000}
+  auth-token: ${MEDIASOUP_AUTH_TOKEN:default_mediasoup_secret}
   timeout:
     connect: 3000
     read: 5000

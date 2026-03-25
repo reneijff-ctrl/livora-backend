@@ -50,8 +50,16 @@ const GlobalChat: React.FC = () => {
   useEffect(() => {
     if (!activeRoom) return;
 
-    const unsubChat = webSocketService.subscribe(`/topic/chat/${activeRoom.creatorId}`, (msg) => {
+    const handleChatMessage = (msg: any) => {
       const incoming = JSON.parse(msg.body);
+
+      // Support batched messages from server
+      if (incoming.type === 'CHAT_BATCH' && Array.isArray(incoming.messages)) {
+        for (const m of incoming.messages) {
+          handleChatMessage({ body: JSON.stringify(m) });
+        }
+        return;
+      }
       
       if (
         incoming.type === 'CHAT' ||
@@ -84,9 +92,11 @@ const GlobalChat: React.FC = () => {
         }
         setMessages((prev) => [...prev, chatMsg]);
       }
-    });
+    };
 
-    const unsubPresence = webSocketService.subscribe('/topic/presence', (msg) => {
+    const unsubChat = webSocketService.subscribe(`/exchange/amq.topic/chat.${activeRoom.creatorId}`, handleChatMessage);
+
+    const unsubPresence = webSocketService.subscribe('/exchange/amq.topic/presence', (msg) => {
       const data = JSON.parse(msg.body);
       if (data.onlineCount !== undefined) {
         setOnlineCount(data.onlineCount);

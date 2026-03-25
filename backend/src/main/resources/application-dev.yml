@@ -42,7 +42,7 @@ management:
     mail:
       enabled: false
     stripe:
-      enabled: false
+      enabled: true
   endpoints:
     web:
       exposure:
@@ -53,9 +53,9 @@ management:
 
 stripe:
   api:
-    key: sk_test_XXXXXXXXXXXXXXXX
+    key: sk_test_51SweUZFPvuqGTnFGyQr15MgSnKu1Bq1t8mJrNMw7J239aaAanEP1FABhEFE25luP9w01JFsuOyxF7JL1luAyLJhF00kHHRrDly
   webhook:
-    secret: whsec_XXXXXXXXXXXXXXXX
+    secret: whsec_31098ea02bcf7b0e5b045f3d635c16563a3582dad7f8b0866dd257917819bff2
 
 logging:
   level:
@@ -64,6 +64,9 @@ logging:
     com.joinlivora: INFO
 
 livora:
+  trust:
+    evaluation:
+      enabled: false
   security:
     rate-limit:
       anonymous: 1000
@@ -81,4 +84,4 @@ livora:
 
 payments:
   stripe:
-    enabled: false
+    enabled: true

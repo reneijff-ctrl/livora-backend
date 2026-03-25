@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Livora WebSocket Test Client</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { display: flex; gap: 20px; }
+        .panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex: 1; }
+        .log { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 4px; height: 400px; overflow-y: auto; font-family: monospace; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { padding: 10px 20px; cursor: pointer; border: none; border-radius: 4px; background: #007bff; color: white; font-weight: bold; }
+        button:disabled { background: #ccc; }
+        .status { margin-top: 10px; font-weight: bold; }
+        .system { color: #569cd6; }
+        .error { color: #f44747; }
+        .message { color: #ce9178; }
+    </style>
+</head>
+<body>
+    <h1>Livora WebSocket Test Client</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h3>Connection Settings</h3>
+            <div class="input-group">
+                <label>JWT Token</label>
+                <textarea id="token" rows="3" placeholder="Paste your Bearer token here (without 'Bearer ')"></textarea>
+            </div>
+            <div class="input-group">
+                <label>Room UUID</label>
+                <input id="roomId" type="text" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000">
+            </div>
+            <button id="connectBtn" onclick="connect()">Connect & Subscribe</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <div id="status" class="status">Status: Disconnected</div>
+            
+            <hr>
+            
+            <h3>Actions</h3>
+            <div class="input-group">
+                <label>Message</label>
+                <input id="messageInput" type="text" placeholder="Type a message...">
+            </div>
+            <button id="sendBtn" onclick="sendMessage()" disabled>Send Message</button>
+            <button id="joinBtn" onclick="joinRoom()" disabled>Send Join Event</button>
+        </div>
+        
+        <div class="panel">
+            <h3>Live Output</h3>
+            <div id="log" class="log"></div>
+            <button onclick="clearLog()" style="margin-top: 10px; background: #6c757d;">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let subscription = null;
+
+        function log(msg, type = '') {
+            const logEl = document.getElementById('log');
+            const div = document.createElement('div');
+            div.className = type;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function connect() {
+            const token = document.getElementById('token').value.trim();
+            const roomId = document.getElementById('roomId').value.trim();
+            
+            if (!token) return alert('Please enter a JWT token');
+            if (!roomId) return alert('Please enter a Room UUID');
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            log(`Connecting to ${wsUrl}...`, 'system');
+            stompClient = Stomp.over(new WebSocket(wsUrl));
+            
+            // Optional: disable debug logging to console
+            // stompClient.debug = null;
+
+            const headers = {
+                'Authorization': `Bearer ${token}`
+            };
+
+            stompClient.connect(headers, (frame) => {
+                log('Connected: ' + frame, 'system');
+                document.getElementById('status').textContent = 'Status: Connected';
+                document.getElementById('connectBtn').disabled = true;
+                document.getElementById('disconnectBtn').disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                document.getElementById('joinBtn').disabled = false;
+
+                // Subscribe to room
+                const topic = `/topic/chat/${roomId}`;
+                log(`Subscribing to ${topic}...`, 'system');
+                subscription = stompClient.subscribe(topic, (message) => {
+                    const msgBody = JSON.parse(message.body);
+                    const sender = msgBody.sender || 'unknown';
+                    const text = msgBody.message || '';
+                    const isSystem = msgBody.systemMessage;
+                    
+                    if (isSystem) {
+                        log(`[SYSTEM] ${text}`, 'system');
+                    } else {
+                        log(`${sender}: ${text}`, 'message');
+                    }
+                });
+
+                // Subscribe to errors
+                stompClient.subscribe('/user/queue/errors', (message) => {
+                    log('ERROR: ' + message.body, 'error');
+                });
+
+            }, (error) => {
+                log('Connection Error: ' + error, 'error');
+                disconnect();
+            });
+        }
+
+        function disconnect() {
+            if (stompClient !== null) {
+                stompClient.disconnect();
+            }
+            if (subscription !== null) {
+                subscription.unsubscribe();
+            }
+            document.getElementById('status').textContent = 'Status: Disconnected';
+            document.getElementById('connectBtn').disabled = false;
+            document.getElementById('disconnectBtn').disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+            document.getElementById('joinBtn').disabled = true;
+            log('Disconnected', 'system');
+        }
+
+        function sendMessage() {
+            const roomId = document.getElementById('roomId').value.trim();
+            const message = document.getElementById('messageInput').value;
+            
+            if (!message) return;
+
+            const payload = {
+                roomId: roomId,
+                message: message
+            };
+
+            stompClient.send("/app/chat.send", {}, JSON.stringify(payload));
+            document.getElementById('messageInput').value = '';
+        }
+
+        function joinRoom() {
+            const roomId = document.getElementById('roomId').value.trim();
+            const payload = {
+                roomId: roomId
+            };
+            stompClient.send("/app/chat.join", {}, JSON.stringify(payload));
+        }
+    </script>
+</body>
+</html>

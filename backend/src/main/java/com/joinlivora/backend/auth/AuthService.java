@@ -293,7 +293,7 @@ public class AuthService {
 
             return new LoginResponse(
                     accessToken,
-                    refreshToken.getToken(),
+                    refreshToken.getPlainToken(),
                     expiresAt,
                     authenticatedUser.getRole().name(),
                     authenticatedUser.getId(),
@@ -315,10 +315,19 @@ public class AuthService {
         }
     }
 
+    @Transactional
     public TokenRefreshResponse refresh(RefreshTokenRequest request) {
-        RefreshToken newRefreshToken = refreshTokenService.rotateRefreshToken(
-                request.getRefreshToken()
-        );
+        if (request == null || request.getRefreshToken() == null || request.getRefreshToken().isBlank()) {
+            throw new com.joinlivora.backend.exception.ResourceNotFoundException("Refresh token is missing");
+        }
+
+        RefreshToken newRefreshToken;
+        try {
+            newRefreshToken = refreshTokenService.rotateRefreshToken(request.getRefreshToken());
+        } catch (Exception e) {
+            logger.warn("SECURITY: Token refresh failed — invalid or expired token");
+            throw new com.joinlivora.backend.exception.ResourceNotFoundException("Invalid or expired refresh token");
+        }
 
         User user = newRefreshToken.getUser();
 
@@ -345,7 +354,7 @@ public class AuthService {
 
         String newAccessToken = jwtService.generateAccessToken(user);
 
-        return new TokenRefreshResponse(newAccessToken, newRefreshToken.getToken());
+        return new TokenRefreshResponse(newAccessToken, newRefreshToken.getPlainToken());
     }
 
     private boolean isDevProfile() {

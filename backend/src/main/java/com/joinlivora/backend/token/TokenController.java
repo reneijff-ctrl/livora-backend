@@ -93,9 +93,8 @@ public class TokenController {
             return ResponseEntity.badRequest().body(Map.of("error", "Creator ID is required"));
         }
 
-        UUID roomId = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
-                .map(com.joinlivora.backend.streaming.Stream::getId)
-                .orElse(null);
+        java.util.List<com.joinlivora.backend.streaming.Stream> liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
+        UUID roomId = liveStreams.isEmpty() ? null : liveStreams.get(0).getId();
 
         if (roomId == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Creator does not have an active stream room"));
