@@ -219,6 +219,7 @@ const LiveStreaming: React.FC = () => {
         const device = await webRtcService.initDevice(routerRtpCapabilities);
 
         const transportData = await webRtcService.sendRequest(SignalingType.CREATE_TRANSPORT, roomIdStr, { direction: 'send' });
+        console.log("SEND TRANSPORT CONFIG:", JSON.stringify(transportData, null, 2));
         const transport = device.createSendTransport(transportData);
         sendTransport.current = transport;
 
@@ -249,7 +250,7 @@ const LiveStreaming: React.FC = () => {
           }
 
           transport.appData.restartAttempts =
-            (transport.appData.restartAttempts ?? 0) + 1;
+            (Number(transport.appData.restartAttempts) || 0) + 1;
           const attempt = transport.appData.restartAttempts;
 
           try {
@@ -294,9 +295,18 @@ const LiveStreaming: React.FC = () => {
         const videoTrack = stream.getVideoTracks()[0];
         const audioTrack = stream.getAudioTracks()[0];
         if (videoTrack) {
+          // Firefox does not support scalabilityMode in RTCRtpEncodingParameters;
+          // guard with a browser-safe copy that strips any residual SVC fields.
+          const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
+          const encodings = isFirefox
+            ? SIMULCAST_ENCODINGS.map(({ rid, maxBitrate, scaleResolutionDownBy, maxFramerate }) => ({
+                rid, maxBitrate, scaleResolutionDownBy, ...(maxFramerate ? { maxFramerate } : {})
+              }))
+            : SIMULCAST_ENCODINGS;
+
           producers.current.set('video', await transport.produce({ 
             track: videoTrack,
-            encodings: SIMULCAST_ENCODINGS,
+            encodings,
             codecOptions: {
               videoGoogleStartBitrate: 1000
             }

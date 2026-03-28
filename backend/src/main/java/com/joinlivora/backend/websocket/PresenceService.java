@@ -174,6 +174,7 @@ public class PresenceService {
         if (principal != null && sessionId != null) {
             Long userId = null;
             Role role = null;
+            User user = null;
             
             try {
                 if (principal instanceof org.springframework.security.core.Authentication auth) {
@@ -193,19 +194,22 @@ public class PresenceService {
                 if (userId == null) {
                     try {
                         userId = Long.valueOf(principalName);
-                        User user = userService.getById(userId);
+                        user = userService.getById(userId);
                         role = user.getRole();
                     } catch (NumberFormatException e) {
-                        User user = userService.getByEmail(principalName);
+                        user = userService.getByEmail(principalName);
                         userId = user.getId();
                         role = user.getRole();
                     }
                 }
                 
+                // Fetch user once if not already loaded from the fallback path above
+                if (user == null) {
+                    user = userService.getById(userId);
+                }
+                
                 Long creatorId = null;
                 if (role == Role.CREATOR) {
-                    User user = userService.getById(userId);
-                    // Business Logic Initialization moved to CreatorProfileService
                     creatorProfileService.initializeCreatorProfile(user);
                     creatorId = creatorProfileService.getCreatorIdByUserId(userId).orElse(null);
                     
@@ -223,10 +227,7 @@ public class PresenceService {
                 sessionRegistry.registerSession(sessionId, principalName, userId, creatorId, ip, userAgent);
                 presenceTracking.markUserOnline(userId);
                 
-                String email = principalName;
-                try {
-                    email = userService.getById(userId).getEmail();
-                } catch (Exception ignored) {}
+                String email = user.getEmail() != null ? user.getEmail() : principalName;
                 eventOrchestrator.publishJoinEvent(principalName, email);
                 
             } catch (Exception e) {
@@ -406,7 +407,7 @@ public class PresenceService {
 
         if (creatorUserId != null) {
             // When creatorUserId was resolved from a Long (not UUID), streamId is null
-            // and notifyStreamJoin was not called above — call it here for chat history replay
+            // and notifyStreamJoin was not called above â€” call it here for chat history replay
             if (streamId == null) {
                 try {
                     User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
@@ -581,14 +582,14 @@ public class PresenceService {
             }
         }
 
-        log.info("VIEWER_LIST_DEBUG: creatorUserId={}, hashUserIds={}, setSessionIds={}, mergedUserIds={}",
+        log.debug("VIEWER_LIST_DEBUG: creatorUserId={}, hashUserIds={}, setSessionIds={}, mergedUserIds={}",
                 creatorUserId, hashUserIds, sessionIds, uniqueUserIds);
 
         if (uniqueUserIds.isEmpty()) return java.util.Collections.emptyList();
 
         List<User> users = userService.findAllByIds(uniqueUserIds);
 
-        log.info("VIEWER_LIST_DEBUG: loadedUsers={}", users.stream().map(u -> u.getId() + ":" + u.getUsername()).collect(Collectors.joining(",")));
+        log.debug("VIEWER_LIST_DEBUG: loadedUsers={}", users.stream().map(u -> u.getId() + ":" + u.getUsername()).collect(Collectors.joining(",")));
 
         Set<Long> followerIds = (creatorFollowRepository != null && !uniqueUserIds.isEmpty())
                 ? creatorFollowRepository.findFollowerIdsByCreatorIdAndFollowerIds(creatorUserId, uniqueUserIds)
@@ -603,7 +604,7 @@ public class PresenceService {
                 .map(u -> new PublicViewerResponse(u.getId(), u.getUsername(), u.getDisplayName(), followerIds.contains(u.getId()), moderatorIds.contains(u.getId())))
                 .collect(Collectors.toList());
 
-        log.info("VIEWER_LIST_DEBUG: returning {} viewer DTOs", result.size());
+        log.debug("VIEWER_LIST_DEBUG: returning {} viewer DTOs", result.size());
         return result;
     }
 

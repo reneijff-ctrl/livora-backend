@@ -42,9 +42,28 @@ public class StripeWebhookService {
     private final AuditService auditService;
 
     public void processEvent(Event event) {
+        String eventId = event.getId();
         String eventType = event.getType();
-        log.info("WEBHOOK: Processing Stripe event: {}", eventType);
+        log.info("WEBHOOK: Processing Stripe event: {} ({})", eventType, eventId);
 
+        // Atomic claim: INSERT with unique PK constraint guarantees only one processor wins
+        boolean claimed = replayProtectionService.tryClaimEvent(eventId, eventType);
+        if (!claimed) {
+            log.info("WEBHOOK: Skipping replayed Stripe event: {} ({})", eventType, eventId);
+            return;
+        }
+
+        try {
+            handleEvent(event, eventId, eventType);
+            replayProtectionService.markCompleted(eventId);
+        } catch (Exception e) {
+            replayProtectionService.markFailed(eventId);
+            log.error("WEBHOOK: Stripe webhook processing failed for event {} ({})", eventId, eventType, e);
+            throw e;
+        }
+    }
+
+    private void handleEvent(Event event, String eventId, String eventType) {
         EventDataObjectDeserializer dataObjectDeserializer = event.getDataObjectDeserializer();
         StripeObject stripeObject = dataObjectDeserializer.getObject().orElse(null);
 
@@ -56,17 +75,17 @@ public class StripeWebhookService {
         switch (eventType) {
             case "charge.dispute.created":
                 if (stripeObject instanceof Dispute dispute) {
-                    handleChargebackOpened(dispute, event.getId());
+                    handleChargebackOpened(dispute, eventId);
                 }
                 break;
             case "charge.dispute.closed":
                 if (stripeObject instanceof Dispute dispute) {
-                    handleChargebackClosed(dispute, event.getId());
+                    handleChargebackClosed(dispute, eventId);
                 }
                 break;
             case "payment_intent.succeeded":
                 if (stripeObject instanceof PaymentIntent intent) {
-                    handlePaymentIntentSucceeded(intent, event.getId());
+                    handlePaymentIntentSucceeded(intent, eventId);
                 }
                 break;
             default:

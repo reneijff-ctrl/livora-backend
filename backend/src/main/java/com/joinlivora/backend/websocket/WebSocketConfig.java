@@ -170,9 +170,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration.taskExecutor()
-                .corePoolSize(10)
-                .maxPoolSize(64)
-                .queueCapacity(512);
+                .corePoolSize(20)
+                .maxPoolSize(128)
+                .queueCapacity(2048);
         registration.interceptors(jwtWebSocketInterceptor, webSocketInterceptor);
     }
 
@@ -181,8 +181,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         registration.taskExecutor()
                 .corePoolSize(20)
                 .maxPoolSize(256)
-                .queueCapacity(1024);
+                .queueCapacity(4096);
     }
+
 
     @Bean
     public TaskScheduler heartBeatScheduler() {

@@ -12,10 +12,11 @@ export interface ContentItem {
   type?: 'PHOTO' | 'VIDEO' | 'CLIP';
   userId?: number;
   creatorId?: number;
-  creatorEmail: string;
+  creatorEmail?: string;
   status?: string;
   unlockPriceTokens?: number;
-  createdAt: string;
+  unlocked?: boolean;
+  createdAt?: string;
 }
 
 const contentService = {

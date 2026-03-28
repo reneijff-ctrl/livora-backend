@@ -85,6 +85,12 @@ export type SafeCreatorProfile = {
   showHeightWeight: boolean;
   activeStream: string;
   socialLinks: string;
+  followerCount: number;
+  streamTitle: string;
+  streamStartedAt: string | null;
+  isPaid: boolean;
+  admissionPrice: number | null;
+  streamCategory: string | null;
 };
 
 export function adaptCreator(raw: any): ICreator {
@@ -176,7 +182,7 @@ export function adaptCreator(raw: any): ICreator {
     bio: safeString(raw.bio ?? raw.shortBio ?? raw.creatorBio ?? raw.short_bio ?? ""),
     isOnline: Boolean(raw.isOnline ?? raw.creatorIsOnline ?? raw.is_online ?? raw.online),
     online: Boolean(raw.online ?? raw.isOnline ?? raw.creatorIsOnline ?? raw.is_online),
-    isLive: Boolean(raw.isLive ?? raw.isOnline ?? raw.online ?? false),
+    isLive: Boolean(raw.isLive ?? raw.live ?? false),
     viewerCount: safeNumber(raw.viewerCount ?? raw.viewer_count ?? 0),
     followersCount: safeNumber(
       raw.followersCount ??

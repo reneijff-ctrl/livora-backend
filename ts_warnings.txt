@@ -1,0 +1,64 @@
+﻿src/adapters/CreatorAdapter.ts(243,5): error TS2561: Object literal may only specify known properties, but 'followerCount' does not exist in type 'SafeCreatorProfile'. Did you mean to write 'followersCount'?
+src/api/adminService.ts(121,85): error TS2353: Object literal may only specify known properties, and '_skipToast' does not exist in type 'AxiosRequestConfig<any>'.
+src/api/creatorService.ts(5,109): error TS6133: 'User' is declared but its value is never read.
+src/api/creatorService.ts(7,1): error TS6133: 'webSocketService' is declared but its value is never read.
+src/api/creatorService.ts(237,26): error TS2561: Object literal may only specify known properties, but 'followed' does not exist in type 'FollowStatus'. Did you mean to write 'followers'?
+src/components/admin/AdminLiveStreamsWidget.tsx(6,10): error TS6133: 'AdminRealtimeEventDTO' is declared but its value is never read.
+src/components/ChatComponent.tsx(42,9): error TS6133: 'user' is declared but its value is never read.
+src/components/creator/StreamHealthWidget.tsx(2,10): error TS2305: Module '"mediasoup-client"' has no exported member 'Transport'.
+src/components/creator/StreamHealthWidget.tsx(2,21): error TS2305: Module '"mediasoup-client"' has no exported member 'Producer'.
+src/components/CreatorLivePanel.tsx(7,11): error TS6133: 'subscribe' is declared but its value is never read.
+src/components/CreatorLivePanel.tsx(7,22): error TS6133: 'connected' is declared but its value is never read.
+src/components/LeaderboardPanel.tsx(26,100): error TS6133: 'creatorId' is declared but its value is never read.
+src/components/LeaderboardPanel.tsx(26,111): error TS6133: 'streamId' is declared but its value is never read.
+src/components/live/LiveChatPanel.tsx(49,3): error TS6133: 'onTipClick' is declared but its value is never read.
+src/components/live/LiveChatPanel.tsx(51,3): error TS6133: 'onProfileOpen' is declared but its value is never read.
+src/components/live/LiveChatPanel.tsx(249,13): error TS2322: Type 'number | undefined' is not assignable to type 'string | number'.
+src/components/live/LiveStreamPlayer.tsx(33,3): error TS6133: 'roomId' is declared but its value is never read.
+src/components/live/LiveStreamPlayer.tsx(65,5): error TS2322: Type 'RefObject<HTMLVideoElement | null>' is not assignable to type 'RefObject<HTMLVideoElement>'.
+src/components/live/PinnedMessageBanner.tsx(45,97): error TS2339: Property 'username' does not exist on type 'never'.
+src/components/live/TipOverlayManager.tsx(2,36): error TS1149: File name 'Z:/Livora website/livora-backend/livora-frontend/src/utils/spatialSoundEngine.ts' differs from already included file name 'Z:/Livora website/livora-backend/livora-frontend/src/utils/SpatialSoundEngine.ts' only in casing.
+src/components/PrivateShowCreatorHandler.tsx(36,50): error TS6133: 'request' is declared but its value is never read.
+src/hooks/useCreatorDashboard.ts(10,9): error TS6133: 'navigate' is declared but its value is never read.
+src/hooks/useWebRTCStream.ts(4,42): error TS2307: Cannot find module 'mediasoup-client/lib/types' or its corresponding type declarations.
+src/hooks/useWebRTCStream.ts(220,32): error TS7006: Parameter 'report' implicitly has an 'any' type.
+src/hooks/useWebRTCStream.ts(310,11): error TS2365: Operator '+' cannot be applied to types '{}' and 'number'.
+src/pages/BecomeCreatorPage.tsx(65,30): error TS2339: Property 'refreshUser' does not exist on type 'AuthContextType'.
+src/pages/BecomeCreatorPage.tsx(147,33): error TS2339: Property 'stripeAccountId' does not exist on type 'User'.
+src/pages/ChatPage.tsx(6,10): error TS6133: 'Device' is declared but its value is never read.
+src/pages/ChatPage.tsx(6,18): error TS2305: Module '"mediasoup-client"' has no exported member 'Transport'.
+src/pages/ChatPage.tsx(6,29): error TS2305: Module '"mediasoup-client"' has no exported member 'Consumer'.
+src/pages/ChatPage.tsx(132,56): error TS6133: 'kind' is declared but its value is never read.
+src/pages/CreatorLiveDashboard.tsx(7,10): error TS2305: Module '"mediasoup-client"' has no exported member 'Producer'.
+src/pages/CreatorLiveDashboard.tsx(7,20): error TS2305: Module '"mediasoup-client"' has no exported member 'Transport'.
+src/pages/CreatorLiveDashboard.tsx(575,22): error TS2339: Property 'onReconnect' does not exist on type 'WebSocketService'.
+src/pages/CreatorLiveDashboard.tsx(998,11): error TS2365: Operator '+' cannot be applied to types '{}' and 'number'.
+src/pages/CreatorLiveDashboard.tsx(1092,64): error TS6133: 'roomId' is declared but its value is never read.
+src/pages/CreatorLiveDashboard.tsx(1285,35): error TS18047: 'tipGoal' is possibly 'null'.
+src/pages/CreatorLiveDashboard.tsx(1285,65): error TS18047: 'tipGoal' is possibly 'null'.
+src/pages/CreatorVerificationPage.tsx(74,40): error TS2551: Property 'uploadVerificationImage' does not exist on type '{ getCreatorPosts(identifier: string, skipToast?: boolean): Promise<CreatorPost[]>; createPost(data: { title: string; content: string; }): Promise<CreatorPost>; ... 48 more ...; uploadVerificationSelfie(file: File, onProgress?: ((progress: number) => void) | undefined): Promise<...>; }'. Did you mean 'uploadVerificationId'?
+src/pages/LiveStreaming.tsx(4,1): error TS6133: 'webSocketService' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(7,10): error TS6133: 'Device' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(7,18): error TS2305: Module '"mediasoup-client"' has no exported member 'Transport'.
+src/pages/LiveStreaming.tsx(7,29): error TS2305: Module '"mediasoup-client"' has no exported member 'Producer'.
+src/pages/LiveStreaming.tsx(7,39): error TS2305: Module '"mediasoup-client"' has no exported member 'Consumer'.
+src/pages/LiveStreaming.tsx(42,9): error TS6133: 'recvTransport' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(44,9): error TS6133: 'consumers' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(46,9): error TS6133: 'remoteStreamRef' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(185,64): error TS6133: 'roomId' is declared but its value is never read.
+src/pages/LiveStreaming.tsx(252,13): error TS2365: Operator '+' cannot be applied to types '{}' and 'number'.
+src/pages/StreamPage.tsx(165,7): error TS18047: 'pmEventUnsub' is possibly 'null'.
+src/pages/StreamPage.tsx(166,7): error TS18047: 'pmMsgUnsub' is possibly 'null'.
+src/pages/WatchPage.tsx(44,9): error TS6133: 'subscribeToExplosions' is declared but its value is never read.
+src/pages/WatchPage.tsx(50,10): error TS6133: 'viewerCount' is declared but its value is never read.
+src/pages/WatchPage.tsx(56,22): error TS6133: 'setVideoWidth' is declared but its value is never read.
+src/pages/WatchPage.tsx(57,22): error TS6133: 'setIsResizing' is declared but its value is never read.
+src/pages/WatchPage.tsx(336,67): error TS2322: Type 'RefObject<HTMLDivElement | null>' is not assignable to type 'RefObject<HTMLDivElement>'.
+src/pages/WatchPage.tsx(353,27): error TS2339: Property 'milestones' does not exist on type 'GoalStatusEvent'.
+src/pages/WatchPage.tsx(353,51): error TS2339: Property 'milestones' does not exist on type 'GoalStatusEvent'.
+src/pages/WatchPage.tsx(354,162): error TS2339: Property 'milestones' does not exist on type 'GoalStatusEvent'.
+src/websocket/webRtcService.ts(1,18): error TS2305: Module '"mediasoup-client"' has no exported member 'Transport'.
+src/websocket/webRtcService.ts(1,29): error TS2305: Module '"mediasoup-client"' has no exported member 'Producer'.
+src/websocket/webRtcService.ts(1,39): error TS2305: Module '"mediasoup-client"' has no exported member 'Consumer'.
+src/websocket/webRtcService.ts(43,11): error TS6133: 'onRemoteStreamCallback' is declared but its value is never read.
+src/websocket/webRtcService.ts(44,11): error TS6133: 'onStreamStopCallback' is declared but its value is never read.

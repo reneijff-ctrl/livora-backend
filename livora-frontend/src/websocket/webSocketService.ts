@@ -262,18 +262,19 @@ class WebSocketService {
 
     if (this.isConnected()) return;
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const checkInterval = setInterval(() => {
         if (this.isConnected()) {
           clearInterval(checkInterval);
+          clearTimeout(timeoutId);
           resolve();
         }
       }, 100);
       
-      // Safety timeout after 10 seconds
-      setTimeout(() => {
+      // Safety timeout after 10 seconds — reject so callers know connection failed
+      const timeoutId = setTimeout(() => {
         clearInterval(checkInterval);
-        resolve(); 
+        reject(new Error("WS: Connection timeout after 10 seconds")); 
       }, 10000);
     });
   }
@@ -417,6 +418,21 @@ class WebSocketService {
   public disconnect() {
     console.log("WS: Disconnect requested.");
     this.failAllPendingReceipts("Service disconnected");
+
+    // Unsubscribe all active STOMP subscriptions before deactivating
+    this.subscriptions.forEach((entry, destination) => {
+      if (entry.stompSubscription) {
+        try {
+          entry.stompSubscription.unsubscribe();
+        } catch (e) {
+          console.warn(`WS: Error unsubscribing from ${destination} during disconnect`, e);
+        }
+      }
+    });
+    this.subscriptions.clear();
+    this.pendingSubscriptions = [];
+    console.log("WS: Cleared all subscriptions and pending subscriptions.");
+
     if (this.client) {
       console.log("WS: Deactivating STOMP client.");
       this.client.deactivate();

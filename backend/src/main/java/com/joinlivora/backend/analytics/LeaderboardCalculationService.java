@@ -40,6 +40,7 @@ public class LeaderboardCalculationService {
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Transactional(readOnly = true)
     public List<LeaderboardResponseDto> getLeaderboard(LeaderboardPeriod period, String category, int limit) {
         String cacheKey = getCacheKey(period, category);

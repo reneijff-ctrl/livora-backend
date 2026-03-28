@@ -18,7 +18,7 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = {"creator", "roomId"})
+@ToString(exclude = {"userId", "roomId"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class SlowModeBypass {
 

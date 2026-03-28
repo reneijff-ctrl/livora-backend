@@ -154,6 +154,9 @@ public class WebSocketInterceptor implements ChannelInterceptor {
         if (destination.startsWith("/exchange/amq.topic/stream.v2.creator.")) {
             return;
         }
+        if ("/exchange/amq.topic/streams.status".equals(destination)) {
+            return;
+        }
 
         // --- Premium ---
         if ("/exchange/amq.topic/premium".equals(destination)) {

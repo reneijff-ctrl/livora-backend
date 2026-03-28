@@ -7,10 +7,11 @@
  * - Consistent vertical spacing
  * - Subtle typography hierarchy
  */
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/auth/useAuth';
 import { useWallet } from '@/wallet/WalletContext';
+import { useWs, useTrackPresence } from '@/ws/WsContext';
 import { useCreatorPublicProfile } from '@/hooks/useCreatorPublicProfile';
 import CreatorMediaTab from '@/components/creator/CreatorMediaTab';
 import SafeAvatar from '@/components/ui/SafeAvatar';
@@ -19,6 +20,7 @@ import apiClient from '@/api/apiClient';
 import creatorService from '@/api/creatorService';
 import { showToast } from '@/components/Toast';
 import { safeRender } from '@/utils/safeRender';
+import { getCountryLabel } from '@/data/countries';
 
 const calculateAge = (birthDate: string | undefined): number | null => {
   if (!birthDate) return null;
@@ -42,6 +44,12 @@ const CreatorPublicProfile: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { setBalance: updateWallet } = useWallet();
+  const { presenceMap } = useWs();
+
+  // Track this creator's presence for real-time live status updates
+  const creatorUserId = creator?.profile?.userId;
+  const trackIds = useMemo(() => creatorUserId ? [creatorUserId] : [], [creatorUserId]);
+  useTrackPresence(trackIds);
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'about' | 'media' | 'clips' | 'wishlist'>('about');
@@ -121,7 +129,10 @@ const CreatorPublicProfile: React.FC = () => {
   const bio = profile?.bio || '';
   const avatarUrl = profile?.avatarUrl;
   const bannerUrl = profile?.bannerUrl;
-  const isOnline = Boolean(profile?.isOnline);
+  // Derive live/online status from real-time presenceMap (WebSocket), falling back to initial API data
+  const presence = creatorUserId ? presenceMap[creatorUserId] : undefined;
+  const isOnline = presence ? Boolean(presence.online) : Boolean(profile?.isOnline);
+  const isLive = presence ? presence.availability === 'LIVE' : Boolean(profile?.isLive);
   const isAuthenticated = Boolean(user);
   const isNotFound = !loading && !creator;
 
@@ -190,7 +201,7 @@ const CreatorPublicProfile: React.FC = () => {
             {/* Creator Header */}
             <div className="creator-header w-full flex flex-col items-center md:items-start mb-10">
               {/* Avatar Section */}
-              <div className={`relative p-1 rounded-full transition-all duration-500 ${isOnline ? 'bg-gradient-to-tr from-emerald-500/20 to-emerald-400/20 ring-2 ring-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.2)] animate-pulse' : 'bg-zinc-800/50'}`}>
+              <div className={`relative p-1 rounded-full transition-all duration-500 ${isLive ? 'bg-gradient-to-tr from-red-500/20 to-red-400/20 ring-2 ring-red-500/50 shadow-[0_0_30px_rgba(239,68,68,0.2)] animate-pulse' : isOnline ? 'bg-gradient-to-tr from-emerald-500/20 to-emerald-400/20 ring-2 ring-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.2)]' : 'bg-zinc-800/50'}`}>
                 <SafeAvatar 
                   src={avatarUrl} 
                   name={displayName} 
@@ -220,11 +231,23 @@ const CreatorPublicProfile: React.FC = () => {
                       {safeRender(profile.languages)}
                     </span>
                   )}
-                  {profile?.showLocation && profile?.location && (
-                    <span className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 text-[10px] font-black uppercase tracking-widest rounded-full">
-                      {safeRender(profile.location)}
-                    </span>
-                  )}
+                  {(() => {
+                    const vis = profile?.locationVisibility ?? (profile?.showLocation === false ? 'hidden' : 'full');
+                    if (vis === 'hidden') return null;
+                    const label = vis === 'custom'
+                      ? (profile?.customLocation || (profile?.location ? getCountryLabel(profile.location) : null))
+                      : vis === 'country'
+                        ? (profile?.location ? getCountryLabel(profile.location) : null)
+                        : (profile?.state && profile?.location
+                          ? `${profile.state}, ${getCountryLabel(profile.location)}`
+                          : profile?.location ? getCountryLabel(profile.location) : null);
+                    if (!label) return null;
+                    return (
+                      <span className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 text-[10px] font-black uppercase tracking-widest rounded-full">
+                        {safeRender(label)}
+                      </span>
+                    );
+                  })()}
                   {profile?.showBodyType && profile?.bodyType && (
                     <span className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 text-zinc-400 text-[10px] font-black uppercase tracking-widest rounded-full">
                       {safeRender(profile.bodyType)}
@@ -240,9 +263,9 @@ const CreatorPublicProfile: React.FC = () => {
                 <div className="flex flex-col items-center md:items-start gap-2.5">
                   {/* Live Indicator */}
                   <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,1)] animate-pulse' : 'bg-zinc-700'}`} />
-                    <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isOnline ? 'text-emerald-500' : 'text-zinc-500'}`}>
-                      {isOnline ? 'LIVE NOW' : 'OFFLINE'}
+                    <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,1)] animate-pulse' : isOnline ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,1)]' : 'bg-zinc-700'}`} />
+                    <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isLive ? 'text-red-500' : isOnline ? 'text-emerald-500' : 'text-zinc-500'}`}>
+                      {isLive ? '🔴 LIVE NOW' : isOnline ? '🟢 ONLINE' : '⚫ OFFLINE'}
                     </span>
                   </div>
                   
@@ -279,10 +302,16 @@ const CreatorPublicProfile: React.FC = () => {
             <div className="mb-16 w-full flex flex-col items-center md:items-start gap-4">
               <div className="flex flex-wrap items-center justify-center md:justify-start gap-3 mt-2">
                 <button
-                  onClick={() => navigate(`/creators/${creatorId}/live`)}
-                  className="px-8 py-2.5 rounded-full font-bold bg-white text-black hover:bg-zinc-200 transition-all active:scale-95 text-sm"
+                  onClick={() => { if (isLive) navigate(`/creators/${creatorId}/live`); }}
+                  disabled={!isLive}
+                  title={!isLive ? 'Creator is not currently live' : undefined}
+                  className={`px-8 py-2.5 rounded-full font-bold transition-all active:scale-95 text-sm ${
+                    isLive
+                      ? 'bg-white text-black hover:bg-zinc-200'
+                      : 'bg-zinc-900/50 text-zinc-700 border border-zinc-900 cursor-not-allowed'
+                  }`}
                 >
-                  Watch Live
+                  {isLive ? 'Watch Live' : 'Not Live'}
                 </button>
                 <button
                   onClick={() => handleAction(() => console.log('Send tip clicked'))}
@@ -423,15 +452,27 @@ const CreatorPublicProfile: React.FC = () => {
                     )}
 
                     {/* Location */}
-                    {profile?.showLocation && profile?.location && (
-                      <div className="flex items-start gap-4">
-                        <span className="text-xl mt-0.5">📍</span>
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Location</span>
-                          <span className="text-zinc-200 font-bold text-sm">{safeRender(profile.location)}</span>
+                    {(() => {
+                      const vis = profile?.locationVisibility ?? (profile?.showLocation === false ? 'hidden' : 'full');
+                      if (vis === 'hidden') return null;
+                      const label = vis === 'custom'
+                        ? (profile?.customLocation || (profile?.location ? getCountryLabel(profile.location) : null))
+                        : vis === 'country'
+                          ? (profile?.location ? getCountryLabel(profile.location) : null)
+                          : (profile?.state && profile?.location
+                            ? `${profile.state}, ${getCountryLabel(profile.location)}`
+                            : profile?.location ? getCountryLabel(profile.location) : null);
+                      if (!label) return null;
+                      return (
+                        <div className="flex items-start gap-4">
+                          <span className="text-xl mt-0.5">📍</span>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Location</span>
+                            <span className="text-zinc-200 font-bold text-sm">{safeRender(label)}</span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Languages */}
                     {profile?.showLanguages && profile?.languages && (
@@ -633,8 +674,11 @@ const CreatorPublicProfile: React.FC = () => {
                         isLocked: item.accessLevel === "PREMIUM" && item.unlocked !== true,
                         unlockPrice: item.unlockPriceTokens,
                         title: item.title,
+                        description: item.description,
                         mediaUrl: item.mediaUrl,
-                        type: item.type
+                        type: item.type,
+                        unlocked: item.unlocked,
+                        accessLevel: item.accessLevel
                       }))}
                       onItemClick={(item) => setSelectedItem(item)}
                       onUnlock={handleUnlock}

@@ -19,7 +19,7 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = {"creator", "roomId", "ppvContentId"})
+@ToString(exclude = {"userId", "roomId", "ppvContentId"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class PPVChatAccess {
 

@@ -71,7 +71,9 @@ const CreatorVerificationPage: React.FC = () => {
   const onFile = async (file: File | null, type: 'front' | 'back' | 'selfie') => {
     if (!file) return;
     try {
-      const url = await creatorService.uploadVerificationImage(file, type);
+      const url = type === 'selfie'
+        ? await creatorService.uploadVerificationSelfie(file)
+        : await creatorService.uploadVerificationId(file);
       setForm((prev) => ({
         ...prev,
         idDocumentUrl: type === 'front' ? url : prev.idDocumentUrl,

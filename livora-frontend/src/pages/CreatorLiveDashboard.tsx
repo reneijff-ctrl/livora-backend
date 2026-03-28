@@ -211,10 +211,30 @@ const CreatorLiveDashboard: React.FC = () => {
     const initCamera = async () => {
       setCameraError(null);
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
+        let stream = await navigator.mediaDevices.getUserMedia({ 
           video: VIDEO_CONSTRAINTS, 
           audio: true 
         });
+
+        const videoTrackInit = stream.getVideoTracks()[0];
+        console.log("CAMERA INIT - VIDEO TRACK:", videoTrackInit);
+        console.log("CAMERA INIT - TRACK SETTINGS:", videoTrackInit?.getSettings());
+        console.log("CAMERA INIT - TRACK READY STATE:", videoTrackInit?.readyState);
+
+        // Firefox camera restart: if track is not live, stop and re-acquire
+        if (videoTrackInit && videoTrackInit.readyState !== "live") {
+          console.warn("CAMERA INIT - Track not live, restarting camera...");
+          videoTrackInit.stop();
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "user" },
+            audio: true
+          });
+          const retriedTrack = stream.getVideoTracks()[0];
+          console.log("CAMERA INIT - RETRIED TRACK:", retriedTrack);
+          console.log("CAMERA INIT - RETRIED TRACK SETTINGS:", retriedTrack?.getSettings());
+          console.log("CAMERA INIT - RETRIED TRACK READY STATE:", retriedTrack?.readyState);
+        }
+
         setLocalStream(stream);
         localStreamRef.current = stream;
         if (videoRef.current) {
@@ -953,6 +973,7 @@ const CreatorLiveDashboard: React.FC = () => {
       });
 
       // d. Create Send Transport on client
+      console.log("SEND TRANSPORT CONFIG:", JSON.stringify(transportData, null, 2));
       const transport = device.createSendTransport(transportData);
       sendTransport.current = transport;
 
@@ -995,7 +1016,7 @@ const CreatorLiveDashboard: React.FC = () => {
         }
 
         transport.appData.restartAttempts =
-          (transport.appData.restartAttempts ?? 0) + 1;
+          (Number(transport.appData.restartAttempts) || 0) + 1;
         const attempt = transport.appData.restartAttempts;
 
         try {
@@ -1042,19 +1063,51 @@ const CreatorLiveDashboard: React.FC = () => {
         const videoTrack = localStreamRef.current.getVideoTracks()[0];
         const audioTrack = localStreamRef.current.getAudioTracks()[0];
 
-        if (videoTrack) {
-          const videoProducer = await transport.produce({ 
-            track: videoTrack,
-            encodings: SIMULCAST_ENCODINGS,
-            codecOptions: {
-              videoGoogleStartBitrate: 1000
-            }
-          });
-          producers.current.set('video', videoProducer);
+        console.log("PRODUCE - VIDEO TRACK:", videoTrack);
+        console.log("PRODUCE - VIDEO TRACK SETTINGS:", videoTrack?.getSettings());
+        console.log("PRODUCE - VIDEO TRACK READY STATE:", videoTrack?.readyState);
+        console.log("PRODUCE - AUDIO TRACK:", audioTrack);
+        console.log("PRODUCE - AUDIO TRACK SETTINGS:", audioTrack?.getSettings());
+        console.log("PRODUCE - AUDIO TRACK READY STATE:", audioTrack?.readyState);
+
+        if (videoTrack && videoTrack.readyState === "live") {
+          // Firefox does not support scalabilityMode in RTCRtpEncodingParameters;
+          // SIMULCAST_ENCODINGS already has it removed, but guard with a
+          // browser-safe copy that strips any residual SVC fields.
+          const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
+          const encodings = isFirefox
+            ? SIMULCAST_ENCODINGS.map(({ rid, maxBitrate, scaleResolutionDownBy, maxFramerate }) => ({
+                rid, maxBitrate, scaleResolutionDownBy, ...(maxFramerate ? { maxFramerate } : {})
+              }))
+            : SIMULCAST_ENCODINGS;
+
+          try {
+            const videoProducer = await transport.produce({ 
+              track: videoTrack,
+              encodings,
+              codecOptions: {
+                videoGoogleStartBitrate: 1000
+              }
+            });
+            console.log("VIDEO PRODUCER CREATED", videoProducer.id);
+            producers.current.set('video', videoProducer);
+          } catch (err) {
+            console.error("VIDEO PRODUCER FAILED", err);
+          }
+        } else {
+          console.error("VIDEO TRACK NOT AVAILABLE OR NOT LIVE:", videoTrack?.readyState);
         }
-        if (audioTrack) {
-          const audioProducer = await transport.produce({ track: audioTrack });
-          producers.current.set('audio', audioProducer);
+
+        if (audioTrack && audioTrack.readyState === "live") {
+          try {
+            const audioProducer = await transport.produce({ track: audioTrack });
+            console.log("AUDIO PRODUCER CREATED", audioProducer.id);
+            producers.current.set('audio', audioProducer);
+          } catch (err) {
+            console.error("AUDIO PRODUCER FAILED", err);
+          }
+        } else {
+          console.error("AUDIO TRACK NOT AVAILABLE OR NOT LIVE:", audioTrack?.readyState);
         }
       }
 

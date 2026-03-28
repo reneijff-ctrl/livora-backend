@@ -20,9 +20,22 @@ public class StripeWebhookEvent {
     @Column(name = "type", nullable = false)
     private String type;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private Status status;
+
     @Column(name = "received_at", nullable = false)
     private Instant receivedAt;
 
+    @Column(name = "processed_at")
+    private Instant processedAt;
+
     @Column(name = "payload_hash")
     private String payloadHash;
+
+    public enum Status {
+        PROCESSING,
+        COMPLETED,
+        FAILED
+    }
 }

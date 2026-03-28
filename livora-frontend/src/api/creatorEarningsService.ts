@@ -131,7 +131,7 @@ const creatorEarningsService = {
         const response = await apiClient.get('/creator/analytics', {
             params: { from, to }
         });
-        return response.data;
+        return Array.isArray(response.data) ? response.data : [];
     }
 };
 

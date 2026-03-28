@@ -1,0 +1,2901 @@
+﻿========== payment\StripeWebhookController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.payment.dto.StripeVerificationResponse;
+import com.stripe.StripeClient;
+import com.stripe.exception.SignatureVerificationException;
+import com.stripe.exception.StripeException;
+import com.stripe.model.Event;
+import com.stripe.model.checkout.Session;
+import com.stripe.net.Webhook;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController("paymentStripeWebhookController")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeWebhookController {
+
+    private final WebhookEventRepository webhookEventRepository;
+    private final StripeWebhookService stripeWebhookService;
+    private final StripeClient stripeClient;
+
+    @Value("${stripe.webhook.secret}")
+    private String endpointSecret;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    @PostMapping("/api/stripe/webhook")
+    public ResponseEntity<String> handleStripeWebhook(
+            @RequestBody String payload,
+            @RequestHeader(value = "Stripe-Signature", required = false) String sigHeader
+    ) {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: webhook short-circuited");
+            return ResponseEntity.ok("Stripe disabled");
+        }
+        if (sigHeader == null || sigHeader.isEmpty()) {
+            log.warn("SECURITY: Received webhook without Stripe-Signature header");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Missing signature");
+        }
+        
+        if (endpointSecret == null || endpointSecret.trim().isEmpty()) {
+            log.error("SECURITY: Stripe webhook secret is missing! Webhook processing aborted.");
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Webhook secret misconfigured");
+        }
+
+        Event event;
+        try {
+            event = Webhook.constructEvent(payload, sigHeader, endpointSecret);
+        } catch (SignatureVerificationException e) {
+            log.error("SECURITY: Invalid Stripe signature: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid signature");
+        } catch (Exception e) {
+            log.error("SECURITY: Error constructing Stripe event", e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error processing event");
+        }
+
+        // 1. Idempotency handling: check if event has already been processed
+        String stripeEventId = event.getId();
+        if (webhookEventRepository.existsByStripeEventId(stripeEventId)) {
+            log.info("SECURITY: Duplicate Stripe webhook event ignored: {}", stripeEventId);
+            return ResponseEntity.ok("Already processed");
+        }
+
+        // 2. Persist Webhook Event
+        WebhookEvent webhookEvent = new WebhookEvent();
+        webhookEvent.setStripeEventId(stripeEventId);
+        webhookEvent.setEventType(event.getType());
+        webhookEvent.setPayload(payload);
+        try {
+            webhookEventRepository.save(webhookEvent);
+        } catch (DataIntegrityViolationException e) {
+            log.info("SECURITY: Duplicate Stripe webhook event detected during save: {}", stripeEventId);
+            return ResponseEntity.ok("Already processed");
+        } catch (Exception e) {
+            log.error("SECURITY: Failed to persist Stripe webhook event: {}", stripeEventId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Database error");
+        }
+
+        // Handle the event asynchronously via Service (this will NOT block the response)
+        stripeWebhookService.processEventAsync(event, webhookEvent.getId());
+
+        return ResponseEntity.ok("Received");
+    }
+
+    @GetMapping("/api/payments/verify")
+    public ResponseEntity<StripeVerificationResponse> verifySession(@RequestParam("session_id") String sessionId) throws StripeException {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: verifySession short-circuited");
+            return ResponseEntity.ok(StripeVerificationResponse.failed());
+        }
+        
+        Session session = stripeClient.checkout().sessions().retrieve(sessionId);
+
+        if ("paid".equals(session.getPaymentStatus()) && "payment".equals(session.getMode())) {
+            return ResponseEntity.ok(StripeVerificationResponse.paid(session.getAmountTotal()));
+        }
+
+        log.warn("Stripe session {} verify failed: status={}, mode={}",
+                sessionId, session.getPaymentStatus(), session.getMode());
+        return ResponseEntity.ok(StripeVerificationResponse.failed());
+    }
+}
+
+========== payment\StripeWebhookService.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
+import com.joinlivora.backend.audit.service.AuditService;
+import com.joinlivora.backend.monetization.TipOrchestrationService;
+import com.joinlivora.backend.payout.CreatorEarningsService;
+import com.joinlivora.backend.creator.service.CreatorStripeService;
+import com.joinlivora.backend.aml.service.AMLRulesEngine;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.payout.PayoutAuditService;
+import com.joinlivora.backend.payout.PayoutActorType;
+import com.joinlivora.backend.payout.PayoutStatus;
+import com.stripe.StripeClient;
+import com.stripe.exception.SignatureVerificationException;
+import com.stripe.model.Dispute;
+import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
+import com.stripe.model.Invoice;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.PaymentMethod;
+import com.stripe.model.StripeObject;
+import com.stripe.model.Subscription;
+import com.stripe.model.Transfer;
+import com.stripe.model.checkout.Session;
+import com.stripe.net.Webhook;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import com.joinlivora.backend.tip.DirectTip;
+import com.joinlivora.backend.tip.TipStatus;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service("paymentStripeWebhookService")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeWebhookService {
+
+    private final StripeClient stripeClient;
+    private final UserService userService;
+    private final UserSubscriptionRepository subscriptionRepository;
+    private final PaymentRepository paymentRepository;
+    private final WebhookEventRepository webhookEventRepository;
+    private final SubscriptionService subscriptionService;
+    private final MeterRegistry meterRegistry;
+    private final com.joinlivora.backend.analytics.AnalyticsEventPublisher analyticsEventPublisher;
+    private final com.joinlivora.backend.token.TokenService tokenService;
+    private final com.joinlivora.backend.token.TokenPackageRepository tokenPackageRepository;
+    private final com.joinlivora.backend.payout.CreatorConnectService creatorConnectService;
+    private final com.joinlivora.backend.payout.StripeConnectService stripeConnectService;
+    private final CreatorStripeService creatorStripeService;
+    private final com.joinlivora.backend.creator.service.CreatorStripeAccountService creatorStripeAccountService;
+    private final com.joinlivora.backend.payout.PayoutRepository payoutRepository;
+    private final com.joinlivora.backend.payout.CreatorPayoutRepository creatorPayoutRepository;
+    private final CreatorEarningsService creatorEarningsService;
+    private final AMLRulesEngine amlRulesEngine;
+    private final TipOrchestrationService tipService;
+    private final com.joinlivora.backend.tip.TipService directTipService;
+    private final com.joinlivora.backend.monetization.PPVPurchaseService ppvPurchaseService;
+    private final com.joinlivora.backend.monetization.HighlightedMessageService highlightedMessageService;
+    private final com.joinlivora.backend.streaming.StreamService streamService;
+    private final InvoiceService invoiceService;
+    private final AuditService auditService;
+    private final com.joinlivora.backend.fraud.service.FraudDetectionService fraudDetectionService;
+    private final ApplicationEventPublisher eventPublisher;
+    private final PayoutAuditService payoutAuditService;
+    private final AdminRealtimeEventService adminRealtimeEventService;
+    private final PaymentService paymentService;
+    private final com.joinlivora.backend.chargeback.ChargebackService canonicalChargebackService;
+    
+    private final ObjectProvider<StripeWebhookService> selfProvider;
+
+    @Value("${stripe.webhook.secret}")
+    private String endpointSecret;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    /**
+     * Handles the raw Stripe webhook payload.
+     * Verifies the signature, persists the event for idempotency, and delegates to async processing.
+     *
+     * @param payload   The raw request body
+     * @param sigHeader The Stripe-Signature header
+     * @throws SignatureVerificationException if signature validation fails
+     */
+    public void handleWebhook(String payload, String sigHeader) throws SignatureVerificationException {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: handleWebhook short-circuited");
+            return;
+        }
+        if (sigHeader == null || sigHeader.isEmpty()) {
+            throw new SignatureVerificationException("Missing Stripe-Signature header", null);
+        }
+
+        if (endpointSecret == null || endpointSecret.trim().isEmpty()) {
+            throw new IllegalStateException("Stripe webhook secret is not configured");
+        }
+
+        Event event;
+        try {
+            event = Webhook.constructEvent(payload, sigHeader, endpointSecret);
+        } catch (SignatureVerificationException e) {
+            log.error("SECURITY: Invalid Stripe signature: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("SECURITY: Error constructing Stripe event", e);
+            throw new RuntimeException("Error processing event", e);
+        }
+
+        String stripeEventId = event.getId();
+        if (webhookEventRepository.existsByStripeEventId(stripeEventId)) {
+            log.info("SECURITY: Duplicate Stripe webhook event ignored: {}", stripeEventId);
+            return;
+        }
+
+        WebhookEvent webhookEvent = new WebhookEvent();
+        webhookEvent.setStripeEventId(stripeEventId);
+        webhookEvent.setEventType(event.getType());
+        webhookEvent.setPayload(payload);
+        
+        try {
+            webhookEvent = webhookEventRepository.save(webhookEvent);
+        } catch (DataIntegrityViolationException e) {
+            log.info("SECURITY: Duplicate Stripe webhook event detected during save: {}", stripeEventId);
+            return;
+        } catch (Exception e) {
+            log.error("SECURITY: Failed to persist Stripe webhook event: {}", stripeEventId, e);
+            throw new RuntimeException("Database error", e);
+        }
+
+        StripeWebhookService self = selfProvider.getIfAvailable();
+        if (self == null) self = this;
+        self.processEventAsync(event, webhookEvent.getId());
+    }
+
+    @Async
+    public void processEventAsync(Event event, UUID internalEventId) {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: processEventAsync short-circuited");
+            return;
+        }
+
+        StripeWebhookService self = selfProvider.getIfAvailable();
+        if (self == null) self = this;
+
+        try {
+            self.processEventInTransaction(event, internalEventId);
+        } catch (Exception e) {
+            log.error("SECURITY: Error processing Stripe webhook event: {} ID: {} [InternalID: {}]", 
+                    event.getType(), event.getId(), internalEventId, e);
+            
+            // Non-transactional update to record failure reason since the main transaction rolled back
+            try {
+                webhookEventRepository.findById(internalEventId).ifPresent(we -> {
+                    we.setProcessed(false);
+                    we.setErrorMessage(e.getMessage());
+                    webhookEventRepository.save(we);
+                });
+            } catch (Exception fatal) {
+                log.error("SECURITY: Fatal error recording webhook failure for {}: {}", internalEventId, fatal.getMessage());
+            }
+        }
+    }
+
+    @Transactional
+    public void processEventInTransaction(Event event, UUID internalEventId) {
+        WebhookEvent we = webhookEventRepository.findByIdWithLock(internalEventId)
+                .orElseThrow(() -> new ResourceNotFoundException("WebhookEvent not found: " + internalEventId));
+
+        if (we.isProcessed()) {
+            log.info("SECURITY: WebhookEvent already processed (locked): {} ({})", internalEventId, event.getId());
+            return;
+        }
+
+        String eventType = event.getType();
+        log.info("SECURITY: Processing Stripe webhook event (Atomic): {} (InternalID: {})", eventType, internalEventId);
+        meterRegistry.counter("stripe_webhook_events", "type", eventType).increment();
+
+        EventDataObjectDeserializer dataObjectDeserializer = event.getDataObjectDeserializer();
+        StripeObject stripeObject = dataObjectDeserializer.getObject().orElse(null);
+
+        StripeWebhookService self = selfProvider.getIfAvailable();
+        if (self == null) self = this;
+
+        if ("checkout.session.completed".equalsIgnoreCase(eventType)) {
+            if (stripeObject instanceof Session session) {
+                log.info("SECURITY: Payment event: checkout.session.completed for customer: {}", session.getCustomerEmail());
+                String type = session.getMetadata() != null ? session.getMetadata().get("type") : null;
+                if ("token_purchase".equalsIgnoreCase(type)) {
+                    self.handleTokenCheckoutSession(session);
+                } else if ("TIP".equalsIgnoreCase(type)) {
+                    self.handleTipCheckoutSession(session);
+                } else {
+                    self.handleCheckoutSession(session);
+                }
+                meterRegistry.counter("payments_total", "currency", session.getCurrency()).increment();
+                meterRegistry.counter("subscriptions_active").increment();
+            }
+        } else if ("payment_intent.succeeded".equalsIgnoreCase(eventType)) {
+            if (stripeObject instanceof PaymentIntent intent) {
+                log.info("SECURITY: Payment event: payment_intent.succeeded for ID: {}", intent.getId());
+                self.handlePaymentIntentSucceeded(intent);
+            }
+        } else if ("customer.subscription.deleted".equals(eventType)) {
+            if (stripeObject instanceof Subscription stripeSubscription) {
+                log.info("SECURITY: Payment event: customer.subscription.deleted for sub: {}", stripeSubscription.getId());
+                self.handleSubscriptionDeleted(stripeSubscription);
+                meterRegistry.counter("subscriptions_canceled").increment();
+            }
+        } else if ("customer.subscription.updated".equals(eventType)) {
+            if (stripeObject instanceof Subscription stripeSubscription) {
+                self.handleSubscriptionUpdated(stripeSubscription);
+            }
+        } else if ("invoice.payment_succeeded".equals(eventType)) {
+            if (stripeObject instanceof Invoice invoice) {
+                self.handleInvoicePaymentSucceeded(invoice);
+            }
+        } else if ("invoice.payment_failed".equals(eventType)) {
+            if (stripeObject instanceof Invoice invoice) {
+                self.handleInvoicePaymentFailed(invoice);
+            }
+        } else if ("payment_intent.payment_failed".equals(eventType)) {
+            if (stripeObject instanceof PaymentIntent intent) {
+                self.handlePaymentIntentFailed(intent);
+            }
+        } else if ("charge.dispute.created".equals(eventType)) {
+            if (stripeObject instanceof Dispute dispute) {
+                self.handleChargeDisputeCreated(dispute);
+            }
+        } else if ("charge.dispute.closed".equals(eventType)) {
+            if (stripeObject instanceof Dispute dispute) {
+                self.handleChargeDisputeClosed(dispute);
+            }
+        } else if ("charge.dispute.updated".equals(eventType)) {
+            if (stripeObject instanceof Dispute dispute) {
+                self.handleChargeDisputeUpdated(dispute);
+            }
+        } else if ("account.updated".equals(eventType)) {
+            if (stripeObject instanceof com.stripe.model.Account account) {
+                log.info("STRIPE: Processing account.updated for account: {}", account.getId());
+                stripeConnectService.updateAccountStatus(
+                        account.getId(),
+                        Boolean.TRUE.equals(account.getChargesEnabled()),
+                        Boolean.TRUE.equals(account.getPayoutsEnabled()),
+                        Boolean.TRUE.equals(account.getDetailsSubmitted())
+                );
+                creatorStripeAccountService.updateAccountStatus(
+                        account.getId(),
+                        Boolean.TRUE.equals(account.getDetailsSubmitted())
+                );
+                creatorStripeService.updateAccountStatus(
+                        account.getId(),
+                        Boolean.TRUE.equals(account.getDetailsSubmitted()),
+                        Boolean.TRUE.equals(account.getPayoutsEnabled())
+                );
+            }
+        } else if ("transfer.paid".equals(eventType)) {
+            if (stripeObject instanceof Transfer transfer) {
+                self.handleTransferPaid(transfer);
+            }
+        } else if ("transfer.failed".equals(eventType)) {
+            if (stripeObject instanceof Transfer transfer) {
+                self.handleTransferFailed(transfer);
+            }
+        }
+
+        // Atomically mark as processed in the same transaction
+        we.setProcessed(true);
+        we.setErrorMessage(null);
+        webhookEventRepository.save(we);
+        log.info("SECURITY: Successfully processed and marked Stripe event as processed: {} ({})", internalEventId, event.getId());
+    }
+
+    @Transactional
+    public void handleSubscriptionDeleted(Subscription stripeSubscription) {
+        String stripeSubscriptionId = stripeSubscription.getId();
+        log.info("SECURITY: Handling subscription deletion for stripeSubscriptionId: {}", stripeSubscriptionId);
+
+        subscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId).ifPresent(userSub -> {
+            userSub.setStatus(SubscriptionStatus.EXPIRED);
+            subscriptionRepository.save(userSub);
+
+            User user = userSub.getUser();
+            userService.downgradeToUser(user.getEmail());
+            subscriptionService.evictSubscriptionCache(user);
+            log.info("SECURITY: User {} downgraded after subscription expiration (deleted in Stripe)", user.getEmail());
+
+            analyticsEventPublisher.publishEvent(
+                    com.joinlivora.backend.analytics.AnalyticsEventType.SUBSCRIPTION_CANCELED,
+                    user,
+                    Map.of("stripeSubscriptionId", stripeSubscriptionId, "status", "EXPIRED")
+            );
+        });
+    }
+
+    @Transactional
+    public void handleSubscriptionUpdated(Subscription stripeSubscription) {
+        String stripeSubscriptionId = stripeSubscription.getId();
+        String status = stripeSubscription.getStatus();
+        log.info("SECURITY: Handling subscription update for stripeSubscriptionId: {}, new status: {}", stripeSubscriptionId, status);
+
+        subscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId).ifPresent(userSub -> {
+            userSub.setCurrentPeriodStart(Instant.ofEpochSecond(stripeSubscription.getCurrentPeriodStart()));
+            userSub.setCurrentPeriodEnd(Instant.ofEpochSecond(stripeSubscription.getCurrentPeriodEnd()));
+            userSub.setCancelAtPeriodEnd(Boolean.TRUE.equals(stripeSubscription.getCancelAtPeriodEnd()));
+            
+            String paymentMethodId = stripeSubscription.getDefaultPaymentMethod();
+            if (paymentMethodId != null) {
+                try {
+                    PaymentMethod pm = stripeClient.paymentMethods().retrieve(paymentMethodId);
+                    if (pm.getCard() != null) {
+                        userSub.setPaymentMethodBrand(pm.getCard().getBrand());
+                        userSub.setLast4(pm.getCard().getLast4());
+                    }
+                } catch (Exception e) {
+                    log.error("SECURITY: Failed to fetch PaymentMethod details from Stripe: {}", paymentMethodId, e);
+                }
+            }
+            
+            SubscriptionStatus oldStatus = userSub.getStatus();
+            if ("active".equals(status)) {
+                userSub.setStatus(SubscriptionStatus.ACTIVE);
+            } else if ("trialing".equals(status)) {
+                userSub.setStatus(SubscriptionStatus.TRIAL);
+            } else if ("past_due".equals(status)) {
+                userSub.setStatus(SubscriptionStatus.PAST_DUE);
+            } else if ("canceled".equals(status)) {
+                userSub.setStatus(SubscriptionStatus.EXPIRED);
+                userService.downgradeToUser(userSub.getUser().getEmail());
+            } else if ("unpaid".equals(status)) {
+                userSub.setStatus(SubscriptionStatus.EXPIRED);
+                userService.downgradeToUser(userSub.getUser().getEmail());
+            }
+            
+            if (userSub.getStatus() == SubscriptionStatus.ACTIVE && userSub.isCancelAtPeriodEnd()) {
+                userSub.setStatus(SubscriptionStatus.CANCELED);
+            }
+
+            subscriptionRepository.save(userSub);
+            subscriptionService.evictSubscriptionCache(userSub.getUser());
+
+            if (oldStatus != userSub.getStatus()) {
+                analyticsEventPublisher.publishEvent(
+                        com.joinlivora.backend.analytics.AnalyticsEventType.SUBSCRIPTION_STARTED,
+                        userSub.getUser(),
+                        Map.of("status", userSub.getStatus().name(), "stripeSubscriptionId", stripeSubscriptionId)
+                );
+            }
+        });
+    }
+
+    @Transactional
+    public void handleInvoicePaymentSucceeded(Invoice invoice) {
+        String customerEmail = invoice.getCustomerEmail();
+        String stripeSubscriptionId = invoice.getSubscription();
+        String stripeInvoiceId = invoice.getId();
+        log.info("SECURITY: Invoice payment succeeded for customer: {}, subscription: {}, invoice: {}", customerEmail, stripeSubscriptionId, stripeInvoiceId);
+
+        if (stripeInvoiceId != null && paymentRepository.existsByStripeInvoiceId(stripeInvoiceId)) {
+            log.info("SECURITY: Payment already recorded for invoice: {}. Skipping duplicate.", stripeInvoiceId);
+            return;
+        }
+
+        if (customerEmail != null) {
+            User user = userService.getByEmail(customerEmail);
+            Payment payment = new Payment();
+            payment.setUser(user);
+            payment.setAmount(BigDecimal.valueOf(invoice.getAmountPaid()).divide(BigDecimal.valueOf(100)));
+            payment.setStatus(PaymentStatus.COMPLETED);
+            payment.setCurrency(invoice.getCurrency());
+            payment.setStripePaymentIntentId(invoice.getPaymentIntent());
+            payment.setStripeInvoiceId(invoice.getId());
+            payment.setReceiptUrl(invoice.getHostedInvoiceUrl());
+            
+            populatePaymentMetadata(payment, invoice.getMetadata());
+            
+            String creatorIdStr = null;
+            if (invoice.getMetadata() != null) {
+                creatorIdStr = invoice.getMetadata().get("creator");
+                if (creatorIdStr == null) creatorIdStr = invoice.getMetadata().get("creator_id");
+            }
+            if (creatorIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                payment.setCreator(creator);
+            }
+            
+            paymentRepository.save(payment);
+            paymentService.notifyPaymentCompleted(payment);
+
+            invoiceService.createInvoice(
+                    user,
+                    payment.getAmount(),
+                    payment.getCurrency(),
+                    getCountryFromInvoice(invoice),
+                    InvoiceType.SUBSCRIPTION,
+                    invoice.getId(),
+                    getBillingNameFromInvoice(invoice),
+                    getBillingAddressFromInvoice(invoice)
+            );
+            
+            if (payment.getCreator() != null) {
+                creatorEarningsService.recordSubscriptionEarning(payment, payment.getCreator());
+            }
+
+            subscriptionService.evictSubscriptionCache(user);
+
+            analyticsEventPublisher.publishEvent(
+                    com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_SUCCEEDED,
+                    user,
+                    Map.of(
+                            "amount", payment.getAmount(),
+                            "currency", payment.getCurrency(),
+                            "stripePaymentIntentId", payment.getStripePaymentIntentId() != null ? payment.getStripePaymentIntentId() : "N/A"
+                    )
+            );
+        }
+    }
+
+    @Transactional
+    public void handleInvoicePaymentFailed(Invoice invoice) {
+        String customerEmail = invoice.getCustomerEmail();
+        log.warn("SECURITY: Invoice payment failed for customer: {}", customerEmail);
+        
+        if (customerEmail != null) {
+            User user = userService.getByEmail(customerEmail);
+            Payment payment = new Payment();
+            payment.setUser(user);
+            payment.setSuccess(false);
+            payment.setStatus(PaymentStatus.FAILED);
+            payment.setFailureReason("Invoice payment failed");
+            payment.setAmount(BigDecimal.valueOf(invoice.getAmountDue()).divide(BigDecimal.valueOf(100)));
+            payment.setCurrency(invoice.getCurrency());
+            payment.setStripePaymentIntentId(invoice.getPaymentIntent());
+            payment.setStripeInvoiceId(invoice.getId());
+            
+            populatePaymentMetadata(payment, invoice.getMetadata());
+            
+            String creatorIdStr = null;
+            if (invoice.getMetadata() != null) {
+                creatorIdStr = invoice.getMetadata().get("creator");
+                if (creatorIdStr == null) creatorIdStr = invoice.getMetadata().get("creator_id");
+            }
+            if (creatorIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                payment.setCreator(creator);
+            }
+            
+            paymentRepository.save(payment);
+
+            analyticsEventPublisher.publishEvent(
+                    com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_FAILED,
+                    user,
+                    Map.of(
+                            "amount", payment.getAmount(),
+                            "currency", payment.getCurrency(),
+                            "type", payment.getFailureReason()
+                    )
+            );
+
+            // Evaluate fraud risk (Log RuleFraudSignal when suspicious activity is detected)
+            fraudDetectionService.evaluate(user, payment.getIpAddress(), payment.getCountry());
+
+            // Re-evaluate AML risk for creator after failed payment
+            amlRulesEngine.evaluateRules(user, BigDecimal.ZERO);
+        }
+    }
+
+    @Transactional
+    public void handleChargeDisputeCreated(Dispute dispute) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("SECURITY: Received charge.dispute.created for PaymentIntent: {}", paymentIntentId);
+        
+        if (paymentIntentId == null || paymentIntentId.isEmpty()) {
+            log.warn("SECURITY: Received dispute {} without payment_intent ID", dispute.getId());
+            return;
+        }
+
+        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentIntentId(paymentIntentId);
+        if (paymentOpt.isPresent()) {
+            Payment payment = paymentOpt.get();
+            User user = payment.getUser();
+            log.info("SECURITY: Redirecting to canonical ChargebackService (CREATED) for creator: {}", user.getEmail());
+            canonicalChargebackService.handleDisputeCreated(user, paymentIntentId, dispute);
+        } else {
+            log.warn("SECURITY: Could not find Payment record for disputed PaymentIntent: {}", paymentIntentId);
+        }
+    }
+
+    @Transactional
+    public void handleChargeDisputeClosed(Dispute dispute) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("SECURITY: Received charge.dispute.closed for PaymentIntent: {}, Dispute: {}, Status: {}", 
+                paymentIntentId, dispute.getId(), dispute.getStatus());
+        
+        if (paymentIntentId == null || paymentIntentId.isEmpty()) {
+            log.warn("SECURITY: Received closed dispute {} without payment_intent ID", dispute.getId());
+            return;
+        }
+
+        canonicalChargebackService.handleDisputeClosed(dispute.getId(), dispute);
+    }
+
+    @Transactional
+    public void handleChargeDisputeUpdated(Dispute dispute) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("SECURITY: Received charge.dispute.updated for PaymentIntent: {}, Dispute: {}, Status: {}", 
+                paymentIntentId, dispute.getId(), dispute.getStatus());
+        
+        if (paymentIntentId == null || paymentIntentId.isEmpty()) {
+            return;
+        }
+
+        // For updates, we just treat them like a creation (upsert logic in ChargebackService)
+        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentIntentId(paymentIntentId);
+        if (paymentOpt.isPresent()) {
+            canonicalChargebackService.handleDisputeCreated(paymentOpt.get().getUser(), paymentIntentId, dispute);
+        }
+    }
+
+    @Transactional
+    public void handleCheckoutSession(Session session) {
+        String customerEmail = session.getCustomerEmail();
+        if (customerEmail == null) {
+            log.error("SECURITY: No customer email in checkout session");
+            return;
+        }
+
+        User user = userService.getByEmail(customerEmail);
+        log.info("SECURITY: Upgrading creator {} to PREMIUM after successful Stripe payment", customerEmail);
+
+        userService.upgradeToPremium(customerEmail);
+
+        UserSubscription subscription = new UserSubscription();
+        subscription.setUser(user);
+        subscription.setStatus(SubscriptionStatus.ACTIVE);
+        subscription.setStripeSubscriptionId(session.getSubscription());
+        subscription.setCurrentPeriodStart(Instant.now());
+        subscription.setCurrentPeriodEnd(Instant.now().plus(java.time.Duration.ofDays(30))); 
+        
+        subscriptionRepository.save(subscription);
+
+        Payment payment = new Payment();
+        payment.setUser(user);
+        if (session.getAmountTotal() != null) {
+            payment.setAmount(BigDecimal.valueOf(session.getAmountTotal()).divide(BigDecimal.valueOf(100)));
+        }
+        payment.setCurrency(session.getCurrency());
+        payment.setStripePaymentIntentId(session.getPaymentIntent());
+        
+        populatePaymentMetadata(payment, session.getMetadata());
+        populatePaymentMethodDetailsFromSession(payment, session);
+        
+        paymentRepository.save(payment);
+        paymentService.notifyPaymentCompleted(payment);
+        
+        String creatorIdStr = null;
+        if (session.getMetadata() != null) {
+            creatorIdStr = session.getMetadata().get("creator");
+            if (creatorIdStr == null) creatorIdStr = session.getMetadata().get("creator_id");
+        }
+        
+        if (creatorIdStr != null) {
+            User creator = userService.getById(Long.parseLong(creatorIdStr));
+            payment.setCreator(creator);
+            paymentRepository.save(payment);
+            creatorEarningsService.recordSubscriptionEarning(payment, creator);
+        }
+        
+        subscriptionService.evictSubscriptionCache(user);
+        log.info("SECURITY: UserSubscription and Payment persisted for creator: {}", customerEmail);
+
+        analyticsEventPublisher.publishEvent(
+                com.joinlivora.backend.analytics.AnalyticsEventType.SUBSCRIPTION_STARTED,
+                user,
+                Map.of("stripeSubscriptionId", Optional.ofNullable(session.getSubscription()).orElse("N/A"))
+        );
+
+        auditService.logEvent(
+                new UUID(0L, user.getId()),
+                "SUBSCRIPTION_PURCHASED",
+                "USER",
+                new UUID(0L, user.getId()),
+                Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "stripeSubscriptionId", Optional.ofNullable(session.getSubscription()).orElse("")),
+                null,
+                null
+        );
+    }
+
+    @Transactional
+    public void handleTipCheckoutSession(Session session) {
+        String creatorIdStr = null;
+        String userIdStr = null;
+        if (session.getMetadata() != null) {
+            creatorIdStr = session.getMetadata().get("creator");
+            if (creatorIdStr == null) creatorIdStr = session.getMetadata().get("creator_id");
+            userIdStr = session.getMetadata().get("userId");
+            if (userIdStr == null) userIdStr = session.getMetadata().get("user_id");
+        }
+
+        if (creatorIdStr == null || userIdStr == null) {
+            log.error("SECURITY: Missing creator or userId in tip checkout session");
+            return;
+        }
+
+        User user = userService.getById(Long.parseLong(userIdStr));
+        User creator = userService.getById(Long.parseLong(creatorIdStr));
+
+        Payment payment = new Payment();
+        payment.setUser(user);
+        payment.setCreator(creator);
+        if (session.getAmountTotal() != null) {
+            payment.setAmount(BigDecimal.valueOf(session.getAmountTotal()).divide(BigDecimal.valueOf(100)));
+        }
+        payment.setCurrency(session.getCurrency());
+        payment.setStripePaymentIntentId(session.getPaymentIntent());
+        payment.setStripeSessionId(session.getId());
+        payment.setSuccess(true);
+        payment.setStatus(PaymentStatus.COMPLETED);
+        
+        populatePaymentMetadata(payment, session.getMetadata());
+        populatePaymentMethodDetailsFromSession(payment, session);
+        
+        paymentRepository.save(payment);
+        paymentService.notifyPaymentCompleted(payment);
+
+        DirectTip tip = DirectTip.builder()
+                .user(user)
+                .creator(creator)
+                .amount(payment.getAmount())
+                .currency(payment.getCurrency())
+                .stripeSessionId(session.getId())
+                .status(TipStatus.PENDING)
+                .build();
+        
+        tip = directTipService.saveTip(tip);
+        directTipService.completeTip(tip.getId());
+
+        invoiceService.createInvoice(
+                user,
+                payment.getAmount(),
+                payment.getCurrency(),
+                getCountryFromSession(session),
+                InvoiceType.TIPS,
+                session.getInvoice(),
+                getBillingNameFromSession(session),
+                getBillingAddressFromSession(session)
+        );
+
+        log.info("SECURITY: Tip payment handled for session: {}", session.getId());
+    }
+
+    @Transactional
+    public void handlePaymentIntentSucceeded(PaymentIntent intent) {
+        String type = Optional.ofNullable(intent.getMetadata()).map(m -> m.get("type")).orElse(null);
+        
+        if (paymentRepository.existsByStripePaymentIntentId(intent.getId())) {
+            log.info("SECURITY: Payment already recorded for PaymentIntent: {}. Ensuring services are confirmed.", intent.getId());
+            // We still call these confirm methods because they are idempotent and we want to be sure.
+            if ("tip".equalsIgnoreCase(type)) {
+                tipService.confirmTip(intent.getId());
+            } else if ("ppv".equalsIgnoreCase(type)) {
+                ppvPurchaseService.confirmPurchase(intent.getId());
+            } else if ("highlighted_message".equalsIgnoreCase(type)) {
+                highlightedMessageService.confirmHighlight(intent.getId());
+            }
+            return;
+        }
+
+        if ("tip".equalsIgnoreCase(type)) {
+            tipService.confirmTip(intent.getId());
+            
+            String creatorIdStr = intent.getMetadata().get("creator");
+            if (creatorIdStr == null) creatorIdStr = intent.getMetadata().get("creator_id");
+            String fromUserIdStr = intent.getMetadata().get("userId");
+            if (fromUserIdStr == null) fromUserIdStr = intent.getMetadata().get("from_user_id");
+            
+            if (creatorIdStr != null && fromUserIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                User fromUser = userService.getById(Long.parseLong(fromUserIdStr));
+                
+                Payment payment = new Payment();
+                payment.setUser(fromUser);
+                payment.setCreator(creator);
+                payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+                payment.setCurrency(intent.getCurrency());
+                payment.setStripePaymentIntentId(intent.getId());
+                
+                populatePaymentMetadata(payment, intent.getMetadata());
+                populatePaymentMethodDetails(payment, intent.getPaymentMethod());
+                
+                paymentRepository.save(payment);
+                paymentService.notifyPaymentCompleted(payment);
+                
+                invoiceService.createInvoice(
+                    fromUser,
+                    payment.getAmount(),
+                        payment.getCurrency(),
+                        getCountryFromPaymentIntent(intent),
+                        InvoiceType.TIPS,
+                        intent.getInvoice(),
+                        getBillingNameFromPaymentIntent(intent),
+                        getBillingAddressFromPaymentIntent(intent)
+                );
+                
+                creatorEarningsService.recordTipEarning(payment, creator);
+                // TODO(livora-payments): If we adopt separate charges & transfers instead of destination charges,
+                // schedule a Stripe Transfer here to move the creator's net share from the platform account
+                // to the connected account (creator.getStripeAccountId()). This project currently records all
+                // creator earnings in the internal platform balance and defers real payouts to a later phase.
+
+                auditService.logEvent(
+                        new UUID(0L, fromUser.getId()),
+                        AuditService.TIP_CREATED, // Reuse TIP_CREATED or add TIP_PAID
+                        "TIP",
+                        null, // Tip ID is not easily available here unless returned by confirmTip
+                        Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "creator", creator.getId(), "status", "COMPLETED"),
+                        null,
+                        null
+                );
+            }
+        } else if ("ppv".equalsIgnoreCase(type)) {
+            ppvPurchaseService.confirmPurchase(intent.getId());
+            
+            String creatorIdStr = intent.getMetadata().get("creator");
+            if (creatorIdStr == null) creatorIdStr = intent.getMetadata().get("creator_id");
+            String userIdStr = intent.getMetadata().get("userId");
+            if (userIdStr == null) userIdStr = intent.getMetadata().get("user_id");
+            
+            if (creatorIdStr != null && userIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                User user = userService.getById(Long.parseLong(userIdStr));
+                
+                Payment payment = new Payment();
+                payment.setUser(user);
+                payment.setCreator(creator);
+                payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+                payment.setCurrency(intent.getCurrency());
+                payment.setStripePaymentIntentId(intent.getId());
+                
+                populatePaymentMetadata(payment, intent.getMetadata());
+                populatePaymentMethodDetails(payment, intent.getPaymentMethod());
+                
+                paymentRepository.save(payment);
+                paymentService.notifyPaymentCompleted(payment);
+                
+                invoiceService.createInvoice(
+                    user,
+                    payment.getAmount(),
+                    payment.getCurrency(),
+                    getCountryFromPaymentIntent(intent),
+                    InvoiceType.PPV,
+                        intent.getInvoice(),
+                        getBillingNameFromPaymentIntent(intent),
+                        getBillingAddressFromPaymentIntent(intent)
+                );
+                
+                creatorEarningsService.recordPPVEarning(payment, creator);
+                // TODO(livora-payments): If we adopt separate charges & transfers instead of destination charges,
+                // schedule a Stripe Transfer here to move the creator's net share from the platform account
+                // to the connected account (creator.getStripeAccountId()). This project currently records all
+                // creator earnings in the internal platform balance and defers real payouts to a later phase.
+
+                auditService.logEvent(
+                        new UUID(0L, user.getId()),
+                        "PPV_PURCHASED",
+                        "CONTENT",
+                        null,
+                        Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "creator", creator.getId()),
+                        null,
+                        null
+                );
+            }
+        } else if ("highlighted_message".equalsIgnoreCase(type)) {
+            highlightedMessageService.confirmHighlight(intent.getId());
+            
+            String roomIdStr = intent.getMetadata().get("room_id");
+            String userIdStr = intent.getMetadata().get("user_id");
+            
+            if (roomIdStr != null && userIdStr != null) {
+                com.joinlivora.backend.streaming.StreamRoom room = streamService.getRoom(UUID.fromString(roomIdStr));
+                User creator = room.getCreator();
+                User user = userService.getById(Long.parseLong(userIdStr));
+                
+                Payment payment = new Payment();
+                payment.setUser(user);
+                payment.setCreator(creator);
+                payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+                payment.setCurrency(intent.getCurrency());
+                payment.setStripePaymentIntentId(intent.getId());
+                
+                populatePaymentMetadata(payment, intent.getMetadata());
+                populatePaymentMethodDetails(payment, intent.getPaymentMethod());
+                
+                paymentRepository.save(payment);
+                paymentService.notifyPaymentCompleted(payment);
+                
+                invoiceService.createInvoice(
+                    user,
+                    payment.getAmount(),
+                    payment.getCurrency(),
+                    getCountryFromPaymentIntent(intent),
+                    InvoiceType.TIPS,
+                    intent.getInvoice(),
+                        getBillingNameFromPaymentIntent(intent),
+                        getBillingAddressFromPaymentIntent(intent)
+                );
+                
+                creatorEarningsService.recordHighlightedChatEarning(payment, creator);
+                // TODO(livora-payments): If we adopt separate charges & transfers instead of destination charges,
+                // schedule a Stripe Transfer here to move the creator's net share from the platform account
+                // to the connected account (creator.getStripeAccountId()). This project currently records all
+                // creator earnings in the internal platform balance and defers real payouts to a later phase.
+
+                auditService.logEvent(
+                        new UUID(0L, user.getId()),
+                        "HIGHLIGHT_PURCHASED",
+                        "STREAM",
+                        UUID.fromString(roomIdStr),
+                        Map.of("amount", payment.getAmount(), "currency", payment.getCurrency()),
+                        null,
+                        null
+                );
+            }
+        }
+    }
+
+    @Transactional
+    public void handleTokenCheckoutSession(Session session) {
+        if (paymentRepository.existsByStripeSessionId(session.getId())) {
+            log.info("SECURITY: Token purchase already processed for session: {}", session.getId());
+            return;
+        }
+
+        String customerEmail = session.getCustomerEmail();
+        String clientReferenceId = session.getClientReferenceId();
+        String packageIdStr = null;
+        if (session.getMetadata() != null) {
+            packageIdStr = session.getMetadata().get("packageId");
+            if (packageIdStr == null) packageIdStr = session.getMetadata().get("package_id");
+        }
+
+        if (packageIdStr == null) {
+            log.error("SECURITY: Missing packageId in token checkout session metadata");
+            return;
+        }
+
+        User user = null;
+        if (clientReferenceId != null) {
+            try {
+                user = userService.getById(Long.parseLong(clientReferenceId));
+            } catch (Exception e) {
+                log.warn("SECURITY: Could not resolve user by clientReferenceId: {}", clientReferenceId);
+            }
+        }
+
+        if (user == null && customerEmail != null) {
+            user = userService.getByEmail(customerEmail);
+        }
+
+        if (user == null) {
+            log.error("SECURITY: Could not resolve user for token checkout session. email={}, clientRef={}", 
+                    customerEmail, clientReferenceId);
+            return;
+        }
+        
+        UUID packageId = UUID.fromString(packageIdStr);
+        
+        com.joinlivora.backend.token.TokenPackage tokenPackage = tokenPackageRepository.findById(packageId)
+                .orElseThrow(() -> new RuntimeException("Token package not found"));
+
+        Payment payment = new Payment();
+        payment.setUser(user);
+        if (session.getAmountTotal() != null) {
+            payment.setAmount(BigDecimal.valueOf(session.getAmountTotal()).divide(BigDecimal.valueOf(100)));
+        }
+        payment.setCurrency(session.getCurrency());
+        payment.setStripePaymentIntentId(session.getPaymentIntent());
+        payment.setStripeSessionId(session.getId());
+        
+        populatePaymentMetadata(payment, session.getMetadata());
+        populatePaymentMethodDetailsFromSession(payment, session);
+
+        String creatorIdStr = null;
+        String type = null;
+        if (session.getMetadata() != null) {
+            creatorIdStr = session.getMetadata().get("creator");
+            if (creatorIdStr == null) creatorIdStr = session.getMetadata().get("creator_id");
+            type = session.getMetadata().get("type");
+        }
+        
+        if (creatorIdStr != null) {
+            User creator = userService.getById(Long.parseLong(creatorIdStr));
+            payment.setCreator(creator);
+        }
+        
+        paymentRepository.save(payment);
+        paymentService.notifyPaymentCompleted(payment);
+
+        log.info("SECURITY: Crediting {} tokens to user {} after successful payment", tokenPackage.getTokenAmount(), user.getEmail());
+        tokenService.creditTokens(user, tokenPackage.getTokenAmount(), "Stripe Session: " + session.getId());
+        
+        invoiceService.createInvoice(
+                user,
+                payment.getAmount(),
+                payment.getCurrency(),
+                getCountryFromSession(session),
+                InvoiceType.TOKENS,
+                session.getInvoice(),
+                getBillingNameFromSession(session),
+                getBillingAddressFromSession(session)
+        );
+
+        if (payment.getCreator() != null) {
+            if ("tip".equalsIgnoreCase(type)) {
+                creatorEarningsService.recordTipEarning(payment, payment.getCreator());
+            } else if ("ppv".equalsIgnoreCase(type)) {
+                creatorEarningsService.recordPPVEarning(payment, payment.getCreator());
+            }
+        }
+        
+        auditService.logEvent(
+                new UUID(0L, user.getId()),
+                "TOKENS_PURCHASED",
+                "USER",
+                new UUID(0L, user.getId()),
+                Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "tokenAmount", tokenPackage.getTokenAmount()),
+                null,
+                null
+        );
+        
+        log.info("SECURITY: Token purchase persisted for user: {}", user.getEmail());
+    }
+
+    @Transactional
+    public void handleTransferPaid(Transfer transfer) {
+        String transferId = transfer.getId();
+        log.info("SECURITY: Handling successful transfer: {}", transferId);
+        
+        String payoutIdStr = transfer.getMetadata() != null ? transfer.getMetadata().get("payoutId") : null;
+        if (payoutIdStr != null) {
+            UUID payoutId = UUID.fromString(payoutIdStr);
+            
+            creatorPayoutRepository.findById(payoutId).ifPresent(payout -> {
+                PayoutStatus oldStatus = payout.getStatus();
+                payout.setStatus(PayoutStatus.COMPLETED);
+                payout.setStripeTransferId(transferId);
+                creatorPayoutRepository.save(payout);
+                payoutAuditService.logStatusChange(payoutId, oldStatus, PayoutStatus.COMPLETED, PayoutActorType.STRIPE, null, "Stripe transfer paid: " + transferId);
+                log.info("SECURITY: CreatorPayout {} marked as COMPLETED", payoutId);
+            });
+
+            payoutRepository.findById(payoutId).ifPresent(payout -> {
+                payout.setStatus(com.joinlivora.backend.payout.PayoutStatus.COMPLETED);
+                payout.setStripeTransferId(transferId);
+                payoutRepository.save(payout);
+                log.info("SECURITY: Payout {} marked as COMPLETED", payoutId);
+            });
+        }
+    }
+
+    @Transactional
+    public void handleTransferFailed(Transfer transfer) {
+        String transferId = transfer.getId();
+        log.error("SECURITY: Handling failed transfer: {}", transferId);
+
+        String payoutIdStr = transfer.getMetadata() != null ? transfer.getMetadata().get("payoutId") : null;
+        if (payoutIdStr != null) {
+            UUID payoutId = UUID.fromString(payoutIdStr);
+            
+            creatorPayoutRepository.findById(payoutId).ifPresent(payout -> {
+                PayoutStatus oldStatus = payout.getStatus();
+                payout.setStatus(PayoutStatus.FAILED);
+                payout.setStripeTransferId(transferId);
+                creatorPayoutRepository.save(payout);
+                payoutAuditService.logStatusChange(payoutId, oldStatus, PayoutStatus.FAILED, PayoutActorType.STRIPE, null, "Stripe transfer failed: " + transferId);
+                log.info("SECURITY: CreatorPayout {} marked as FAILED due to Stripe transfer failure", payoutId);
+            });
+
+            payoutRepository.findById(payoutId).ifPresent(payout -> {
+                payout.setStatus(com.joinlivora.backend.payout.PayoutStatus.FAILED);
+                payout.setErrorMessage("Transfer failed according to Stripe webhook");
+                payoutRepository.save(payout);
+                
+                User user = payout.getUser();
+                com.joinlivora.backend.token.CreatorEarnings earnings = tokenService.getCreatorEarnings(user);
+                earnings.setAvailableTokens(earnings.getAvailableTokens() + payout.getTokenAmount());
+                tokenService.updateCreatorEarnings(earnings);
+                
+                log.info("SECURITY: Restoring {} tokens to creator {} due to failed legacy payout {}",
+                        payout.getTokenAmount(), user.getEmail(), payoutId);
+            });
+        }
+    }
+
+    private String getCountryFromInvoice(Invoice invoice) {
+        if (invoice.getCustomerAddress() != null && invoice.getCustomerAddress().getCountry() != null) {
+            return invoice.getCustomerAddress().getCountry();
+        }
+        return "XX";
+    }
+
+    private String getCountryFromSession(Session session) {
+        if (session.getCustomerDetails() != null && session.getCustomerDetails().getAddress() != null) {
+            return session.getCustomerDetails().getAddress().getCountry();
+        }
+        return "XX";
+    }
+
+    private String getCountryFromPaymentIntent(PaymentIntent intent) {
+        if (intent.getShipping() != null && intent.getShipping().getAddress() != null) {
+            return intent.getShipping().getAddress().getCountry();
+        }
+        return "XX";
+    }
+
+    private String getBillingNameFromInvoice(Invoice invoice) {
+        return invoice.getCustomerName();
+    }
+
+    private String getBillingAddressFromInvoice(Invoice invoice) {
+        if (invoice.getCustomerAddress() != null) {
+            return formatAddress(invoice.getCustomerAddress());
+        }
+        return null;
+    }
+
+    private String getBillingNameFromSession(Session session) {
+        if (session.getCustomerDetails() != null) {
+            return session.getCustomerDetails().getName();
+        }
+        return null;
+    }
+
+    private String getBillingAddressFromSession(Session session) {
+        if (session.getCustomerDetails() != null && session.getCustomerDetails().getAddress() != null) {
+            return formatAddress(session.getCustomerDetails().getAddress());
+        }
+        return null;
+    }
+
+    private String getBillingNameFromPaymentIntent(PaymentIntent intent) {
+        if (intent.getShipping() != null) {
+            return intent.getShipping().getName();
+        }
+        return null;
+    }
+
+    private String getBillingAddressFromPaymentIntent(PaymentIntent intent) {
+        if (intent.getShipping() != null && intent.getShipping().getAddress() != null) {
+            return formatAddress(intent.getShipping().getAddress());
+        }
+        return null;
+    }
+
+    private String formatAddress(com.stripe.model.Address address) {
+        List<String> parts = new ArrayList<>();
+        if (address.getLine1() != null) parts.add(address.getLine1());
+        if (address.getLine2() != null) parts.add(address.getLine2());
+        if (address.getPostalCode() != null) parts.add(address.getPostalCode());
+        if (address.getCity() != null) parts.add(address.getCity());
+        if (address.getState() != null) parts.add(address.getState());
+        if (address.getCountry() != null) parts.add(address.getCountry());
+        return String.join(", ", parts);
+    }
+
+    @Transactional
+    public void handlePaymentIntentFailed(PaymentIntent intent) {
+        log.warn("SECURITY: Payment intent failed for ID: {}", intent.getId());
+        
+        String userIdStr = intent.getMetadata() != null ? intent.getMetadata().get("userId") : null;
+        if (userIdStr == null && intent.getMetadata() != null) userIdStr = intent.getMetadata().get("user_id");
+        if (userIdStr == null && intent.getMetadata() != null) userIdStr = intent.getMetadata().get("from_user_id");
+        
+        if (userIdStr != null) {
+            User user = userService.getById(Long.parseLong(userIdStr));
+            Payment payment = new Payment();
+            payment.setUser(user);
+            payment.setSuccess(false);
+            payment.setFailureReason(intent.getLastPaymentError() != null ? intent.getLastPaymentError().getMessage() : "Unknown failure");
+            payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+            payment.setCurrency(intent.getCurrency());
+            payment.setStripePaymentIntentId(intent.getId());
+            
+            populatePaymentMetadata(payment, intent.getMetadata());
+            
+            String creatorIdStr = null;
+            if (intent.getMetadata() != null) {
+                creatorIdStr = intent.getMetadata().get("creator");
+                if (creatorIdStr == null) creatorIdStr = intent.getMetadata().get("creator_id");
+            }
+            if (creatorIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                payment.setCreator(creator);
+            }
+            
+            paymentRepository.save(payment);
+            
+            analyticsEventPublisher.publishEvent(
+                    com.joinlivora.backend.analytics.AnalyticsEventType.PAYMENT_FAILED,
+                    user,
+                    Map.of(
+                            "amount", payment.getAmount(),
+                            "currency", payment.getCurrency(),
+                            "stripePaymentIntentId", payment.getStripePaymentIntentId(),
+                            "type", payment.getFailureReason()
+                    )
+            );
+            
+            fraudDetectionService.evaluate(user, payment.getIpAddress(), payment.getCountry());
+
+            // Re-evaluate AML risk for creator after failed payment
+            amlRulesEngine.evaluateRules(user, BigDecimal.ZERO);
+        }
+    }
+
+    private void populatePaymentMetadata(Payment payment, Map<String, String> metadata) {
+        if (metadata != null) {
+            payment.setIpAddress(metadata.get("ip_address"));
+            payment.setCountry(metadata.get("country"));
+            payment.setUserAgent(metadata.get("user_agent"));
+            payment.setDeviceFingerprint(metadata.get("device_fingerprint"));
+            
+            String riskLevelStr = metadata.get("fraud_risk_level");
+            if (riskLevelStr != null) {
+                try {
+                    payment.setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel.valueOf(riskLevelStr));
+                } catch (IllegalArgumentException e) {
+                    log.warn("SECURITY: Invalid fraud_risk_level in metadata: {}", riskLevelStr);
+                }
+            }
+        }
+    }
+
+    private void populatePaymentMethodDetails(Payment payment, String paymentMethodId) {
+        if (!stripeEnabled) {
+            return;
+        }
+        if (paymentMethodId != null) {
+            try {
+                PaymentMethod pm = stripeClient.paymentMethods().retrieve(paymentMethodId);
+                if (pm.getCard() != null) {
+                    payment.setPaymentMethodFingerprint(pm.getCard().getFingerprint());
+                    payment.setPaymentMethodBrand(pm.getCard().getBrand());
+                    payment.setPaymentMethodLast4(pm.getCard().getLast4());
+                }
+            } catch (Exception e) {
+                log.error("SECURITY: Failed to fetch PaymentMethod details from Stripe: {}", paymentMethodId, e);
+            }
+        }
+    }
+
+    private void populatePaymentMethodDetailsFromSession(Payment payment, Session session) {
+        if (!stripeEnabled) {
+            return;
+        }
+        try {
+            String pmId = null;
+            if (session.getPaymentIntent() != null) {
+                PaymentIntent pi = stripeClient.paymentIntents().retrieve(session.getPaymentIntent());
+                pmId = pi.getPaymentMethod();
+            } else if (session.getSubscription() != null) {
+                Subscription sub = stripeClient.subscriptions().retrieve(session.getSubscription());
+                pmId = sub.getDefaultPaymentMethod();
+            }
+            populatePaymentMethodDetails(payment, pmId);
+        } catch (Exception e) {
+            log.error("SECURITY: Failed to fetch PaymentMethod details from Session: {}", session.getId(), e);
+        }
+    }
+}
+
+========== payment\StripeCheckoutController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.payment.dto.PaymentHealthResponse;
+import com.joinlivora.backend.payment.dto.StripeCheckoutRequest;
+import com.joinlivora.backend.payment.dto.StripeCheckoutResponse;
+import com.joinlivora.backend.stripe.service.StripeCheckoutService;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/payments")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeCheckoutController {
+
+    private final StripeCheckoutService stripeCheckoutService;
+    private final UserService userService;
+    private final com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    @GetMapping("/health")
+    public ResponseEntity<PaymentHealthResponse> getHealth() {
+        boolean connected = stripeCheckoutService.checkHealth();
+        PaymentHealthResponse response = new PaymentHealthResponse(
+                connected ? "UP" : "DOWN",
+                stripeEnabled,
+                connected
+        );
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/tip")
+    public ResponseEntity<StripeCheckoutResponse> createTipCheckoutSession(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestBody StripeCheckoutRequest request
+    ) throws Exception {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: returning placeholder checkout response for tip endpoint");
+            return ResponseEntity.ok(new StripeCheckoutResponse(""));
+        }
+        if (request.getAmount() == null || request.getAmount().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        Long creatorUserId = request.getCreatorId();
+        com.joinlivora.backend.creator.model.CreatorProfile profile;
+        try {
+            profile = creatorProfileService.getCreatorByUserId(creatorUserId);
+        } catch (com.joinlivora.backend.exception.ResourceNotFoundException e) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Long internalCreatorId = creatorProfileService.getCreatorIdByUserId(creatorUserId)
+                .orElse(profile.getId());
+        
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        // Convert amount (e.g. 10.50 EUR) to cents (1050)
+        long amountCents = request.getAmount().multiply(new java.math.BigDecimal("100")).longValue();
+
+        String checkoutUrl = stripeCheckoutService.createCheckoutSession(
+                internalCreatorId,
+                profile.getDisplayName(),
+                user.getId(),
+                amountCents
+        );
+        
+        return ResponseEntity.ok(new StripeCheckoutResponse(checkoutUrl));
+    }
+
+    @PostMapping("/create-checkout-session")
+    public ResponseEntity<StripeCheckoutResponse> createGenericCheckoutSession(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestBody java.util.Map<String, Object> payload
+    ) throws Exception {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: returning placeholder checkout response for generic checkout endpoint");
+            return ResponseEntity.ok(new StripeCheckoutResponse(""));
+        }
+        Object amountObj = payload.get("amount");
+        if (amountObj == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        
+        java.math.BigDecimal amount;
+        try {
+            amount = new java.math.BigDecimal(amountObj.toString());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        if (amount.compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        User user = userService.getByEmail(userDetails.getUsername());
+        long amountCents = amount.multiply(new java.math.BigDecimal("100")).longValue();
+        
+        // For temporary generic session, use user's own ID as creator if none provided
+        // This satisfies "no creator profile needed" requirement
+        String checkoutUrl = stripeCheckoutService.createCheckoutSession(
+                user.getId(),
+                user.getDisplayName(),
+                user.getId(),
+                amountCents
+        );
+        
+        return ResponseEntity.ok(new StripeCheckoutResponse(checkoutUrl));
+    }
+}
+
+========== payment\PaymentController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.payment.dto.CheckoutResponse;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.util.RequestUtil;
+import com.stripe.exception.StripeException;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/payments")
+@RequiredArgsConstructor
+@Slf4j
+public class PaymentController {
+
+    private final PaymentService paymentService;
+    private final UserService userService;
+
+    @PostMapping("/checkout")
+    public ResponseEntity<CheckoutResponse> createCheckoutSession(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @org.springframework.web.bind.annotation.RequestBody(required = false) com.joinlivora.backend.payment.dto.CheckoutRequest checkoutRequest,
+            HttpServletRequest request
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Checkout session requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        String ipAddress = RequestUtil.getClientIP(request);
+        String country = RequestUtil.getClientCountry(request);
+        String userAgent = RequestUtil.getUserAgent(request);
+        String fingerprint = RequestUtil.getDeviceFingerprint(request);
+        
+        String planId = (checkoutRequest != null) ? checkoutRequest.getPlanId() : null;
+
+        String checkoutUrl = paymentService.createCheckoutSession(user, planId, ipAddress, country, userAgent, fingerprint);
+        return ResponseEntity.ok(new CheckoutResponse(checkoutUrl));
+    }
+}
+
+========== payment\PaymentService.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
+import com.joinlivora.backend.exception.PaymentLockedException;
+import com.joinlivora.backend.exception.TrustChallengeException;
+import com.joinlivora.backend.fraud.dto.RiskDecisionResult;
+import com.joinlivora.backend.fraud.model.FraudDecisionLevel;
+import com.joinlivora.backend.fraud.model.FraudSignalType;
+import com.joinlivora.backend.fraud.model.FraudSource;
+import com.joinlivora.backend.fraud.model.RiskDecision;
+import com.joinlivora.backend.fraud.model.VelocityActionType;
+import com.joinlivora.backend.fraud.repository.UserRiskStateRepository;
+import com.joinlivora.backend.fraud.service.FraudDetectionService;
+import com.joinlivora.backend.fraud.service.TrustEvaluationService;
+import com.joinlivora.backend.fraud.service.VelocityTrackerService;
+import com.joinlivora.backend.user.User;
+import com.stripe.StripeClient;
+import com.stripe.exception.StripeException;
+import com.stripe.model.checkout.Session;
+import com.stripe.net.RequestOptions;
+import com.stripe.param.checkout.SessionCreateParams;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import java.util.UUID;
+
+@Service("paymentService")
+@RequiredArgsConstructor
+@Slf4j
+public class PaymentService {
+
+    private final StripeClient stripeClient;
+    private final UserRiskStateRepository userRiskStateRepository;
+    private final VelocityTrackerService velocityTrackerService;
+    private final TrustEvaluationService trustEvaluationService;
+    private final FraudDetectionService fraudDetectionService;
+    private final AutoFreezePolicyService autoFreezePolicyService;
+    private final com.joinlivora.backend.fraud.service.FraudRiskScoreService fraudRiskScoreService;
+    private final com.joinlivora.backend.fraud.service.FraudRiskService fraudRiskService;
+    private final AdminRealtimeEventService adminRealtimeEventService;
+
+    @Value("${stripe.premium-plan-id}")
+    private String premiumPlanId;
+
+    @Value("${stripe.success-url}")
+    private String successUrl;
+
+    @Value("${stripe.cancel-url}")
+    private String cancelUrl;
+
+    @Value("${stripe.token-success-url}")
+    private String tokenSuccessUrl;
+
+    @Value("${stripe.token-cancel-url}")
+    private String tokenCancelUrl;
+
+    @jakarta.annotation.PostConstruct
+    public void validateConfig() {
+        if (successUrl == null || !successUrl.startsWith("http")) {
+            throw new IllegalStateException("Stripe success URL must be an absolute URL starting with http/https");
+        }
+        if (cancelUrl == null || !cancelUrl.startsWith("http")) {
+            throw new IllegalStateException("Stripe cancel URL must be an absolute URL starting with http/https");
+        }
+        if (tokenSuccessUrl == null || !tokenSuccessUrl.startsWith("http")) {
+            throw new IllegalStateException("Stripe token success URL must be an absolute URL starting with http/https");
+        }
+        if (tokenCancelUrl == null || !tokenCancelUrl.startsWith("http")) {
+            throw new IllegalStateException("Stripe token cancel URL must be an absolute URL starting with http/https");
+        }
+    }
+
+    public String createCheckoutSession(User user, String planId, String ipAddress, String country, String userAgent, String fingerprintHash) throws StripeException {
+        // Use provided planId or default to premiumPlanId
+        String priceId = (planId != null && !planId.isEmpty() && !planId.equals("free")) ? planId : premiumPlanId;
+        
+        // We use a default amount for premium subscription if unknown here (e.g. 10.00 EUR)
+        com.joinlivora.backend.fraud.model.RiskLevel riskLevel = checkPaymentLock(user, new java.math.BigDecimal("10.00"), ipAddress, country, userAgent, fingerprintHash);
+        evaluateTrust(user, ipAddress, fingerprintHash);
+        velocityTrackerService.trackAction(user.getId(), VelocityActionType.PAYMENT);
+        return createCheckoutSession(user, priceId, SessionCreateParams.Mode.SUBSCRIPTION, ipAddress, country, userAgent, fingerprintHash, riskLevel);
+    }
+
+    public String createTokenCheckoutSession(User user, String stripePriceId, UUID packageId, String ipAddress, String country, String userAgent, String fingerprintHash) throws StripeException {
+        // We should ideally fetch the amount from the package, but for now we'll pass null or default
+        com.joinlivora.backend.fraud.model.RiskLevel riskLevel = checkPaymentLock(user, null, ipAddress, country, userAgent, fingerprintHash);
+        evaluateTrust(user, ipAddress, fingerprintHash);
+        velocityTrackerService.trackAction(user.getId(), VelocityActionType.PAYMENT);
+        log.info("SECURITY: Creating Stripe token checkout session for creator: {} package: {}", user.getEmail(), packageId);
+        
+        SessionCreateParams.Builder builder = SessionCreateParams.builder()
+                .setMode(SessionCreateParams.Mode.PAYMENT)
+                .setCurrency("eur")
+                .setSuccessUrl(tokenSuccessUrl + "?package=" + packageId)
+                .setCancelUrl(tokenCancelUrl)
+                .setCustomerEmail(user.getEmail())
+                .addLineItem(
+                        SessionCreateParams.LineItem.builder()
+                                .setQuantity(1L)
+                                .setPrice(stripePriceId)
+                                .build()
+                )
+                .setClientReferenceId(user.getId().toString())
+                .putMetadata("package_id", packageId.toString())
+                .putMetadata("type", "token_purchase")
+                .putMetadata("fraud_risk_level", riskLevel != null ? riskLevel.name() : "LOW");
+
+        SessionCreateParams.PaymentIntentData.Builder piBuilder = SessionCreateParams.PaymentIntentData.builder()
+                .putMetadata("package_id", packageId.toString())
+                .putMetadata("type", "token_purchase")
+                .putMetadata("user_id", user.getId().toString());
+
+        if (ipAddress != null) {
+            builder.putMetadata("ip_address", ipAddress);
+            piBuilder.putMetadata("ip_address", ipAddress);
+        }
+        if (fingerprintHash != null) {
+            builder.putMetadata("device_fingerprint", fingerprintHash);
+            piBuilder.putMetadata("device_fingerprint", fingerprintHash);
+        }
+        if (country != null) {
+            builder.putMetadata("country", country);
+            piBuilder.putMetadata("country", country);
+        }
+        if (userAgent != null) {
+            builder.putMetadata("user_agent", userAgent);
+            piBuilder.putMetadata("user_agent", userAgent);
+        }
+
+        builder.setPaymentIntentData(piBuilder.build());
+
+        long timestampBucket = System.currentTimeMillis() / 10000;
+        String idempotencyKey = "checkout_" + user.getId() + "_" + stripePriceId + "_" + timestampBucket;
+        RequestOptions options = RequestOptions.builder()
+                .setIdempotencyKey(idempotencyKey)
+                .build();
+
+        try {
+            Session session = stripeClient.checkout().sessions().create(builder.build(), options);
+            return session.getUrl();
+        } catch (Exception e) {
+            log.error("Stripe checkout session failed", e);
+            if (e instanceof StripeException se) {
+                throw se;
+            }
+            throw new RuntimeException(e);
+        }
+    }
+
+    private String createCheckoutSession(User user, String priceId, SessionCreateParams.Mode mode, String ipAddress, String country, String userAgent, String fingerprintHash, com.joinlivora.backend.fraud.model.RiskLevel riskLevel) throws StripeException {
+        log.info("SECURITY: Creating Stripe checkout session for creator: {} mode: {}, risk: {}", user.getEmail(), mode, riskLevel);
+
+        SessionCreateParams.Builder builder = SessionCreateParams.builder()
+                .setMode(mode)
+                .setSuccessUrl(successUrl)
+                .setCancelUrl(cancelUrl);
+        
+        if (mode == SessionCreateParams.Mode.PAYMENT) {
+            builder.setCurrency("eur");
+        }
+
+        builder.setCustomerEmail(user.getEmail())
+                .addLineItem(
+                        SessionCreateParams.LineItem.builder()
+                                .setQuantity(1L)
+                                .setPrice(priceId)
+                                .build()
+                )
+                .setClientReferenceId(user.getId().toString())
+                .putMetadata("fraud_risk_level", riskLevel != null ? riskLevel.name() : "LOW");
+
+        if (mode == SessionCreateParams.Mode.PAYMENT) {
+            SessionCreateParams.PaymentIntentData.Builder piBuilder = SessionCreateParams.PaymentIntentData.builder()
+                    .putMetadata("user_id", user.getId().toString());
+            if (ipAddress != null) {
+                builder.putMetadata("ip_address", ipAddress);
+                piBuilder.putMetadata("ip_address", ipAddress);
+            }
+            if (fingerprintHash != null) {
+                builder.putMetadata("device_fingerprint", fingerprintHash);
+                piBuilder.putMetadata("device_fingerprint", fingerprintHash);
+            }
+            if (country != null) {
+                builder.putMetadata("country", country);
+                piBuilder.putMetadata("country", country);
+            }
+            if (userAgent != null) {
+                builder.putMetadata("user_agent", userAgent);
+                piBuilder.putMetadata("user_agent", userAgent);
+            }
+            builder.setPaymentIntentData(piBuilder.build());
+        } else if (mode == SessionCreateParams.Mode.SUBSCRIPTION) {
+            SessionCreateParams.SubscriptionData.Builder subBuilder = SessionCreateParams.SubscriptionData.builder()
+                    .putMetadata("user_id", user.getId().toString());
+            if (ipAddress != null) {
+                builder.putMetadata("ip_address", ipAddress);
+                subBuilder.putMetadata("ip_address", ipAddress);
+            }
+            if (fingerprintHash != null) {
+                builder.putMetadata("device_fingerprint", fingerprintHash);
+                subBuilder.putMetadata("device_fingerprint", fingerprintHash);
+            }
+            if (country != null) {
+                builder.putMetadata("country", country);
+                subBuilder.putMetadata("country", country);
+            }
+            if (userAgent != null) {
+                builder.putMetadata("user_agent", userAgent);
+                subBuilder.putMetadata("user_agent", userAgent);
+            }
+            builder.setSubscriptionData(subBuilder.build());
+        }
+
+        long timestampBucket = System.currentTimeMillis() / 10000;
+        String idempotencyKey = "checkout_" + user.getId() + "_" + priceId + "_" + timestampBucket;
+        RequestOptions options = RequestOptions.builder()
+                .setIdempotencyKey(idempotencyKey)
+                .build();
+
+        try {
+            Session session = stripeClient.checkout().sessions().create(builder.build(), options);
+            return session.getUrl();
+        } catch (Exception e) {
+            log.error("Stripe checkout session failed", e);
+            if (e instanceof StripeException se) {
+                throw se;
+            }
+            throw new RuntimeException(e);
+        }
+    }
+
+    public com.joinlivora.backend.fraud.model.RiskLevel checkPaymentLock(User user, java.math.BigDecimal amount, String ipAddress, String country, String userAgent, String fingerprintHash) {
+        autoFreezePolicyService.validateUserStatus(user);
+
+        com.joinlivora.backend.fraud.model.FraudRiskAssessment assessment = fraudRiskService.calculateRisk(user, amount, ipAddress, country, fingerprintHash);
+        com.joinlivora.backend.fraud.model.RiskLevel riskLevel = assessment.getRiskLevel();
+
+        if (riskLevel == com.joinlivora.backend.fraud.model.RiskLevel.HIGH) {
+            log.warn("SECURITY: High risk payment attempt by creator: {}. Allowing but marking for hold.", user.getEmail());
+        } else if (riskLevel == com.joinlivora.backend.fraud.model.RiskLevel.MEDIUM) {
+            log.info("SECURITY: Medium risk payment attempt by creator: {}.", user.getEmail());
+        }
+
+        userRiskStateRepository.findById(user.getId()).ifPresent(state -> {
+            if (state.isPaymentLocked()) {
+                // We still check for explicit locks, but maybe we should allow if it's just HIGH risk?
+                // The requirement says "do not block payment" if riskLevel == HIGH.
+                // If it's ALREADY locked, it means a previous assessment or admin action blocked it.
+                // I'll keep the lock check for now as it's separate from the current assessment.
+                throw new PaymentLockedException("Payments are locked for this account due to suspicious activity.");
+            }
+        });
+
+        return riskLevel;
+    }
+
+    private void evaluateTrust(User user, String ipAddress, String fingerprintHash) {
+        RiskDecisionResult result = trustEvaluationService.evaluate(user, fingerprintHash, ipAddress);
+        if (result.getDecision() == RiskDecision.BLOCK) {
+            log.warn("SECURITY [trust_evaluation]: Blocked payment attempt for creator: {} from IP: {} with fingerprint: {}. ExplanationId: {}",
+                    user.getEmail(), ipAddress, fingerprintHash, result.getExplanationId());
+            fraudDetectionService.logFraudSignal(user.getId(), FraudDecisionLevel.HIGH, FraudSource.PAYMENT, FraudSignalType.TRUST_EVALUATION_BLOCK, "TRUST_EVALUATION_BLOCK");
+            throw new org.springframework.security.access.AccessDeniedException("Action blocked due to security risk.");
+        } else if (result.getDecision() == RiskDecision.REVIEW) {
+            log.info("SECURITY [trust_evaluation]: Trust challenge required for payment for creator: {}. ExplanationId: {}", user.getEmail(), result.getExplanationId());
+            throw new TrustChallengeException("Additional verification required to complete this action.");
+        }
+    }
+
+    public void notifyPaymentCompleted(Payment payment) {
+        log.info("PAYMENT: Notifying admin of completed payment: {} {}", payment.getAmount(), payment.getCurrency());
+        adminRealtimeEventService.broadcastPaymentCompleted(payment);
+    }
+}
+
+========== payment\Payment.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.user.User;
+import org.hibernate.annotations.UuidGenerator;
+import jakarta.persistence.*;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "payments", indexes = {
+    @Index(name = "idx_payment_user", columnList = "user_id"),
+    @Index(name = "idx_payment_created_at", columnList = "created_at"),
+    @Index(name = "idx_payment_success", columnList = "success")
+}, uniqueConstraints = {
+    @UniqueConstraint(name = "uk_payments_stripe_session_id", columnNames = {"stripe_session_id"})
+})
+public class Payment {
+
+    @Id
+    @GeneratedValue
+    @UuidGenerator
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "creator_id")
+    private User creator;
+
+    private BigDecimal amount;
+    private String currency;
+    private String stripePaymentIntentId;
+    private String stripeInvoiceId;
+    private String stripeSessionId;
+    private String receiptUrl;
+
+    @Column(nullable = false)
+    private boolean success = true;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    private PaymentStatus status;
+
+    @Column(name = "failure_reason")
+    private String failureReason;
+
+    @Column(name = "ip_address")
+    private String ipAddress;
+
+    @Column(name = "user_agent")
+    private String userAgent;
+
+    @Column(name = "device_fingerprint")
+    private String deviceFingerprint;
+
+    @Column(name = "payment_method_fingerprint")
+    private String paymentMethodFingerprint;
+
+    @Column(name = "payment_method_brand")
+    private String paymentMethodBrand;
+
+    @Column(name = "payment_method_last4")
+    private String paymentMethodLast4;
+
+    @Column(name = "country")
+    private String country;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "risk_level")
+    private com.joinlivora.backend.fraud.model.RiskLevel riskLevel;
+
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = Instant.now();
+    }
+
+    // Getters and Setters
+    public UUID getId() {
+        return id;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
+    }
+
+    public User getCreator() {
+        return creator;
+    }
+
+    public void setCreator(User creator) {
+        this.creator = creator;
+    }
+
+    public BigDecimal getAmount() {
+        return amount;
+    }
+
+    public void setAmount(BigDecimal amount) {
+        this.amount = amount;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getStripePaymentIntentId() {
+        return stripePaymentIntentId;
+    }
+
+    public void setStripePaymentIntentId(String stripePaymentIntentId) {
+        this.stripePaymentIntentId = stripePaymentIntentId;
+    }
+
+    public String getStripeInvoiceId() {
+        return stripeInvoiceId;
+    }
+
+    public void setStripeInvoiceId(String stripeInvoiceId) {
+        this.stripeInvoiceId = stripeInvoiceId;
+    }
+
+    public String getStripeSessionId() {
+        return stripeSessionId;
+    }
+
+    public void setStripeSessionId(String stripeSessionId) {
+        this.stripeSessionId = stripeSessionId;
+    }
+
+    public String getReceiptUrl() {
+        return receiptUrl;
+    }
+
+    public void setReceiptUrl(String receiptUrl) {
+        this.receiptUrl = receiptUrl;
+    }
+
+    public boolean isSuccess() {
+        return success;
+    }
+
+    public void setSuccess(boolean success) {
+        this.success = success;
+    }
+
+    public PaymentStatus getStatus() {
+        return status;
+    }
+
+    public void setStatus(PaymentStatus status) {
+        this.status = status;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
+    }
+
+    public String getIpAddress() {
+        return ipAddress;
+    }
+
+    public void setIpAddress(String ipAddress) {
+        this.ipAddress = ipAddress;
+    }
+
+    public String getUserAgent() {
+        return userAgent;
+    }
+
+    public void setUserAgent(String userAgent) {
+        this.userAgent = userAgent;
+    }
+
+    public String getDeviceFingerprint() {
+        return deviceFingerprint;
+    }
+
+    public void setDeviceFingerprint(String deviceFingerprint) {
+        this.deviceFingerprint = deviceFingerprint;
+    }
+
+    public String getPaymentMethodFingerprint() {
+        return paymentMethodFingerprint;
+    }
+
+    public void setPaymentMethodFingerprint(String paymentMethodFingerprint) {
+        this.paymentMethodFingerprint = paymentMethodFingerprint;
+    }
+
+    public String getPaymentMethodBrand() {
+        return paymentMethodBrand;
+    }
+
+    public void setPaymentMethodBrand(String paymentMethodBrand) {
+        this.paymentMethodBrand = paymentMethodBrand;
+    }
+
+    public String getPaymentMethodLast4() {
+        return paymentMethodLast4;
+    }
+
+    public void setPaymentMethodLast4(String paymentMethodLast4) {
+        this.paymentMethodLast4 = paymentMethodLast4;
+    }
+
+    public String getCountry() {
+        return country;
+    }
+
+    public void setCountry(String country) {
+        this.country = country;
+    }
+
+    public com.joinlivora.backend.fraud.model.RiskLevel getRiskLevel() {
+        return riskLevel;
+    }
+
+    public void setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel riskLevel) {
+        this.riskLevel = riskLevel;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+}
+
+========== payment\PaymentStatus.java ==========
+package com.joinlivora.backend.payment;
+
+public enum PaymentStatus {
+    PENDING, COMPLETED, FAILED, REFUNDED
+}
+
+========== payment\WebhookEvent.java ==========
+package com.joinlivora.backend.payment;
+
+import org.hibernate.annotations.UuidGenerator;
+import jakarta.persistence.*;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "webhook_events")
+public class WebhookEvent {
+
+    @Id
+    @GeneratedValue
+    @UuidGenerator
+    @Column(nullable = false, updatable = false)
+    private UUID id;
+
+    @Column(unique = true, nullable = false)
+    private String stripeEventId;
+    private String eventType;
+
+    @Column(nullable = false)
+    private boolean processed = false;
+
+    @Column(columnDefinition = "TEXT")
+    private String errorMessage;
+
+    @Column(columnDefinition = "TEXT")
+    private String payload;
+
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+
+    @PrePersist
+    protected void onCreate() {
+        createdAt = Instant.now();
+    }
+
+    // Getters and Setters
+    public UUID getId() {
+        return id;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public String getStripeEventId() {
+        return stripeEventId;
+    }
+
+    public void setStripeEventId(String stripeEventId) {
+        this.stripeEventId = stripeEventId;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public void setEventType(String eventType) {
+        this.eventType = eventType;
+    }
+
+    public String getPayload() {
+        return payload;
+    }
+
+    public void setPayload(String payload) {
+        this.payload = payload;
+    }
+
+    public boolean isProcessed() {
+        return processed;
+    }
+
+    public void setProcessed(boolean processed) {
+        this.processed = processed;
+    }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public void setErrorMessage(String errorMessage) {
+        this.errorMessage = errorMessage;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+}
+
+========== payment\WebhookEventRepository.java ==========
+package com.joinlivora.backend.payment;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+import jakarta.persistence.LockModeType;
+import java.util.Optional;
+import java.util.UUID;
+
+public interface WebhookEventRepository extends JpaRepository<WebhookEvent, UUID> {
+    boolean existsByStripeEventId(String stripeEventId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT w FROM WebhookEvent w WHERE w.id = :id")
+    Optional<WebhookEvent> findByIdWithLock(@Param("id") UUID id);
+}
+
+========== payments\webhook\StripeWebhookController.java ==========
+package com.joinlivora.backend.payments.webhook;
+
+import com.joinlivora.backend.payments.exception.WebhookReplayException;
+import com.joinlivora.backend.payments.service.WebhookReplayProtectionService;
+import com.stripe.exception.SignatureVerificationException;
+import com.stripe.model.Dispute;
+import com.stripe.model.Event;
+import com.stripe.model.StripeObject;
+import com.stripe.net.Webhook;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController("paymentsStripeWebhookController")
+@RequestMapping("/webhooks/stripe")
+@Slf4j
+public class StripeWebhookController {
+
+    private final StripeWebhookService stripeWebhookService;
+    private final WebhookReplayProtectionService replayProtectionService;
+
+    @Value("${stripe.webhook.secret}")
+    private String endpointSecret;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    public StripeWebhookController(
+            @Qualifier("paymentsStripeWebhookService") StripeWebhookService stripeWebhookService,
+            WebhookReplayProtectionService replayProtectionService) {
+        this.stripeWebhookService = stripeWebhookService;
+        this.replayProtectionService = replayProtectionService;
+    }
+
+    @PostMapping
+    public ResponseEntity<String> handleStripeWebhook(
+            @RequestBody String payload,
+            @RequestHeader("Stripe-Signature") String sigHeader
+    ) {
+        // Hard guard: Disabling legacy controller in favor of /api/stripe/webhook
+        if (true) {
+            log.info("Stripe legacy webhook disabled: /webhooks/stripe short-circuited");
+            return ResponseEntity.ok("Success");
+        }
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: /webhooks/stripe short-circuited");
+            return ResponseEntity.ok("Stripe disabled");
+        }
+        log.info("SECURITY: Received Stripe webhook at /webhooks/stripe");
+        
+        try {
+            Event event;
+            if ("whsec_dev_fallback".equals(endpointSecret)) {
+                event = com.stripe.net.ApiResource.GSON.fromJson(payload, Event.class);
+            } else {
+                event = Webhook.constructEvent(payload, sigHeader, endpointSecret);
+            }
+
+            if (event != null && event.getId() != null) {
+                if (replayProtectionService.isReplay(event.getId())) {
+                    log.warn("SECURITY: Duplicate Stripe webhook event detected in controller: {}", event.getId());
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body("Stripe event " + event.getId() + " has already been processed");
+                }
+                // Record event to prevent replay
+                replayProtectionService.recordEvent(event.getId(), event.getType());
+            }
+
+            processEvent(event);
+            return ResponseEntity.ok("Success");
+        } catch (SignatureVerificationException e) {
+            log.warn("SECURITY: Stripe webhook signature validation failed: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid signature");
+        } catch (WebhookReplayException e) {
+            log.warn("SECURITY: Duplicate Stripe webhook event: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("SECURITY: Unexpected error during Stripe webhook processing", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Processing error");
+        }
+    }
+
+    private void processEvent(Event event) {
+        String eventType = event.getType();
+        log.info("WEBHOOK: Routing Stripe event: {}", eventType);
+
+        StripeObject stripeObject = event.getDataObjectDeserializer().getObject().orElse(null);
+        if (stripeObject == null) {
+            log.warn("WEBHOOK: Could not deserialize event data for: {}", eventType);
+            return;
+        }
+
+        switch (eventType) {
+            case "charge.dispute.created":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackOpened(dispute, event.getId());
+                }
+                break;
+            case "charge.dispute.closed":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackClosed(dispute, event.getId());
+                }
+                break;
+            default:
+                // Other events handled by service
+                stripeWebhookService.processEvent(event);
+                break;
+        }
+    }
+
+    private void handleChargebackOpened(Dispute dispute, String eventId) {
+        log.info("WEBHOOK: Handling chargeback opened for dispute: {}", dispute.getId());
+        stripeWebhookService.handleChargebackOpened(dispute, eventId);
+    }
+
+    private void handleChargebackClosed(Dispute dispute, String eventId) {
+        log.info("WEBHOOK: Handling chargeback closed for dispute: {}", dispute.getId());
+        stripeWebhookService.handleChargebackClosed(dispute, eventId);
+    }
+}
+
+========== payments\webhook\StripeWebhookService.java ==========
+package com.joinlivora.backend.payments.webhook;
+
+import com.joinlivora.backend.fraud.service.FraudEvaluationService;
+import com.joinlivora.backend.payment.Payment;
+import com.joinlivora.backend.payment.PaymentRepository;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.monetization.TipOrchestrationService;
+import com.joinlivora.backend.payout.CreatorEarningsService;
+import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.audit.service.AuditService;
+import com.joinlivora.backend.payments.service.WebhookReplayProtectionService;
+import com.stripe.model.Dispute;
+import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.StripeObject;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service("paymentsStripeWebhookService")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeWebhookService {
+
+    private final ApplicationEventPublisher eventPublisher;
+    private final PaymentRepository paymentRepository;
+    private final com.joinlivora.backend.user.UserRepository userRepository;
+    private final FraudEvaluationService fraudEvaluationService;
+    private final WebhookReplayProtectionService replayProtectionService;
+    private final com.joinlivora.backend.chargeback.ChargebackService chargebackService;
+    private final TipOrchestrationService tipService;
+    private final CreatorEarningsService creatorEarningsService;
+    private final UserService userService;
+    private final AuditService auditService;
+
+    public void processEvent(Event event) {
+        String eventType = event.getType();
+        log.info("WEBHOOK: Processing Stripe event: {}", eventType);
+
+        EventDataObjectDeserializer dataObjectDeserializer = event.getDataObjectDeserializer();
+        StripeObject stripeObject = dataObjectDeserializer.getObject().orElse(null);
+
+        if (stripeObject == null) {
+            log.warn("WEBHOOK: Could not deserialize event data for: {}", eventType);
+            return;
+        }
+
+        switch (eventType) {
+            case "charge.dispute.created":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackOpened(dispute, event.getId());
+                }
+                break;
+            case "charge.dispute.closed":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackClosed(dispute, event.getId());
+                }
+                break;
+            case "payment_intent.succeeded":
+                if (stripeObject instanceof PaymentIntent intent) {
+                    handlePaymentIntentSucceeded(intent, event.getId());
+                }
+                break;
+            default:
+                log.debug("WEBHOOK: Ignoring unhandled event type: {}", eventType);
+                break;
+        }
+    }
+
+    public void handleChargebackOpened(Dispute dispute, String stripeEventId) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("WEBHOOK: Dispute created for PaymentIntent: {}", paymentIntentId);
+        
+        Optional<Payment> paymentOpt = paymentIntentId != null ? paymentRepository.findByStripePaymentIntentId(paymentIntentId) : Optional.empty();
+        
+        if (paymentOpt.isPresent()) {
+            chargebackService.handleDisputeCreated(paymentOpt.get().getUser(), paymentIntentId, dispute);
+        } else {
+            log.warn("WEBHOOK: Payment record not found for PaymentIntent: {}. Cannot handle dispute.", paymentIntentId);
+        }
+
+        // Maintain existing evaluation flow
+        UUID userId = extractUserId(dispute, paymentOpt);
+        if (userId != null) {
+            String ipAddress = paymentOpt.map(Payment::getIpAddress).orElse(null);
+            fraudEvaluationService.evaluateUser(userId, stripeEventId, dispute.getReason(), true, ipAddress);
+        }
+    }
+
+    private UUID extractUserId(Dispute dispute, Optional<Payment> paymentOpt) {
+        // 1. Try from Payment record
+        if (paymentOpt.isPresent()) {
+            return new UUID(0L, paymentOpt.get().getUser().getId());
+        }
+        
+        // 2. Try from metadata
+        if (dispute.getMetadata() != null) {
+            String userIdStr = dispute.getMetadata().get("creator");
+            if (userIdStr != null) {
+                try {
+                    return UUID.fromString(userIdStr);
+                } catch (IllegalArgumentException e) {
+                    // Ignore
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    public void handleChargebackClosed(Dispute dispute, String stripeEventId) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("WEBHOOK: Dispute closed for PaymentIntent: {}, Status: {}", paymentIntentId, dispute.getStatus());
+        
+        Optional<Payment> paymentOpt = paymentIntentId != null ? paymentRepository.findByStripePaymentIntentId(paymentIntentId) : Optional.empty();
+
+        chargebackService.handleDisputeClosed(dispute.getId(), dispute);
+        
+        // Maintain existing evaluation flow
+        UUID userId = extractUserId(dispute, paymentOpt);
+        if (userId != null) {
+            String ipAddress = paymentOpt.map(Payment::getIpAddress).orElse(null);
+            fraudEvaluationService.evaluateUser(userId, stripeEventId, null, false, ipAddress);
+        }
+    }
+
+    private void publishChargebackEvent(Dispute dispute, String paymentIntentId, Optional<Payment> paymentOpt) {
+        if (paymentIntentId == null || paymentIntentId.isEmpty()) {
+            log.warn("WEBHOOK: Received dispute without PaymentIntent ID: {}", dispute.getId());
+            return;
+        }
+
+        if (paymentOpt.isPresent()) {
+            Payment payment = paymentOpt.get();
+            User user = payment.getUser();
+            log.info("WEBHOOK: Publishing ChargebackEvent for creator: {}", user.getEmail());
+            eventPublisher.publishEvent(new ChargebackEvent(this, user, paymentIntentId, dispute));
+        } else {
+            log.warn("WEBHOOK: Payment record not found for PaymentIntent: {}", paymentIntentId);
+        }
+    }
+
+    @Transactional
+    public void handlePaymentIntentSucceeded(PaymentIntent intent, String stripeEventId) {
+        log.info("WEBHOOK: Payment intent succeeded: {}", intent.getId());
+
+        String type = intent.getMetadata() != null ? intent.getMetadata().get("type") : null;
+        
+        if (paymentRepository.existsByStripePaymentIntentId(intent.getId())) {
+            log.info("WEBHOOK: Payment already recorded for PaymentIntent: {}. Ensuring services are confirmed.", intent.getId());
+            if ("tip".equals(type) || "test_tip".equals(type)) {
+                tipService.confirmTip(intent.getId());
+            }
+            return;
+        }
+
+        if ("tip".equals(type) || "test_tip".equals(type)) {
+            tipService.confirmTip(intent.getId());
+            
+            String creatorIdStr = intent.getMetadata().get("creator_id");
+            String fromUserIdStr = intent.getMetadata().get("from_user_id");
+            
+            if (creatorIdStr != null && fromUserIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                User fromUser = userService.getById(Long.parseLong(fromUserIdStr));
+                
+                Payment payment = new Payment();
+                payment.setUser(fromUser);
+                payment.setCreator(creator);
+                payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+                payment.setCurrency(intent.getCurrency());
+                payment.setStripePaymentIntentId(intent.getId());
+                payment.setSuccess(true);
+                
+                if (intent.getMetadata() != null) {
+                    payment.setIpAddress(intent.getMetadata().get("ip_address"));
+                    payment.setCountry(intent.getMetadata().get("country"));
+                    payment.setUserAgent(intent.getMetadata().get("user_agent"));
+                    String riskLevelStr = intent.getMetadata().get("fraud_risk_level");
+                    if (riskLevelStr != null) {
+                        try {
+                            payment.setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel.valueOf(riskLevelStr));
+                        } catch (Exception e) {
+                            // ignore
+                        }
+                    }
+                }
+                
+                paymentRepository.save(payment);
+                creatorEarningsService.recordTipEarning(payment, creator);
+
+                auditService.logEvent(
+                        new UUID(0L, fromUser.getId()),
+                        AuditService.TIP_CREATED,
+                        "TIP",
+                        null,
+                        Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "creator", creator.getId(), "status", "COMPLETED"),
+                        payment.getIpAddress(),
+                        payment.getUserAgent()
+                );
+            }
+        }
+
+        UUID userId = null;
+        String ipAddress = null;
+        
+        // Try to get data from Payment record first
+        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentIntentId(intent.getId());
+        if (paymentOpt.isPresent()) {
+            Payment payment = paymentOpt.get();
+            userId = new UUID(0L, payment.getUser().getId());
+            ipAddress = payment.getIpAddress();
+        }
+
+        // Fallback to metadata for creator if not found in DB
+        if (userId == null && intent.getMetadata() != null) {
+            String userIdStr = intent.getMetadata().get("creator");
+            if (userIdStr == null) userIdStr = intent.getMetadata().get("creator_id");
+            if (userIdStr != null) {
+                try {
+                    userId = UUID.fromString(userIdStr);
+                } catch (IllegalArgumentException e) {
+                    try {
+                        // Try parsing as Long if it's not a UUID
+                        userId = new UUID(0L, Long.parseLong(userIdStr));
+                    } catch (NumberFormatException nfe) {
+                        log.warn("WEBHOOK: Invalid creator in PaymentIntent metadata: {}", userIdStr);
+                    }
+                }
+            }
+        }
+
+        if (userId == null) {
+            log.warn("WEBHOOK: Could not determine creator for PaymentIntent: {}", intent.getId());
+            return;
+        }
+
+        fraudEvaluationService.processSuccessfulPayment(
+                userId,
+                intent.getId(),
+                intent.getAmount(),
+                intent.getCurrency(),
+                stripeEventId,
+                ipAddress
+        );
+    }
+}
+
+========== payments\model\StripeWebhookEvent.java ==========
+package com.joinlivora.backend.payments.model;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.time.Instant;
+
+@Entity
+@Table(name = "stripe_webhook_events")
+@Getter
+@Setter
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class StripeWebhookEvent {
+
+    @Id
+    @Column(name = "event_id", nullable = false, updatable = false)
+    private String eventId;
+
+    @Column(name = "type", nullable = false)
+    private String type;
+
+    @Column(name = "received_at", nullable = false)
+    private Instant receivedAt;
+
+    @Column(name = "payload_hash")
+    private String payloadHash;
+}
+
+========== payments\repository\StripeWebhookEventRepository.java ==========
+package com.joinlivora.backend.payments.repository;
+
+import com.joinlivora.backend.payments.model.StripeWebhookEvent;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public interface StripeWebhookEventRepository extends JpaRepository<StripeWebhookEvent, String> {
+    boolean existsByEventId(String eventId);
+}
+
+========== payments\service\WebhookReplayProtectionService.java ==========
+package com.joinlivora.backend.payments.service;
+
+import com.joinlivora.backend.payments.exception.WebhookReplayException;
+import com.joinlivora.backend.payments.model.StripeWebhookEvent;
+import com.joinlivora.backend.payments.repository.StripeWebhookEventRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+
+/**
+ * Service responsible for preventing duplicate processing of Stripe webhook events.
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class WebhookReplayProtectionService {
+
+    private final StripeWebhookEventRepository repository;
+
+    /**
+     * Checks if the given Stripe event ID has already been processed.
+     *
+     * @param eventId The Stripe event ID (e.g., evt_...)
+     * @return true if the event is a duplicate, false otherwise
+     */
+    @Transactional(readOnly = true)
+    public boolean isReplay(String eventId) {
+        if (eventId == null || eventId.isBlank()) {
+            return false;
+        }
+        return repository.existsByEventId(eventId);
+    }
+
+    /**
+     * Records a Stripe event ID to prevent future replays.
+     *
+     * @param eventId   The Stripe event ID
+     * @param eventType The type of the Stripe event
+     */
+    @Transactional
+    public void recordEvent(String eventId, String eventType) {
+        if (eventId == null || eventId.isBlank()) {
+            return;
+        }
+
+        if (repository.existsByEventId(eventId)) {
+            throw new WebhookReplayException("Stripe event " + eventId + " has already been processed");
+        }
+
+        StripeWebhookEvent event = StripeWebhookEvent.builder()
+                .eventId(eventId)
+                .type(eventType)
+                .receivedAt(Instant.now())
+                .build();
+
+        repository.save(event);
+        log.info("Recorded Stripe event: {} ({})", eventId, eventType);
+    }
+}
+
+========== payments\exception\WebhookReplayException.java ==========
+package com.joinlivora.backend.payments.exception;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.ResponseStatus;
+
+@ResponseStatus(HttpStatus.CONFLICT)
+public class WebhookReplayException extends RuntimeException {
+    public WebhookReplayException(String message) {
+        super(message);
+    }
+}
+
+========== payment\BillingController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/billing")
+@RequiredArgsConstructor
+@Slf4j
+public class BillingController {
+
+    private final PaymentRepository paymentRepository;
+    private final UserService userService;
+    private final SubscriptionService subscriptionService;
+
+    @GetMapping("/portal")
+    public ResponseEntity<Map<String, String>> openBillingPortal(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Billing portal requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        String portalUrl = subscriptionService.createBillingPortalSession(user);
+        return ResponseEntity.ok(Map.of("url", portalUrl));
+    }
+
+    @GetMapping("/invoices")
+    public ResponseEntity<List<Map<String, Object>>> getInvoices(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("SECURITY: Fetching invoices for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        List<Payment> payments = paymentRepository.findAllByUserOrderByCreatedAtDesc(user);
+        
+        List<Map<String, Object>> invoices = payments.stream().map(payment -> {
+            Map<String, Object> invoice = new java.util.HashMap<>();
+            invoice.put("id", payment.getId().toString());
+            invoice.put("amount", payment.getAmount().multiply(new java.math.BigDecimal(100)).intValue());
+            invoice.put("currency", payment.getCurrency().toUpperCase());
+            invoice.put("status", "COMPLETED");
+            invoice.put("date", payment.getCreatedAt().toString());
+            invoice.put("pdfUrl", payment.getReceiptUrl() != null ? payment.getReceiptUrl() : "#");
+            return invoice;
+        }).toList();
+
+        return ResponseEntity.ok(invoices);
+    }
+}
+
+========== payment\SubscriptionController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.payment.dto.SubscriptionResponse;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/subscriptions")
+@RequiredArgsConstructor
+@Slf4j
+public class SubscriptionController {
+
+    private final SubscriptionService subscriptionService;
+    private final UserService userService;
+
+    @GetMapping("/plans")
+    public ResponseEntity<java.util.List<com.joinlivora.backend.payment.dto.SubscriptionPlanDTO>> getPlans() {
+        return ResponseEntity.ok(subscriptionService.getAvailablePlans());
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<SubscriptionResponse> getMySubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("SECURITY: Fetching subscription for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        SubscriptionResponse response = subscriptionService.getSubscriptionForUser(user);
+        if (response != null) {
+            return ResponseEntity.ok(response);
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
+    @PostMapping("/cancel")
+    public ResponseEntity<Void> cancelSubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Cancellation requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        subscriptionService.cancelSubscription(user);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/resume")
+    public ResponseEntity<Void> resumeSubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Resume requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        subscriptionService.resumeSubscription(user);
+        return ResponseEntity.ok().build();
+    }
+}
+
+========== payment\SubscriptionService.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.exception.PaymentLockedException;
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import com.joinlivora.backend.payment.dto.SubscriptionResponse;
+import com.joinlivora.backend.user.User;
+import com.stripe.StripeClient;
+import com.stripe.model.Subscription;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service("subscriptionService")
+@RequiredArgsConstructor
+@Slf4j
+public class SubscriptionService {
+
+    private final UserSubscriptionRepository subscriptionRepository;
+    private final StripeClient stripeClient;
+    private final PaymentService paymentService;
+
+    @org.springframework.beans.factory.annotation.Value("${stripe.premium-plan-id}")
+    private String premiumPlanId;
+
+    public java.util.List<com.joinlivora.backend.payment.dto.SubscriptionPlanDTO> getAvailablePlans() {
+        return java.util.List.of(
+            com.joinlivora.backend.payment.dto.SubscriptionPlanDTO.builder()
+                .id("free")
+                .name("Free")
+                .price("0")
+                .currency("EUR")
+                .interval("month")
+                .features(java.util.List.of(
+                    "Basic content access",
+                    "Community forum"
+                ))
+                .isPopular(false)
+                .build(),
+            com.joinlivora.backend.payment.dto.SubscriptionPlanDTO.builder()
+                .id("premium")
+                .name("Premium")
+                .price("9.99")
+                .currency("EUR")
+                .interval("month")
+                .features(java.util.List.of(
+                    "Full access to all premium content",
+                    "Priority support",
+                    "Exclusive community features",
+                    "Ad-free experience"
+                ))
+                .isPopular(true)
+                .stripePriceId(premiumPlanId)
+                .build()
+        );
+    }
+
+    @Cacheable(value = "subscriptions", key = "#user.email")
+    public SubscriptionResponse getSubscriptionForUser(User user) {
+        return subscriptionRepository.findFirstByUserOrderByCreatedAtDesc(user)
+                .map(sub -> SubscriptionResponse.builder()
+                        .status(sub.getStatus())
+                        .currentPeriodEnd(sub.getCurrentPeriodEnd())
+                        .cancelAtPeriodEnd(sub.isCancelAtPeriodEnd())
+                        .nextInvoiceDate(sub.getNextInvoiceDate())
+                        .paymentMethodBrand(sub.getPaymentMethodBrand())
+                        .last4(sub.getLast4())
+                        .build())
+                .orElse(null);
+    }
+
+    @Transactional
+    @CacheEvict(value = "subscriptions", key = "#user.email")
+    public void cancelSubscription(User user) throws com.stripe.exception.StripeException {
+        UserSubscription userSub = subscriptionRepository.findFirstByUserOrderByCreatedAtDesc(user)
+                .orElseThrow(() -> new ResourceNotFoundException("No active subscription found"));
+
+        if (userSub.getStripeSubscriptionId() != null) {
+            log.info("SECURITY: Canceling Stripe subscription: {} for creator: {}", userSub.getStripeSubscriptionId(), user.getEmail());
+            Subscription stripeSub = stripeClient.subscriptions().retrieve(userSub.getStripeSubscriptionId());
+            // cancel at end of period
+            stripeSub.cancel(com.stripe.param.SubscriptionCancelParams.builder()
+                    .setProrate(false)
+                    .build());
+            
+            userSub.setStatus(SubscriptionStatus.CANCELED);
+            subscriptionRepository.save(userSub);
+        }
+    }
+
+    @Transactional
+    @CacheEvict(value = "subscriptions", key = "#user.email")
+    public void resumeSubscription(User user) throws com.stripe.exception.StripeException {
+        paymentService.checkPaymentLock(user, null, null, null, null, null);
+        UserSubscription userSub = subscriptionRepository.findFirstByUserOrderByCreatedAtDesc(user)
+                .orElseThrow(() -> new ResourceNotFoundException("No subscription found"));
+
+        if (userSub.getStatus() == SubscriptionStatus.CANCELED && userSub.getStripeSubscriptionId() != null) {
+            log.info("SECURITY: Resuming Stripe subscription: {} for creator: {}", userSub.getStripeSubscriptionId(), user.getEmail());
+            Subscription stripeSub = stripeClient.subscriptions().retrieve(userSub.getStripeSubscriptionId());
+            
+            stripeSub.update(com.stripe.param.SubscriptionUpdateParams.builder()
+                    .setCancelAtPeriodEnd(false)
+                    .build());
+            
+            userSub.setStatus(SubscriptionStatus.ACTIVE);
+            subscriptionRepository.save(userSub);
+        }
+    }
+
+    public String createBillingPortalSession(User user) throws com.stripe.exception.StripeException {
+        paymentService.checkPaymentLock(user, null, null, null, null, null);
+        // Find latest subscription to get customer ID (or we can use email if customer exists)
+        // In a real app, we should store Stripe Customer ID in User entity
+        // For now, we'll try to find it via the subscription
+        UserSubscription userSub = subscriptionRepository.findFirstByUserOrderByCreatedAtDesc(user)
+                .orElseThrow(() -> new ResourceNotFoundException("No subscription found"));
+        
+        if (userSub.getStripeSubscriptionId() == null) {
+            throw new ResourceNotFoundException("No Stripe subscription ID found");
+        }
+        
+        Subscription stripeSub = stripeClient.subscriptions().retrieve(userSub.getStripeSubscriptionId());
+        String customerId = stripeSub.getCustomer();
+        
+        com.stripe.param.billingportal.SessionCreateParams params = 
+                com.stripe.param.billingportal.SessionCreateParams.builder()
+                .setCustomer(customerId)
+                .setReturnUrl("https://joinlivora.com/billing") // Should be configurable
+                .build();
+        
+        com.stripe.model.billingportal.Session session = stripeClient.billingPortal().sessions().create(params);
+        return session.getUrl();
+    }
+
+    @CacheEvict(value = "subscriptions", key = "#user.email")
+    public void evictSubscriptionCache(User user) {
+        // Method only for cache eviction
+    }
+
+}
+

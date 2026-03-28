@@ -14,6 +14,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -415,13 +416,7 @@ public class CreatorEarningsService {
     }
 
     public void creditCreatorBalance(User creator, long tokens) {
-        CreatorEarnings earnings = creatorEarningsRepository.findByUserWithLock(creator)
-                .orElse(CreatorEarnings.builder()
-                        .user(creator)
-                        .totalEarnedTokens(0)
-                        .availableTokens(0)
-                        .lockedTokens(0)
-                        .build());
+        CreatorEarnings earnings = getOrCreateCreatorEarnings(creator);
         
         earnings.setTotalEarnedTokens(earnings.getTotalEarnedTokens() + tokens);
         earnings.setAvailableTokens(earnings.getAvailableTokens() + tokens);
@@ -429,17 +424,40 @@ public class CreatorEarningsService {
     }
 
     public void creditLockedBalance(User creator, long tokens) {
-        CreatorEarnings earnings = creatorEarningsRepository.findByUserWithLock(creator)
-                .orElse(CreatorEarnings.builder()
-                        .user(creator)
-                        .totalEarnedTokens(0)
-                        .availableTokens(0)
-                        .lockedTokens(0)
-                        .build());
+        CreatorEarnings earnings = getOrCreateCreatorEarnings(creator);
 
         earnings.setTotalEarnedTokens(earnings.getTotalEarnedTokens() + tokens);
         earnings.setLockedTokens(earnings.getLockedTokens() + tokens);
         creatorEarningsRepository.save(earnings);
+    }
+
+    /**
+     * Atomically gets or creates a CreatorEarnings row for the given creator.
+     * Uses try-insert-catch-duplicate pattern to prevent race conditions
+     * where two concurrent first-tips both see empty and both create new rows.
+     * The UNIQUE(user_id) constraint on creator_earnings guarantees exactly one row per creator.
+     */
+    private CreatorEarnings getOrCreateCreatorEarnings(User creator) {
+        Optional<CreatorEarnings> existing = creatorEarningsRepository.findByUserWithLock(creator);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+
+        try {
+            CreatorEarnings newEarnings = CreatorEarnings.builder()
+                    .user(creator)
+                    .totalEarnedTokens(0)
+                    .availableTokens(0)
+                    .lockedTokens(0)
+                    .build();
+            creatorEarningsRepository.saveAndFlush(newEarnings);
+            return newEarnings;
+        } catch (DataIntegrityViolationException e) {
+            log.debug("Concurrent CreatorEarnings creation for creator {}, fetching existing row", creator.getId());
+            return creatorEarningsRepository.findByUserWithLock(creator)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "CreatorEarnings row not found after duplicate key conflict for creator " + creator.getId()));
+        }
     }
 
     public void updateLiveStats(User creator, BigDecimal netAmount, long netTokens, EarningSource source) {

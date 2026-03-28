@@ -146,6 +146,8 @@ export function useWebRTCStream({
       
       const { id: consumerId, kind: cKind, rtpParameters, appData } = response;
 
+      console.log("CONSUMER RECEIVED:", cKind, "consumerId:", consumerId, "producerId:", actualProducerId);
+
       const consumer = await recvTransport.current.consume({
         id: consumerId,
         producerId: actualProducerId,
@@ -182,6 +184,10 @@ export function useWebRTCStream({
         if (videoRef.current.srcObject !== remoteStreamRef.current) {
           videoRef.current.srcObject = remoteStreamRef.current;
         }
+
+        console.log("VIDEO ELEMENT:", videoRef.current);
+        console.log("VIDEO ELEMENT - autoplay:", videoRef.current.autoplay, "muted:", videoRef.current.muted, "playsInline:", videoRef.current.playsInline);
+        console.log("VIDEO TRACK ATTACHED:", track, "kind:", track.kind, "readyState:", track.readyState, "enabled:", track.enabled, "muted:", track.muted);
         
         videoRef.current.playsInline = true;
         videoRef.current.autoplay = true;
@@ -205,8 +211,9 @@ export function useWebRTCStream({
       consumer.resume();
       log(`[${instanceId}] Consumer resumed: ${consumerId}`);
 
+      // setPreferredLayers temporarily disabled — let mediasoup SFU
+      // select the best layer automatically until Firefox producer is confirmed working.
       if (cKind === 'video') {
-        consumer.setPreferredLayers({ temporalLayer: 2 });
         consumer.appData.currentLayer = 2;
       }
 
@@ -238,9 +245,9 @@ export function useWebRTCStream({
           }
 
           if (consumer.appData.currentLayer !== targetLayer) {
-            consumer.setPreferredLayers({ spatialLayer: targetLayer, temporalLayer: 2 });
+            // setPreferredLayers temporarily disabled — see note above
             consumer.appData.currentLayer = targetLayer;
-            log(`[${instanceId}] Adaptive Switching: Consumer ${consumerId} moved to layer ${targetLayer}`, { packetLoss, rtt, bytesReceived });
+            log(`[${instanceId}] Adaptive Switching: Consumer ${consumerId} would move to layer ${targetLayer}`, { packetLoss, rtt, bytesReceived });
           }
         });
       }
@@ -274,6 +281,7 @@ export function useWebRTCStream({
       });
       if (!active) return;
 
+      console.log("RECV TRANSPORT CONFIG:", JSON.stringify(transportData, null, 2));
       const transport = device.createRecvTransport(transportData);
       if (!active) {
         transport.close();
@@ -307,7 +315,7 @@ export function useWebRTCStream({
         }
 
         transport.appData.restartAttempts =
-          (transport.appData.restartAttempts ?? 0) + 1;
+          (Number(transport.appData.restartAttempts) || 0) + 1;
         const attempt = transport.appData.restartAttempts;
 
         try {

@@ -1,18 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { CreatorProfileSettings } from '../../services/creatorSettingsService';
 import * as creatorSettingsService from '../../services/creatorSettingsService';
+import creatorService from '../../api/creatorService';
 import CreatorSidebar from '../../components/CreatorSidebar';
 import DashboardSkeleton from '../../components/DashboardSkeleton';
 import SEO from '../../components/SEO';
+import SafeAvatar from '../../components/ui/SafeAvatar';
+import CountrySelect from '../../components/ui/CountrySelect';
+import StateSelect from '../../components/ui/StateSelect';
+import LanguageSelect from '../../components/ui/LanguageSelect';
 import { useAuth } from '../../auth/useAuth';
+import { getCountryLabel } from '../../data/countries';
 
 const INTERESTED_IN_OPTIONS = ['Men', 'Women', 'Couples', 'Trans', 'Everyone'];
-const LANGUAGE_OPTIONS = ['English', 'Dutch', 'Spanish', 'German', 'French', 'Italian'];
 
 const CreatorSettingsPage: React.FC = () => {
   const { user, authLoading } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isUploadingBanner, setIsUploadingBanner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
@@ -26,6 +33,7 @@ const CreatorSettingsPage: React.FC = () => {
     interestedIn: [],
     languages: [],
     location: '',
+    state: '',
     bodyType: '',
     ethnicity: '',
     eyeColor: '',
@@ -39,6 +47,8 @@ const CreatorSettingsPage: React.FC = () => {
     instagramUrl: '',
     showAge: true,
     showLocation: true,
+    locationVisibility: 'full',
+    customLocation: '',
     showLanguages: true,
     showBodyType: true,
     showEthnicity: true,
@@ -62,6 +72,9 @@ const CreatorSettingsPage: React.FC = () => {
             // Ensure defaults for booleans if missing
             showAge: data.showAge ?? true,
             showLocation: data.showLocation ?? true,
+            // Migration: showLocation boolean → locationVisibility
+            locationVisibility: data.locationVisibility ?? (data.showLocation === false ? 'hidden' : 'full'),
+            customLocation: data.customLocation ?? '',
             showLanguages: data.showLanguages ?? true,
             showBodyType: data.showBodyType ?? true,
             showEthnicity: data.showEthnicity ?? true,
@@ -78,6 +91,28 @@ const CreatorSettingsPage: React.FC = () => {
 
     fetchSettings();
   }, [user, authLoading]);
+
+  const handleImageUpload = async (file: File, type: 'PROFILE' | 'BANNER') => {
+    try {
+      if (type === 'PROFILE') setIsUploadingAvatar(true);
+      else setIsUploadingBanner(true);
+      setError(null);
+      const updatedProfile = await creatorService.uploadCreatorImage(file, type);
+      if (type === 'PROFILE') {
+        setFormData(prev => ({ ...prev, avatarUrl: updatedProfile.avatarUrl || '' }));
+      } else {
+        setFormData(prev => ({ ...prev, bannerUrl: updatedProfile.bannerUrl || '' }));
+      }
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(`Failed to upload ${type.toLowerCase()} image:`, err);
+      setError(err.response?.data?.message || `Failed to upload ${type.toLowerCase()} image. Please try again.`);
+    } finally {
+      if (type === 'PROFILE') setIsUploadingAvatar(false);
+      else setIsUploadingBanner(false);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -106,7 +141,7 @@ const CreatorSettingsPage: React.FC = () => {
       
       <main style={styles.main}>
         <div style={styles.header}>
-          <h1 style={styles.title}>Creator Settings</h1>
+          <h1 style={styles.title}>Profile Settings</h1>
           <p style={styles.subtitle}>Edit your public profile and visibility preferences</p>
         </div>
 
@@ -187,15 +222,61 @@ const CreatorSettingsPage: React.FC = () => {
             <div style={styles.grid}>
               <div style={styles.field}>
                 <label style={styles.label}>Profile Image</label>
-                <button type="button" style={styles.uploadPlaceholder}>
-                  <span>📸</span> Upload Avatar
-                </button>
+                <div style={styles.uploadArea}>
+                  <SafeAvatar
+                    src={formData.avatarUrl || null}
+                    name={formData.displayName}
+                    size={64}
+                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <input
+                      type="file"
+                      id="avatar-upload"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImageUpload(file, 'PROFILE');
+                        e.target.value = '';
+                      }}
+                    />
+                    <label htmlFor="avatar-upload" style={styles.uploadButton}>
+                      {isUploadingAvatar ? '⏳ Uploading...' : '📸 Change Avatar'}
+                    </label>
+                    <p style={styles.uploadHelp}>JPG or PNG. Max 10MB.</p>
+                  </div>
+                </div>
               </div>
               <div style={styles.field}>
                 <label style={styles.label}>Banner Image</label>
-                <button type="button" style={styles.uploadPlaceholder}>
-                  <span>🖼️</span> Upload Banner
-                </button>
+                <div style={styles.uploadArea}>
+                  {formData.bannerUrl ? (
+                    <img
+                      src={formData.bannerUrl}
+                      alt="Banner"
+                      style={{ width: '120px', height: '64px', objectFit: 'cover', borderRadius: '8px' }}
+                    />
+                  ) : (
+                    <div style={{ width: '120px', height: '64px', borderRadius: '8px', backgroundColor: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717A', fontSize: '0.8rem' }}>No banner</div>
+                  )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <input
+                      type="file"
+                      id="banner-upload"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImageUpload(file, 'BANNER');
+                        e.target.value = '';
+                      }}
+                    />
+                    <label htmlFor="banner-upload" style={styles.uploadButton}>
+                      {isUploadingBanner ? '⏳ Uploading...' : '🖼️ Change Banner'}
+                    </label>
+                    <p style={styles.uploadHelp}>Recommended: 1200×400px.</p>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -255,45 +336,46 @@ const CreatorSettingsPage: React.FC = () => {
               </div>
             </div>
 
+            <div style={styles.field}>
+              <label style={styles.label}>Languages</label>
+              <LanguageSelect
+                value={formData.languages as string[] || []}
+                onChange={(codes) =>
+                  setFormData({
+                    ...formData,
+                    languages: codes
+                  })
+                }
+              />
+            </div>
+
             <div style={styles.grid}>
               <div style={styles.field}>
-                <label style={styles.label}>Languages (Multi-select)</label>
-                <select
-                  multiple
-                  name="languages"
-                  value={formData.languages as string[] || []}
-                  onChange={(e) => {
-                    const options = Array.from(e.target.selectedOptions).map(o => o.value)
+                <label style={styles.label}>Country</label>
+                <CountrySelect
+                  value={formData.location ?? ''}
+                  onChange={(code) =>
                     setFormData({
                       ...formData,
-                      languages: options
+                      location: code,
+                      state: ''
                     })
-                  }}
-                  style={styles.multiSelect}
-                >
-                  {LANGUAGE_OPTIONS.map(lang => (
-                    <option key={lang} value={lang}>{lang}</option>
-                  ))}
-                </select>
-                <p style={{ ...styles.sectionSubtitle, fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                  Hold Ctrl (Cmd on Mac) to select multiple
-                </p>
+                  }
+                  placeholder="Select your country..."
+                />
               </div>
               
               <div style={styles.field}>
-                <label style={styles.label}>Location</label>
-                <input
-                  type="text"
-                  name="location"
-                  value={formData.location}
-                  onChange={(e) =>
+                <label style={styles.label}>State / Province</label>
+                <StateSelect
+                  countryCode={formData.location ?? ''}
+                  value={formData.state ?? ''}
+                  onChange={(val) =>
                     setFormData({
                       ...formData,
-                      location: e.target.value
+                      state: val
                     })
                   }
-                  style={styles.input}
-                  placeholder="e.g. Los Angeles, CA"
                 />
               </div>
             </div>
@@ -544,7 +626,6 @@ const CreatorSettingsPage: React.FC = () => {
             <div style={styles.toggleGrid}>
               {[
                 { label: 'Show Age', name: 'showAge' },
-                { label: 'Show Location', name: 'showLocation' },
                 { label: 'Show Languages', name: 'showLanguages' },
                 { label: 'Show Body Type', name: 'showBodyType' },
                 { label: 'Show Ethnicity', name: 'showEthnicity' },
@@ -568,6 +649,86 @@ const CreatorSettingsPage: React.FC = () => {
                   </div>
                 </div>
               ))}
+            </div>
+
+            {/* Location Visibility */}
+            <div style={{ marginTop: '2rem', borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '2rem' }}>
+              <div style={styles.field}>
+                <label style={styles.label}>Location Visibility</label>
+                <p style={{ fontSize: '0.85rem', color: '#71717A', margin: '0 0 0.5rem 0' }}>
+                  Control how your location appears to viewers
+                </p>
+                <select
+                  value={formData.locationVisibility ?? 'full'}
+                  onChange={(e) => {
+                    const val = e.target.value as 'hidden' | 'country' | 'full' | 'custom';
+                    setFormData({
+                      ...formData,
+                      locationVisibility: val,
+                      // Keep showLocation in sync for backward compatibility
+                      showLocation: val !== 'hidden',
+                    });
+                  }}
+                  style={styles.select}
+                >
+                  <option value="hidden">🚫 Hide location</option>
+                  <option value="country">🌍 Show country only</option>
+                  <option value="full">📍 Show full location</option>
+                  <option value="custom">✏️ Custom location text</option>
+                </select>
+              </div>
+
+              {formData.locationVisibility === 'custom' && (
+                <div style={{ ...styles.field, marginTop: '1rem' }}>
+                  <label style={styles.label}>Custom Location</label>
+                  <input
+                    type="text"
+                    value={formData.customLocation ?? ''}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        customLocation: e.target.value
+                      })
+                    }
+                    maxLength={60}
+                    placeholder='e.g. On your screen 🔥'
+                    style={styles.input}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: '#71717A' }}>
+                    {(formData.customLocation ?? '').length}/60
+                  </span>
+                </div>
+              )}
+
+              {/* Preview */}
+              {formData.locationVisibility !== 'hidden' && (
+                <div style={{
+                  marginTop: '1rem',
+                  padding: '0.875rem 1.25rem',
+                  backgroundColor: '#08080A',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                }}>
+                  <span style={{ fontSize: '0.8rem', color: '#71717A' }}>Preview:</span>
+                  <span style={{ fontSize: '0.95rem', color: '#F4F4F5' }}>
+                    📍{' '}
+                    {formData.locationVisibility === 'country'
+                      ? (formData.location ? getCountryLabel(formData.location) : 'No country set')
+                      : formData.locationVisibility === 'full'
+                        ? (formData.state && formData.location
+                          ? `${formData.state}, ${getCountryLabel(formData.location)}`
+                          : formData.location
+                            ? getCountryLabel(formData.location)
+                            : 'No location set')
+                        : formData.locationVisibility === 'custom'
+                          ? (formData.customLocation || formData.location ? (formData.customLocation || getCountryLabel(formData.location ?? '')) : 'No custom text set')
+                          : ''}
+                  </span>
+                </div>
+              )}
             </div>
           </section>
 
@@ -719,20 +880,33 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: '0.95rem',
     color: '#F4F4F5',
   },
-  uploadPlaceholder: {
+  uploadArea: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: '0.75rem',
-    padding: '1.5rem',
+    gap: '1rem',
+    padding: '1rem',
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    border: '2px dashed rgba(255, 255, 255, 0.1)',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
     borderRadius: '12px',
-    color: '#A1A1AA',
-    fontSize: '1rem',
+  },
+  uploadButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    padding: '0.625rem 1.25rem',
+    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+    border: '1px solid rgba(99, 102, 241, 0.3)',
+    borderRadius: '10px',
+    color: '#818cf8',
+    fontSize: '0.875rem',
     fontWeight: '600',
     cursor: 'pointer',
     transition: 'background-color 0.2s',
+  },
+  uploadHelp: {
+    fontSize: '0.75rem',
+    color: '#71717A',
+    margin: 0,
   },
   toggleGrid: {
     display: 'grid',

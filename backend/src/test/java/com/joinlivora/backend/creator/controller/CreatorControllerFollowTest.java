@@ -3,6 +3,7 @@ package com.joinlivora.backend.creator.controller;
 import com.joinlivora.backend.creator.controller.CreatorController;
 import com.joinlivora.backend.creator.follow.service.CreatorFollowService;
 import com.joinlivora.backend.creator.service.CreatorProfileService;
+import com.joinlivora.backend.creator.service.CreatorSearchService;
 import com.joinlivora.backend.security.JwtAuthenticationFilter;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
@@ -33,6 +34,9 @@ class CreatorControllerFollowTest {
 
     @MockBean
     private CreatorProfileService creatorProfileService;
+
+    @MockBean
+    private CreatorSearchService creatorSearchService;
 
     @MockBean
     private com.joinlivora.backend.creator.service.CreatorPostService creatorPostService;
@@ -75,6 +79,15 @@ class CreatorControllerFollowTest {
 
     @MockBean
     private com.joinlivora.backend.user.UserRepository userRepository;
+
+    @MockBean
+    private com.joinlivora.backend.content.ContentService contentService;
+
+    @MockBean
+    private com.joinlivora.backend.content.MediaUnlockService mediaUnlockService;
+
+    @MockBean
+    private com.joinlivora.backend.websocket.PresenceService presenceService;
 
     @BeforeEach
     void setup() throws jakarta.servlet.ServletException, java.io.IOException {

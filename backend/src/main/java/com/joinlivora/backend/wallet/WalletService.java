@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
-@Service
 @RequiredArgsConstructor
 @Slf4j
 @Deprecated

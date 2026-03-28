@@ -23,6 +23,7 @@ export interface GoalStatusEvent {
   percentage: number;
   isCompleted?: boolean;
   active?: boolean;
+  milestones?: { amount: number; label: string; reached: boolean }[];
 }
 
 export interface ActionTriggeredEvent {

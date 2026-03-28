@@ -11,6 +11,7 @@ import com.joinlivora.backend.creator.follow.service.CreatorFollowService;
 import com.joinlivora.backend.creator.service.CreatorPostService;
 import com.joinlivora.backend.presence.service.CreatorPresenceService;
 import com.joinlivora.backend.creator.service.CreatorProfileService;
+import com.joinlivora.backend.creator.service.CreatorSearchService;
 import com.joinlivora.backend.security.UserPrincipal;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
@@ -38,6 +39,7 @@ import java.util.stream.Collectors;
 public class CreatorController {
 
     private final CreatorProfileService creatorProfileService;
+    private final CreatorSearchService creatorSearchService;
     private final CreatorPostService creatorPostService;
     private final CreatorFollowService followService;
     private final UserService userService;
@@ -48,7 +50,7 @@ public class CreatorController {
 
     @GetMapping("/online")
     public ResponseEntity<List<HomepageCreatorDto>> getOnlineCreators() {
-        return ResponseEntity.ok(creatorProfileService.getPublicCreatorsForHomepage());
+        return ResponseEntity.ok(creatorSearchService.getPublicCreatorsForHomepage());
     }
 
     @GetMapping("/posts/explore")
@@ -62,7 +64,7 @@ public class CreatorController {
 
     @GetMapping("/explore")
     public ResponseEntity<List<ExploreCreatorResponse>> getExploreCreators() {
-        List<ExploreCreatorResponse> creators = creatorProfileService.getExploreCreators();
+        List<ExploreCreatorResponse> creators = creatorSearchService.getExploreCreators();
         if (creators.isEmpty()) {
             return ResponseEntity.noContent().build();
         }
@@ -75,7 +77,7 @@ public class CreatorController {
             @RequestParam(defaultValue = "12") int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(creatorProfileService.getExploreCreatorsList(pageable));
+        return ResponseEntity.ok(creatorSearchService.getExploreCreatorsList(pageable));
     }
 
     @GetMapping
@@ -96,7 +98,7 @@ public class CreatorController {
             @RequestParam(defaultValue = "24") int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
-        return ResponseEntity.ok(creatorProfileService.getCreators(category, search, country, liveOnly, paidFilter, sort, bodyType, hairColor, eyeColor, ethnicity, interestedIn, language, pageable));
+        return ResponseEntity.ok(creatorSearchService.getCreators(category, search, country, liveOnly, paidFilter, sort, bodyType, hairColor, eyeColor, ethnicity, interestedIn, language, pageable));
     }
 
 

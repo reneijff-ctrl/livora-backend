@@ -10,6 +10,7 @@ export interface CreatorProfileSettings {
   interestedIn?: string | string[];
   languages?: string | string[];
   location?: string;
+  state?: string;
   bodyType?: string;
   ethnicity?: string;
   eyeColor?: string;
@@ -23,6 +24,8 @@ export interface CreatorProfileSettings {
   instagramUrl?: string;
   showAge: boolean;
   showLocation: boolean;
+  locationVisibility?: 'hidden' | 'country' | 'full' | 'custom';
+  customLocation?: string;
   showLanguages: boolean;
   showBodyType: boolean;
   showEthnicity: boolean;

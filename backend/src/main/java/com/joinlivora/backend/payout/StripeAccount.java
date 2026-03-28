@@ -13,7 +13,7 @@ import java.util.UUID;
 })
 @Getter
 @Setter
-@ToString(exclude = "creator")
+@ToString(exclude = "user")
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor

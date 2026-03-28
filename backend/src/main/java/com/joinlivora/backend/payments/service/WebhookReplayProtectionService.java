@@ -1,17 +1,19 @@
 package com.joinlivora.backend.payments.service;
 
-import com.joinlivora.backend.payments.exception.WebhookReplayException;
 import com.joinlivora.backend.payments.model.StripeWebhookEvent;
 import com.joinlivora.backend.payments.repository.StripeWebhookEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
 /**
  * Service responsible for preventing duplicate processing of Stripe webhook events.
+ * Uses atomic INSERT (unique constraint on eventId) to guarantee only one processor wins.
  */
 @Service
 @RequiredArgsConstructor
@@ -21,42 +23,64 @@ public class WebhookReplayProtectionService {
     private final StripeWebhookEventRepository repository;
 
     /**
-     * Checks if the given Stripe event ID has already been processed.
+     * Atomically claims a Stripe event for processing.
+     * Uses INSERT with unique PK constraint — only one concurrent caller can succeed.
      *
-     * @param eventId The Stripe event ID (e.g., evt_...)
-     * @return true if the event is a duplicate, false otherwise
+     * @param eventId   The Stripe event ID (e.g., evt_...)
+     * @param eventType The type of the Stripe event
+     * @return true if successfully claimed, false if already exists (replay)
      */
-    @Transactional(readOnly = true)
-    public boolean isReplay(String eventId) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean tryClaimEvent(String eventId, String eventType) {
         if (eventId == null || eventId.isBlank()) {
             return false;
         }
-        return repository.existsByEventId(eventId);
+
+        try {
+            StripeWebhookEvent event = StripeWebhookEvent.builder()
+                    .eventId(eventId)
+                    .type(eventType)
+                    .status(StripeWebhookEvent.Status.PROCESSING)
+                    .receivedAt(Instant.now())
+                    .build();
+
+            repository.saveAndFlush(event);
+            log.info("Claimed Stripe event for processing: {} ({})", eventId, eventType);
+            return true;
+
+        } catch (DataIntegrityViolationException e) {
+            log.info("Stripe event already claimed (replay): {} ({})", eventId, eventType);
+            return false;
+        }
     }
 
     /**
-     * Records a Stripe event ID to prevent future replays.
+     * Marks an event as successfully processed.
      *
-     * @param eventId   The Stripe event ID
-     * @param eventType The type of the Stripe event
+     * @param eventId The Stripe event ID
      */
-    @Transactional
-    public void recordEvent(String eventId, String eventType) {
-        if (eventId == null || eventId.isBlank()) {
-            return;
-        }
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markCompleted(String eventId) {
+        repository.findById(eventId).ifPresent(event -> {
+            event.setStatus(StripeWebhookEvent.Status.COMPLETED);
+            event.setProcessedAt(Instant.now());
+            repository.save(event);
+            log.info("Marked Stripe event as COMPLETED: {}", eventId);
+        });
+    }
 
-        if (repository.existsByEventId(eventId)) {
-            throw new WebhookReplayException("Stripe event " + eventId + " has already been processed");
-        }
-
-        StripeWebhookEvent event = StripeWebhookEvent.builder()
-                .eventId(eventId)
-                .type(eventType)
-                .receivedAt(Instant.now())
-                .build();
-
-        repository.save(event);
-        log.info("Recorded Stripe event: {} ({})", eventId, eventType);
+    /**
+     * Marks an event as failed. This allows future retry attempts
+     * to reclaim events stuck in PROCESSING state.
+     *
+     * @param eventId The Stripe event ID
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markFailed(String eventId) {
+        repository.findById(eventId).ifPresent(event -> {
+            event.setStatus(StripeWebhookEvent.Status.FAILED);
+            repository.save(event);
+            log.info("Marked Stripe event as FAILED: {}", eventId);
+        });
     }
 }

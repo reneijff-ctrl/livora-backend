@@ -17,6 +17,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -28,6 +29,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -85,8 +87,8 @@ class CreatorEarningsServiceTest {
         UUID roomId = UUID.randomUUID();
         
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
 
         creatorEarningsService.recordTokenTipEarning(viewer, creator, amount, roomId, null);
@@ -115,8 +117,8 @@ class CreatorEarningsServiceTest {
         payment.setStripePaymentIntentId("pi_123");
 
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
 
         creatorEarningsService.recordTipEarning(payment, creator);
@@ -148,8 +150,8 @@ class CreatorEarningsServiceTest {
         payment.setStripePaymentIntentId("pi_highlight");
 
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
 
         creatorEarningsService.recordHighlightedChatEarning(payment, creator);
@@ -174,8 +176,8 @@ class CreatorEarningsServiceTest {
         UUID roomId = UUID.randomUUID();
         
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
         
         // Mock dependencies for getAggregatedEarnings (called via broadcastUpdate)
@@ -244,7 +246,7 @@ class CreatorEarningsServiceTest {
                 .totalEarnedTokens(1000)
                 .availableTokens(1000)
                 .build()));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.of(com.joinlivora.backend.payout.CreatorEarnings.builder()
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.of(com.joinlivora.backend.payout.CreatorEarnings.builder()
                 .creator(creator)
                 .totalEarned(new BigDecimal("10.00"))
                 .availableBalance(new BigDecimal("10.00"))
@@ -272,8 +274,8 @@ class CreatorEarningsServiceTest {
         long amount = 33;
         
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
 
         creatorEarningsService.recordTokenTipEarning(viewer, creator, amount, null, null);
@@ -295,8 +297,8 @@ class CreatorEarningsServiceTest {
         when(payoutHoldService.createHold(eq(creator), eq(com.joinlivora.backend.fraud.model.RiskLevel.HIGH), any(), anyString()))
                 .thenReturn(hold);
         when(creatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
-        when(creatorEarningsRepository.save(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(payoutCreatorEarningsRepository.findByCreator(creator)).thenReturn(Optional.empty());
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(payoutCreatorEarningsRepository.findByUserWithLock(creator)).thenReturn(Optional.empty());
         when(platformBalanceRepository.findSingleWithLock()).thenReturn(Optional.empty());
 
         creatorEarningsService.recordTokenTipEarning(viewer, creator, amount, roomId, com.joinlivora.backend.fraud.model.RiskLevel.HIGH);
@@ -339,6 +341,49 @@ class CreatorEarningsServiceTest {
         assertEquals(new BigDecimal("10.00"), dto.getTodayRevenue());
         assertEquals(new BigDecimal("20.00"), dto.getPendingPayout());
         assertNotNull(dto.getLastUpdated());
+    }
+
+    @Test
+    void creditCreatorBalance_ConcurrentFirstTip_ShouldHandleDuplicateKeyConflict() {
+        // Simulate race condition: findByUserWithLock returns empty, saveAndFlush throws duplicate key
+        when(creatorEarningsRepository.findByUserWithLock(creator))
+                .thenReturn(Optional.empty())  // first call during getOrCreate
+                .thenReturn(Optional.of(CreatorEarnings.builder()  // second call after duplicate conflict
+                        .user(creator)
+                        .totalEarnedTokens(0)
+                        .availableTokens(0)
+                        .lockedTokens(0)
+                        .build()));
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+
+        creatorEarningsService.creditCreatorBalance(creator, 100);
+
+        // Verify it retried with findByUserWithLock after conflict
+        verify(creatorEarningsRepository, times(2)).findByUserWithLock(creator);
+        // Verify balance was updated on the fetched existing row
+        verify(creatorEarningsRepository).save(argThat(earnings ->
+                earnings.getTotalEarnedTokens() == 100 && earnings.getAvailableTokens() == 100));
+    }
+
+    @Test
+    void creditLockedBalance_ConcurrentFirstTip_ShouldHandleDuplicateKeyConflict() {
+        when(creatorEarningsRepository.findByUserWithLock(creator))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(CreatorEarnings.builder()
+                        .user(creator)
+                        .totalEarnedTokens(0)
+                        .availableTokens(0)
+                        .lockedTokens(0)
+                        .build()));
+        when(creatorEarningsRepository.saveAndFlush(any(CreatorEarnings.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+
+        creatorEarningsService.creditLockedBalance(creator, 50);
+
+        verify(creatorEarningsRepository, times(2)).findByUserWithLock(creator);
+        verify(creatorEarningsRepository).save(argThat(earnings ->
+                earnings.getTotalEarnedTokens() == 50 && earnings.getLockedTokens() == 50));
     }
 }
 

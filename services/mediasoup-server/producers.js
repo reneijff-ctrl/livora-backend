@@ -1,7 +1,9 @@
 const { getRoom } = require('./rooms');
 
 const createProducer = async (roomId, transport, kind, rtpParameters, appData) => {
+  console.log('NEW PRODUCER: kind=%s, roomId=%s', kind, roomId);
   const producer = await transport.produce({ kind, rtpParameters, appData });
+  console.log('PRODUCER CREATED: id=%s, kind=%s, roomId=%s', producer.id, producer.kind, roomId);
   
   const room = getRoom(roomId);
   if (room) {

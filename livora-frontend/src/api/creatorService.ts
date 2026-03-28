@@ -2,9 +2,8 @@ import apiClient, { publicApiClient } from './apiClient';
 import { ContentItem } from './contentService';
 import { ICreator } from '../domain/creator/ICreator';
 import { adaptCreator } from '../adapters/CreatorAdapter';
-import { CreatorPost, FollowStatus, ExplorePost, CreatorEarningsDashboard, CreatorTip, CreatorMonetization, User } from '../types';
+import { CreatorPost, FollowStatus, ExplorePost, CreatorEarningsDashboard, CreatorTip, CreatorMonetization } from '../types';
 import authStore from '../store/authStore';
-import { webSocketService } from '../websocket/webSocketService';
 import { CreatorVerificationRequest, CreatorVerificationResponse } from '../types/verification';
 
 // Cache for creator pages to prevent redundant network requests
@@ -65,7 +64,7 @@ const creatorService = {
 
     const response = await apiClient.post<any>('/creator/profile/upload', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Content-Type': undefined,
       },
     });
     return adaptCreator(response.data);
@@ -234,7 +233,7 @@ const creatorService = {
    */
   async getFollowStatus(creatorId: number): Promise<FollowStatus> {
     const token = localStorage.getItem("token");
-    if (!token) return { followed: false, followersCount: 0 };
+    if (!token) return { following: false, followers: 0 };
     const response = await apiClient.get<FollowStatus>(`/creators/${creatorId}/follow/status`);
     return response.data;
   },
@@ -435,6 +434,36 @@ const creatorService = {
   },
 
   /**
+   * Fetches top creators, optionally filtered by country (sorted by followers DESC).
+   */
+  async getTopCreators(country?: string, size = 10): Promise<ICreator[]> {
+    try {
+      const params: Record<string, any> = { page: 0, size };
+      if (country) params.country = country;
+      const response = await publicApiClient.get<any>('/public/creators/top', { params });
+      const content = response.data?.content ?? [];
+      return Array.isArray(content) ? content.map(adaptCreator) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Fetches live creators, optionally filtered by country (sorted by viewers DESC).
+   */
+  async getLiveCreators(country?: string, size = 10): Promise<ICreator[]> {
+    try {
+      const params: Record<string, any> = { page: 0, size };
+      if (country) params.country = country;
+      const response = await publicApiClient.get<any>('/public/creators/live', { params });
+      const content = response.data?.content ?? [];
+      return Array.isArray(content) ? content.map(adaptCreator) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  /**
    * Stripe Connect methods
    */
   async getStripeStatus(): Promise<{ hasAccount: boolean; onboardingCompleted: boolean; payoutsEnabled: boolean }> {
@@ -554,7 +583,7 @@ const creatorService = {
 
     const response = await apiClient.post<{ url: string }>('/creator/verification/upload-id', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Content-Type': undefined,
       },
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
@@ -575,7 +604,7 @@ const creatorService = {
 
     const response = await apiClient.post<{ url: string }>('/creator/verification/upload-selfie', formData, {
       headers: {
-        'Content-Type': 'multipart/form-data',
+        'Content-Type': undefined,
       },
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {

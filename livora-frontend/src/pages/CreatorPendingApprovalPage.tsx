@@ -35,7 +35,7 @@ const CreatorPendingApprovalPage: React.FC = () => {
           you can review your profile details.
         </p>
         <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-          <Link to="/creator/profile" style={{
+          <Link to="/creator/settings" style={{
             padding: '10px 14px',
             borderRadius: 8,
             background: 'var(--btn-bg, #2563EB)',

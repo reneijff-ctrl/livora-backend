@@ -11,16 +11,26 @@ const createWebRtcTransport = async (roomId, producing = false) => {
     router = await getLeastLoadedRouter(room);
   }
 
-  console.log("Mediasoup transport created with announcedIp:", process.env.MEDIASOUP_ANNOUNCED_IP);
+  // announcedIp = the IP clients will use to reach this server.
+  // - Local dev: set MEDIASOUP_ANNOUNCED_IP=127.0.0.1 (or your LAN IP for cross-device testing)
+  // - Production: set to your public/floating IP (e.g., Hetzner server IP)
+  const announcedIp = process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1";
+
+  // listenIp = the interface mediasoup binds to for RTP/RTCP.
+  // "0.0.0.0" binds all interfaces — required for LAN and production.
+  // Only use "127.0.0.1" if you're certain all clients are on localhost.
+  const listenIp = process.env.MEDIASOUP_LISTEN_IP || "0.0.0.0";
+
   const minPort = parseInt(process.env.RTC_MIN_PORT || '40000');
   const maxPort = parseInt(process.env.RTC_MAX_PORT || '49999');
-  console.log("Mediasoup transport ports:", `${minPort}-${maxPort}`);
+
+  console.log("Mediasoup transport config:", { listenIp, announcedIp, ports: `${minPort}-${maxPort}` });
 
   const transport = await router.createWebRtcTransport({
     listenIps: [
       {
-        ip: process.env.MEDIASOUP_LISTEN_IP || "127.0.0.1",
-        announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP || "127.0.0.1"
+        ip: listenIp,
+        announcedIp: announcedIp
       }
     ],
 
@@ -68,11 +78,46 @@ const createWebRtcTransport = async (roomId, producing = false) => {
     transports.delete(transport.id);
   });
 
+  // ICE servers for NAT traversal:
+  // - STUN: free, handles simple NAT (symmetric NAT still fails)
+  // - TURN: required for production behind firewalls/symmetric NAT
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' }
+  ];
+
+  // Add TURN server if configured (required for production)
+  if (process.env.TURN_SERVER_URL) {
+    iceServers.push({
+      urls: process.env.TURN_SERVER_URL,       // e.g., "turn:turn.joinlivora.com:3478"
+      username: process.env.TURN_USERNAME,      // e.g., "livora"
+      credential: process.env.TURN_CREDENTIAL  // e.g., "secret-password"
+    });
+    // Also add TURNS (TLS) if available — works through restrictive firewalls
+    if (process.env.TURN_SERVER_TLS_URL) {
+      iceServers.push({
+        urls: process.env.TURN_SERVER_TLS_URL,  // e.g., "turns:turn.joinlivora.com:5349"
+        username: process.env.TURN_USERNAME,
+        credential: process.env.TURN_CREDENTIAL
+      });
+    }
+  }
+
+  console.log("WEBRTC TRANSPORT OPTIONS:", {
+    id: transport.id,
+    listenIps: [{ ip: listenIp, announcedIp }],
+    enableUdp: true,
+    enableTcp: true,
+    iceCandidates: transport.iceCandidates,
+    iceServers: iceServers.map(s => ({ urls: s.urls })) // log URLs only, not credentials
+  });
+
   return {
     id: transport.id,
     iceParameters: transport.iceParameters,
     iceCandidates: transport.iceCandidates,
-    dtlsParameters: transport.dtlsParameters
+    dtlsParameters: transport.dtlsParameters,
+    iceServers
   };
 };
 

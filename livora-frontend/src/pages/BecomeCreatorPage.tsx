@@ -6,6 +6,9 @@ import SEO from '../components/SEO';
 import { showToast } from '../components/Toast';
 import Loader from '../components/Loader';
 import SelectField from '../components/ui/SelectField';
+import CountrySelect from '../components/ui/CountrySelect';
+import StateSelect from '../components/ui/StateSelect';
+import LanguageSelect from '../components/ui/LanguageSelect';
 
 const GENDER_OPTIONS = [
   { value: 'Male', label: 'Male' },
@@ -84,8 +87,9 @@ const BecomeCreatorPage: React.FC = () => {
     birthDate: '',
     gender: '',
     interestedIn: '',
-    languages: '',
+    languages: [] as string[],
     location: '',
+    state: '',
     bodyType: '',
     heightCm: '',
     weightKg: '',
@@ -121,8 +125,13 @@ const BecomeCreatorPage: React.FC = () => {
             birthDate: (user.creatorProfile as any).birthDate || '',
             gender: (user.creatorProfile as any).gender || '',
             interestedIn: (user.creatorProfile as any).interestedIn || '',
-            languages: (user.creatorProfile as any).languages || '',
+            languages: (() => {
+              const lang = (user.creatorProfile as any).languages || '';
+              if (Array.isArray(lang)) return lang;
+              return typeof lang === 'string' && lang ? lang.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+            })(),
             location: (user.creatorProfile as any).location || '',
+            state: (user.creatorProfile as any).state || '',
             bodyType: (user.creatorProfile as any).bodyType || '',
             heightCm: (user.creatorProfile as any).heightCm || '',
             weightKg: (user.creatorProfile as any).weightKg || '',
@@ -158,7 +167,10 @@ const BecomeCreatorPage: React.FC = () => {
       if (step === 1) {
         await creatorService.saveOnboardingBasics(basics);
       } else if (step === 2) {
-        await creatorService.saveOnboardingProfile(profile);
+        await creatorService.saveOnboardingProfile({
+          ...profile,
+          languages: profile.languages.join(', '),
+        });
       } else if (step === 3) {
         await creatorService.saveOnboardingVerification(verification);
       }
@@ -356,11 +368,28 @@ const BecomeCreatorPage: React.FC = () => {
                 />
                 <div>
                   <label className="block text-sm font-medium text-zinc-400 mb-2">Languages</label>
-                  <input type="text" value={profile.languages} onChange={e => setProfile({...profile, languages: e.target.value})} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3" />
+                  <LanguageSelect
+                    value={profile.languages}
+                    onChange={(codes) => setProfile({...profile, languages: codes})}
+                    placeholder="Select languages"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-400 mb-2">Location</label>
-                  <input type="text" value={profile.location} onChange={e => setProfile({...profile, location: e.target.value})} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3" />
+                  <label className="block text-sm font-medium text-zinc-400 mb-2">Country</label>
+                  <CountrySelect
+                    value={profile.location}
+                    onChange={(code) => setProfile({...profile, location: code, state: ''})}
+                    placeholder="Select country"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-400 mb-2">State / Province</label>
+                  <StateSelect
+                    countryCode={profile.location}
+                    value={profile.state}
+                    onChange={(val) => setProfile({...profile, state: val})}
+                    placeholder="Select state/province"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

@@ -628,6 +628,7 @@ public class WebRTCSignalingController {
         });
     }
 
+    @SuppressWarnings("unchecked")
     @Transactional
     public void finalizeSignalState(SignalContext context, SignalingMessage result, SimpMessageHeaderAccessor headerAccessor) {
         String type = context.getType();

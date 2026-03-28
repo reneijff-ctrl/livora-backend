@@ -10,7 +10,6 @@ const apiClient = axios.create({
   baseURL: 'http://localhost:8080/api',
   withCredentials: true,
   headers: {
-    'Content-Type': 'application/json',
     'Accept': 'application/json',
   },
   timeout: 10000,
@@ -162,38 +161,9 @@ const handleApiError = async (error: any) => {
   return Promise.reject(error);
 };
 
-/**
- * Utility function to normalize API response data to prevent runtime crashes.
- * Ensures null/undefined values are converted to safe defaults (e.g., empty objects).
- */
-function normalizeData(data: any): any {
-  if (data === null || data === undefined) {
-    return {}
-  }
-
-  if (Array.isArray(data)) {
-    return data ?? []
-  }
-
-  if (typeof data === "object") {
-    const normalized: any = {}
-    for (const key in data) {
-      normalized[key] = normalizeData(data[key])
-    }
-    return normalized
-  }
-
-  return data
-}
-
 // Add response interceptors
 apiClient.interceptors.response.use(
-  (response) => {
-    if (response.status !== 204) {
-      response.data = normalizeData(response.data)
-    }
-    return response
-  },
+  (response) => response,
   handleApiError
 );
 

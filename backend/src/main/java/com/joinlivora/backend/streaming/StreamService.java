@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
+import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 
 @Service
@@ -311,6 +312,9 @@ public class StreamService {
         int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
         int fraudRiskScore = session.getCreator() != null ? fraudRiskScoreService.getLatestScore(session.getCreator().getId()) : 0;
         adminRealtimeEventService.broadcastStreamStarted(session, viewerCount, fraudRiskScore);
+
+        // Broadcast public stream status for homepage real-time updates
+        broadcastPublicStreamStatus(session, true, viewerCount);
     }
 
     @EventListener
@@ -319,6 +323,30 @@ public class StreamService {
         LivestreamSession session = event.getSession();
         int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
         adminRealtimeEventService.broadcastStreamStopped(session, viewerCount, event.getReason(), event.getStreamId());
+
+        // Broadcast public stream status for homepage real-time updates
+        broadcastPublicStreamStatus(session, false, 0);
+    }
+
+    private void broadcastPublicStreamStatus(LivestreamSession session, boolean isLive, int viewerCount) {
+        try {
+            User creator = session.getCreator();
+            if (creator == null) return;
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("creatorUserId", creator.getId());
+            payload.put("isLive", isLive);
+            payload.put("viewerCount", viewerCount);
+            payload.put("displayName", creator.getDisplayName());
+
+            String eventType = isLive ? "STREAM_STARTED" : "STREAM_ENDED";
+            RealtimeMessage message = RealtimeMessage.of(eventType, payload);
+            messagingTemplate.convertAndSend("/exchange/amq.topic/streams.status", message);
+
+            log.debug("STREAM: Public status broadcast: {} for creator {}", eventType, creator.getId());
+        } catch (Exception e) {
+            log.error("STREAM: Failed to broadcast public stream status: {}", e.getMessage());
+        }
     }
 
     public void notifyStreamStarted(LivestreamSession session) {

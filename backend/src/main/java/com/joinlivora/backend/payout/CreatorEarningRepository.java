@@ -110,4 +110,13 @@ public interface CreatorEarningRepository extends JpaRepository<CreatorEarning, 
 
     @Query("SELECT e.creator.id, SUM(e.netAmount) FROM CreatorEarning e WHERE e.creator IN :creators GROUP BY e.creator.id")
     List<Object[]> sumTotalEarningsForCreators(@Param("creators") java.util.Collection<User> creators);
+
+    @Query(value = "SELECT CAST(e.created_at AS DATE) AS earning_date, SUM(e.net_amount), COUNT(DISTINCT e.user_id) " +
+           "FROM creator_earnings_history e WHERE e.creator_id = :creatorId AND e.created_at BETWEEN :start AND :end " +
+           "GROUP BY CAST(e.created_at AS DATE) ORDER BY earning_date ASC",
+           nativeQuery = true)
+    List<Object[]> findDailyEarningsSummaryByCreatorAndPeriod(
+            @Param("creatorId") Long creatorId,
+            @Param("start") Instant start,
+            @Param("end") Instant end);
 }

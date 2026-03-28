@@ -22,7 +22,6 @@ interface WsContextType {
   presenceMap: Record<number, PresenceUpdate>;
   trackPresence: (userIds: number[]) => void;
   untrackPresence: (userIds: number[]) => void;
-  thumbnailCacheBuster: number;
 }
 
 const WsContext = createContext<WsContextType | undefined>(undefined);
@@ -31,7 +30,6 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { token, isAuthenticated } = useAuth();
   const [connected, setConnected] = useState(webSocketService.isConnected());
   const [presenceMap, setPresenceMap] = useState<Record<number, PresenceUpdate>>({});
-  const [thumbnailCacheBuster, setThumbnailCacheBuster] = useState(Date.now());
   const instanceId = useRef(Math.random().toString(36).substring(2, 9)).current;
 
   // Tracked creators for cleanup strategy
@@ -104,15 +102,6 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     });
   }, []);
 
-  // Periodic refresh of thumbnail cache buster (every 30 seconds)
-  useEffect(() => {
-    const busterInterval = setInterval(() => {
-      setThumbnailCacheBuster(Date.now());
-    }, 30000);
-
-    return () => clearInterval(busterInterval);
-  }, []);
-
   // Periodic cleanup of presenceMap to prevent unbounded growth
   useEffect(() => {
     const cleanupInterval = setInterval(() => {
@@ -142,9 +131,7 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // WebSocket connectivity management based on authentication state
   useEffect(() => {
     log(`[${instanceId}] WebSocket sync effect triggered. isAuthenticated: ${isAuthenticated}, token present: ${!!token}`);
-    if (token) {
-      log(`[${instanceId}] Current token: ${token}`);
-    }
+    // Token value intentionally not logged to prevent credential leakage
     
     const isCurrentlyConnected = webSocketService.isConnected();
     
@@ -225,8 +212,7 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     presenceMap,
     trackPresence,
     untrackPresence,
-    thumbnailCacheBuster
-  }), [subscribe, connected, handleDisconnect, presenceMap, trackPresence, untrackPresence, thumbnailCacheBuster]);
+  }), [subscribe, connected, handleDisconnect, presenceMap, trackPresence, untrackPresence]);
 
   return (
     <WsContext.Provider value={contextValue}>
@@ -241,6 +227,24 @@ export const useWs = () => {
     throw new Error('useWs must be used within a WsProvider');
   }
   return context;
+};
+
+/**
+ * Hook to get a thumbnail cache buster value that updates every 30 seconds.
+ * Only components that call this hook will re-render on the 30s interval,
+ * instead of every useWs() consumer re-rendering via the context.
+ */
+export const useThumbnailCacheBuster = (): number => {
+  const [cacheBuster, setCacheBuster] = useState(Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCacheBuster(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return cacheBuster;
 };
 
 /**

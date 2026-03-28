@@ -7,7 +7,7 @@ import com.joinlivora.backend.user.UserRepository;
 import com.joinlivora.backend.wallet.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.retry.annotation.Backoff;
@@ -49,7 +49,7 @@ public class TokenWalletService {
      */
     @Transactional
     @Retryable(
-            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            retryFor = {CannotAcquireLockException.class, PessimisticLockingFailureException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 200, multiplier = 2)
     )
@@ -73,7 +73,7 @@ public class TokenWalletService {
      */
     @Transactional
     @Retryable(
-            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            retryFor = {CannotAcquireLockException.class, PessimisticLockingFailureException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 200, multiplier = 2)
     )
@@ -98,7 +98,7 @@ public class TokenWalletService {
      */
     @Transactional
     @Retryable(
-            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            retryFor = {CannotAcquireLockException.class, PessimisticLockingFailureException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 200, multiplier = 2)
     )
@@ -135,18 +135,18 @@ public class TokenWalletService {
      */
     @Transactional
     @Retryable(
-            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            retryFor = {CannotAcquireLockException.class, PessimisticLockingFailureException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 200, multiplier = 2)
     )
     public void addTokens(Long userId, long amount, WalletTransactionType type, String reference) {
-        log.info("WEBHOOK_DEBUG: addTokens ENTERED userId={}, amount={}, type={}, ref={}", userId, amount, type, reference);
+        log.debug("WEBHOOK_DEBUG: addTokens ENTERED userId={}, amount={}, type={}, ref={}", userId, amount, type, reference);
         if (amount <= 0) {
             throw new IllegalArgumentException("Amount must be positive");
         }
 
         UserWallet balance = getOrCreateBalance(userId, true);
-        log.info("WEBHOOK_DEBUG: addTokens wallet found, currentBalance={}, adding={}", balance.getBalance(), amount);
+        log.debug("WEBHOOK_DEBUG: addTokens wallet found, currentBalance={}, adding={}", balance.getBalance(), amount);
         balance.setBalance(balance.getBalance() + amount);
         balance.setUpdatedAt(Instant.now());
         tokenBalanceRepository.save(balance);
@@ -170,7 +170,7 @@ public class TokenWalletService {
      */
     @Transactional
     @Retryable(
-            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            retryFor = {CannotAcquireLockException.class, PessimisticLockingFailureException.class},
             maxAttempts = 3,
             backoff = @Backoff(delay = 200, multiplier = 2)
     )

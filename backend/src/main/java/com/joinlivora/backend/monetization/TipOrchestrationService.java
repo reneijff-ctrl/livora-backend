@@ -236,23 +236,24 @@ public class TipOrchestrationService {
             throw new IllegalStateException("Cannot tip: Stream is not live");
         }
 
-        // 2. Validate sender balance
-        long availableBalance = paymentService.getAvailableTokenBalance(viewer.getId());
-        if (availableBalance < amount) {
-            throw new com.joinlivora.backend.exception.InsufficientBalanceException("Insufficient tokens for tip");
-        }
-
-        // 3. Deduct tokens via TokenWalletService
-        paymentService.deductTokens(viewer.getId(), amount, roomId);
-
-        // 4. Calculate fees and earnings
-        paymentService.recordTokenTipEarning(viewer, creator, amount, roomId, maxRiskLevel);
-
-        // 5. Persist TipRecord (Token-specific)
+        // 2. Calculate fees upfront
         BigDecimal gross = BigDecimal.valueOf(amount);
         BigDecimal feeRate = paymentService.getPlatformFeeRate();
         long platformFee = gross.multiply(feeRate).setScale(0, java.math.RoundingMode.HALF_UP).longValue();
         long creatorEarning = amount - platformFee;
+
+        // 3. Persist Tip as PENDING first (safe: no money moved yet)
+        Tip tip = Tip.builder()
+                .senderUserId(viewer)
+                .creatorUserId(creator)
+                .room(room)
+                .amount(BigDecimal.valueOf(amount))
+                .currency("TOKEN")
+                .message(message)
+                .clientRequestId(clientRequestId)
+                .status(TipStatus.PENDING)
+                .build();
+        Tip savedTip = persistenceService.saveTip(tip);
 
         TipRecord tipRecord = TipRecord.builder()
                 .viewer(viewer)
@@ -264,30 +265,33 @@ public class TipOrchestrationService {
                 .build();
         persistenceService.saveTipRecord(tipRecord);
 
-        // 7. Persist Tip record (Unified record)
-        Tip tip = Tip.builder()
-                .senderUserId(viewer)
-                .creatorUserId(creator)
-                .room(room)
-                .amount(BigDecimal.valueOf(amount))
-                .currency("TOKEN")
-                .message(message)
-                .clientRequestId(clientRequestId)
-                .status(TipStatus.COMPLETED)
-                .build();
+        // 4. Deduct tokens (pessimistic lock on wallet — throws InsufficientBalanceException if insufficient)
+        try {
+            paymentService.deductTokens(viewer.getId(), amount, roomId);
+        } catch (Exception e) {
+            savedTip.setStatus(TipStatus.FAILED);
+            persistenceService.saveTip(savedTip);
+            throw e;
+        }
 
+        // 5. Record creator earnings
+        paymentService.recordTokenTipEarning(viewer, creator, amount, roomId, maxRiskLevel);
+
+        // 6. Mark tip as COMPLETED (or PENDING_REVIEW for elevated risk)
         if (maxRiskLevel == RiskLevel.MEDIUM || maxRiskLevel == RiskLevel.HIGH) {
             log.info("Marking tip as PENDING_REVIEW due to {} fraud risk for creator {}: score={}, reasons={}",
                     maxRiskLevel, viewer.getEmail(), risk.score(), risk.reasons());
-            tip.setStatus(TipStatus.PENDING_REVIEW);
+            savedTip.setStatus(TipStatus.PENDING_REVIEW);
+        } else {
+            savedTip.setStatus(TipStatus.COMPLETED);
         }
+        persistenceService.saveTip(savedTip);
 
-        Tip savedTip = persistenceService.saveTip(tip);
         riskService.recordFraudDecision(new UUID(0L, viewer.getId()), roomId, savedTip.getId() != null ? savedTip.getId().getLeastSignificantBits() : null, risk);
 
         persistenceService.logAudit(tipRecord, ipAddress, null);
 
-        // Notifications
+        // Notifications (after all DB operations succeed)
         notificationService.notifyTip(savedTip, giftName);
 
         log.info("MONETIZATION: Token tip of {} tokens from {} to {} in room {}",
@@ -296,7 +300,7 @@ public class TipOrchestrationService {
         // Re-evaluate AML risk for creator
         riskService.evaluateAMLRules(creator, BigDecimal.ZERO);
 
-        // 9. Return tip result DTO
+        // 7. Return tip result DTO
         return TipResult.builder()
                 .tipId(savedTip.getId())
                 .senderEmail(viewer.getEmail())

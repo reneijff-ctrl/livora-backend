@@ -29,7 +29,6 @@ import CreatorUploadPage from './pages/CreatorUploadPage';
 import CreatorContentPage from './pages/CreatorContentPage';
 import CreatorEarningsDashboard from './pages/CreatorEarningsDashboard';
 import CreatorVerificationPage from './pages/CreatorVerificationPage';
-import CreatorProfileEditPage from './pages/CreatorProfileEditPage';
 import CreatorAnalyticsPage from './pages/CreatorAnalyticsPage';
 import CreatorLiveDashboard from './pages/CreatorLiveDashboard';
 import CreatorPendingApprovalPage from './pages/CreatorPendingApprovalPage';
@@ -238,11 +237,7 @@ export const router = createBrowserRouter([
               },
               {
                 path: 'profile',
-                element: (
-                  <RequireRole role="CREATOR">
-                    <CreatorProfileEditPage />
-                  </RequireRole>
-                ),
+                element: <Navigate to="/creator/settings" replace />,
               },
               {
                 path: 'upload',

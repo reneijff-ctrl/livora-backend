@@ -77,6 +77,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("charge.dispute.created");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "charge.dispute.created")).thenReturn(true);
 
         Dispute dispute = mock(Dispute.class);
         when(dispute.getPaymentIntent()).thenReturn(piId);
@@ -114,6 +115,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("charge.dispute.created");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "charge.dispute.created")).thenReturn(true);
 
         Dispute dispute = mock(Dispute.class);
         when(dispute.getPaymentIntent()).thenReturn(piId);
@@ -144,6 +146,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("charge.dispute.closed");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "charge.dispute.closed")).thenReturn(true);
 
         Dispute dispute = mock(Dispute.class);
         when(dispute.getPaymentIntent()).thenReturn(piId);
@@ -179,6 +182,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("charge.dispute.closed");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "charge.dispute.closed")).thenReturn(true);
 
         Dispute dispute = mock(Dispute.class);
         when(dispute.getPaymentIntent()).thenReturn(piId);
@@ -218,6 +222,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("payment_intent.succeeded");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "payment_intent.succeeded")).thenReturn(true);
 
         PaymentIntent intent = mock(PaymentIntent.class);
         when(intent.getId()).thenReturn(piId);
@@ -249,6 +254,7 @@ class StripeWebhookServiceTest {
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("payment_intent.succeeded");
         when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "payment_intent.succeeded")).thenReturn(true);
 
         PaymentIntent intent = mock(PaymentIntent.class);
         when(intent.getId()).thenReturn(piId);
@@ -279,6 +285,8 @@ class StripeWebhookServiceTest {
         // Given
         Event event = mock(Event.class);
         when(event.getType()).thenReturn("customer.created");
+        when(event.getId()).thenReturn("evt_unhandled");
+        when(replayProtectionService.tryClaimEvent("evt_unhandled", "customer.created")).thenReturn(true);
 
         EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
         when(event.getDataObjectDeserializer()).thenReturn(deserializer);
@@ -289,6 +297,81 @@ class StripeWebhookServiceTest {
 
         // Then
         verifyNoInteractions(eventPublisher);
+    }
+
+    @Test
+    void processEvent_ReplayedEvent_ShouldSkipProcessingEntirely() {
+        // Given
+        String eventId = "evt_replayed";
+        Event event = mock(Event.class);
+        when(event.getId()).thenReturn(eventId);
+        when(event.getType()).thenReturn("payment_intent.succeeded");
+        when(replayProtectionService.tryClaimEvent(eventId, "payment_intent.succeeded")).thenReturn(false);
+
+        // When
+        service.processEvent(event);
+
+        // Then — no deserialization, no handler calls, no status updates
+        verify(event, never()).getDataObjectDeserializer();
+        verifyNoInteractions(paymentRepository);
+        verifyNoInteractions(fraudEvaluationService);
+        verifyNoInteractions(chargebackService);
+        verify(replayProtectionService, never()).markCompleted(any());
+        verify(replayProtectionService, never()).markFailed(any());
+    }
+
+    @Test
+    void processEvent_NewEvent_ShouldMarkCompletedAfterProcessing() {
+        // Given
+        String eventId = "evt_new";
+        String piId = "pi_new";
+        UUID userId = UUID.randomUUID();
+
+        Event event = mock(Event.class);
+        when(event.getType()).thenReturn("payment_intent.succeeded");
+        when(event.getId()).thenReturn(eventId);
+        when(replayProtectionService.tryClaimEvent(eventId, "payment_intent.succeeded")).thenReturn(true);
+
+        PaymentIntent intent = mock(PaymentIntent.class);
+        when(intent.getId()).thenReturn(piId);
+        when(intent.getAmount()).thenReturn(1000L);
+        when(intent.getCurrency()).thenReturn("eur");
+        when(intent.getMetadata()).thenReturn(Map.of("creator", userId.toString()));
+
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+        when(deserializer.getObject()).thenReturn(Optional.of(intent));
+
+        when(paymentRepository.findByStripePaymentIntentId(piId)).thenReturn(Optional.empty());
+
+        // When
+        service.processEvent(event);
+
+        // Then — event should be marked completed after successful processing
+        verify(replayProtectionService).markCompleted(eventId);
+        verify(replayProtectionService, never()).markFailed(any());
+        verify(fraudEvaluationService).processSuccessfulPayment(userId, piId, 1000L, "eur", eventId, null);
+    }
+
+    @Test
+    void processEvent_FailedProcessing_ShouldMarkFailedAndRethrow() {
+        // Given
+        String eventId = "evt_fail";
+        Event event = mock(Event.class);
+        when(event.getId()).thenReturn(eventId);
+        when(event.getType()).thenReturn("payment_intent.succeeded");
+        when(replayProtectionService.tryClaimEvent(eventId, "payment_intent.succeeded")).thenReturn(true);
+
+        EventDataObjectDeserializer deserializer = mock(EventDataObjectDeserializer.class);
+        when(event.getDataObjectDeserializer()).thenReturn(deserializer);
+        when(deserializer.getObject()).thenReturn(Optional.empty());
+
+        // When — deserialization returns empty, no exception thrown, but no handler called
+        service.processEvent(event);
+
+        // Then — still marked completed (no exception = success)
+        verify(replayProtectionService).markCompleted(eventId);
+        verify(replayProtectionService, never()).markFailed(any());
     }
 }
 

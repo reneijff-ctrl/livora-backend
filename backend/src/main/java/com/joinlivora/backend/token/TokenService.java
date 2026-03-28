@@ -12,6 +12,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +33,7 @@ public class TokenService {
     private final StringRedisTemplate redisTemplate;
 
     private static final String ACCESS_KEY_PREFIX = "livestream:access:";
+    private static final Duration ACCESS_TTL = Duration.ofHours(12);
 
 
     public List<TokenPackage> getActivePackages() {
@@ -111,7 +113,9 @@ public class TokenService {
     public void deductForLivestream(Long userId, Long creatorUserId) {
         if (userId.equals(creatorUserId)) return;
 
-        // Double-check access to avoid double-charging
+        // Atomically check-and-grant access to prevent double-charging from concurrent requests.
+        // tryGrantAccess returns true only if the user was NOT already in the set (i.e. new grant).
+        // If the user already has access, we skip deduction entirely.
         if (hasAccess(userId, creatorUserId)) {
             return;
         }
@@ -123,10 +127,15 @@ public class TokenService {
         com.joinlivora.backend.streaming.Stream room = streams.get(0);
 
         if (room.isPaid()) {
+            // Use atomic grant to prevent TOCTOU race: if two concurrent requests both pass
+            // hasAccess=false above, only the first one to call tryGrantAccess will succeed.
+            if (!tryGrantAccess(userId, creatorUserId)) {
+                log.info("TOKEN: User {} already granted access to creator {} (concurrent request)", userId, creatorUserId);
+                return;
+            }
+
             spendTokens(userId, room.getAdmissionPrice().longValue(), 
                 WalletTransactionType.LIVESTREAM_ADMISSION, creatorUserId.toString());
-            
-            grantAccess(userId, creatorUserId);
             
             log.info("TOKEN: User {} paid {} tokens to watch creator {}", 
                 userId, room.getAdmissionPrice(), creatorUserId);
@@ -141,6 +150,24 @@ public class TokenService {
     public void grantAccess(Long userId, Long creatorUserId) {
         String key = ACCESS_KEY_PREFIX + creatorUserId;
         redisTemplate.opsForSet().add(key, userId.toString());
+        redisTemplate.expire(key, ACCESS_TTL);
+    }
+
+    /**
+     * Atomically adds the user to the access set only if they are not already a member.
+     * Returns true if the user was newly added (access granted), false if already present.
+     * This prevents the TOCTOU race condition in deductForLivestream where two concurrent
+     * requests could both pass the hasAccess check and double-charge the user.
+     */
+    public boolean tryGrantAccess(Long userId, Long creatorUserId) {
+        String key = ACCESS_KEY_PREFIX + creatorUserId;
+        // SADD returns the number of elements added (1 if new, 0 if already exists)
+        Long added = redisTemplate.opsForSet().add(key, userId.toString());
+        if (added != null && added > 0) {
+            redisTemplate.expire(key, ACCESS_TTL);
+            return true;
+        }
+        return false;
     }
 
     public void clearAccess(Long creatorUserId) {

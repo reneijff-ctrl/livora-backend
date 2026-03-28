@@ -50,10 +50,8 @@ const TipBar: React.FC<TipBarProps> = ({ roomId, onTip, onGiftClick, minTip = 1 
       // Success: Clear custom input
       setCustomAmount('');
       
-      // Notify parent if callback provided
-      if (onTip) {
-        onTip(tipAmount);
-      }
+      // UI update is driven by WebSocket monetization event — no optimistic update here
+      // to avoid double-counting in leaderboard/top tipper.
     } catch (err: any) {
       console.error('TIPPING: Failed to send tip', err);
       setError(err.response?.data?.message || 'Tipping failed');

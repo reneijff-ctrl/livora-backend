@@ -44,7 +44,40 @@ public class CreatorAnalyticsService {
         LegacyCreatorProfile profile = creatorProfileRepository.findByUser(creator)
                 .orElseThrow(() -> new ResourceNotFoundException("Creator profile not found"));
 
-        return getAnalyticsByProfileId(profile.getId(), from, to);
+        List<CreatorAnalyticsResponseDTO> preAggregated = getAnalyticsByProfileId(profile.getId(), from, to);
+        if (!preAggregated.isEmpty()) {
+            return preAggregated;
+        }
+
+        // Fallback: compute daily analytics from real earnings data when
+        // the pre-aggregated creator_analytics table has no entries (batch job hasn't run yet)
+        return computeDailyAnalyticsFromEarnings(creator, from, to);
+    }
+
+    private List<CreatorAnalyticsResponseDTO> computeDailyAnalyticsFromEarnings(User creator, LocalDate from, LocalDate to) {
+        Instant start = from.atStartOfDay(ZoneOffset.UTC).toInstant();
+        Instant end = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+
+        List<Object[]> dailyRows = earningRepository.findDailyEarningsSummaryByCreatorAndPeriod(creator.getId(), start, end);
+        log.info("Daily analytics count: {}", dailyRows.size());
+
+        return dailyRows.stream()
+                .map(row -> {
+                    LocalDate date = row[0] instanceof LocalDate ld ? ld
+                            : ((java.sql.Date) row[0]).toLocalDate();
+                    BigDecimal earnings = row[1] != null ? (BigDecimal) row[1] : BigDecimal.ZERO;
+                    long uniqueUsers = row[2] != null ? ((Number) row[2]).longValue() : 0;
+                    return new CreatorAnalyticsResponseDTO(
+                            date,
+                            earnings,
+                            uniqueUsers,  // viewers (proxy: unique paying users)
+                            0,            // subscriptions (not available from earnings alone)
+                            0,            // returningViewers
+                            0,            // avgSessionDuration
+                            0.0           // messagesPerViewer
+                    );
+                })
+                .toList();
     }
 
     @Transactional(readOnly = true)

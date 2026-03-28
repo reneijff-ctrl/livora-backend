@@ -36,14 +36,10 @@ const CreatorSidebar: React.FC = () => {
           <span style={styles.navIcon}>📊</span> Creator Dashboard
         </Link>
         <Link to="/creator/settings" style={getLinkStyle('/creator/settings')} className={getLinkClass('/creator/settings')}>
-          <span style={styles.navIcon}>⚙️</span> Creator Settings
+          <span style={styles.navIcon}>👤</span> Profile Settings
         </Link>
         <Link to="/creator/live" style={getLinkStyle('/creator/live')} className={getLinkClass('/creator/live')}>
           <span style={styles.navIcon}>🔴</span> Go Live
-        </Link>
-        {/* Analytics hidden - not implemented yet */}
-        <Link to="/creator/profile" style={getLinkStyle('/creator/profile')} className={getLinkClass('/creator/profile')}>
-          <span style={styles.navIcon}>👤</span> Profile
         </Link>
         <Link to="/creator/earnings" style={getLinkStyle('/creator/earnings')} className={getLinkClass('/creator/earnings')}>
           <span style={styles.navIcon}>💰</span> Earnings

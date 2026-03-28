@@ -12,7 +12,7 @@ import java.util.UUID;
 @Table(name = "user_badges")
 @Getter
 @Setter
-@ToString(exclude = {"creator", "badge"})
+@ToString(exclude = {"user", "badge"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor

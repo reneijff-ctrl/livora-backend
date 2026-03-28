@@ -13,7 +13,7 @@ import java.util.UUID;
 @Table(name = "ppv_purchases")
 @Getter
 @Setter
-@ToString(exclude = {"creator", "ppvContent"})
+@ToString(exclude = {"user", "ppvContent"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @Builder
 @NoArgsConstructor

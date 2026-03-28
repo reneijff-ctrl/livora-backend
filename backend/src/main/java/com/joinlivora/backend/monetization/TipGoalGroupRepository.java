@@ -1,0 +1,27 @@
+package com.joinlivora.backend.monetization;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+@Repository
+public interface TipGoalGroupRepository extends JpaRepository<TipGoalGroup, UUID> {
+
+    Optional<TipGoalGroup> findFirstByCreatorIdAndActiveTrueOrderByOrderIndexAsc(Long creatorId);
+
+    Optional<TipGoalGroup> findFirstByCreatorIdAndOrderIndexGreaterThanOrderByOrderIndexAsc(Long creatorId, Integer orderIndex);
+
+    List<TipGoalGroup> findAllByCreatorIdOrderByOrderIndexAsc(Long creatorId);
+
+    long countByCreatorId(Long creatorId);
+
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE TipGoalGroup g SET g.currentAmount = g.currentAmount + :amount WHERE g.id = :id")
+    int incrementCurrentAmount(@Param("id") UUID id, @Param("amount") Long amount);
+}

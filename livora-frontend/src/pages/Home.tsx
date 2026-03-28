@@ -1,21 +1,24 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import SEO from '../components/SEO';
 import creatorService from '../api/creatorService';
 import { ICreator } from '../domain/creator/ICreator';
 import CreatorCard from '../components/creator/CreatorCard';
-import { useWs } from '../ws/WsContext';
+import { useThumbnailCacheBuster } from '../ws/WsContext';
+import webSocketService from '../websocket/webSocketService';
 
 const Home = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { thumbnailCacheBuster } = useWs();
+  const thumbnailCacheBuster = useThumbnailCacheBuster();
   const [creators, setCreators] = useState<ICreator[]>([]);
 
   const handleCreatorClick = useCallback((creator: ICreator) => {
     navigate(`/creators/${creator.userId}`);
   }, [navigate]);
+
+  const unsubscribesRef = useRef<Array<() => void>>([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -30,6 +33,74 @@ const Home = () => {
 
     fetchData();
   }, []);
+
+  // Subscribe to real-time stream status updates (STREAM_STARTED / STREAM_ENDED)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const unsub = webSocketService.subscribe(
+      '/exchange/amq.topic/streams.status',
+      (message) => {
+        try {
+          const data = JSON.parse(message.body);
+          const payload = data.payload;
+          if (!payload?.creatorUserId) return;
+
+          setCreators(prev => {
+            const updated = prev.map(c =>
+              c.userId === payload.creatorUserId
+                ? { ...c, isLive: payload.isLive, viewerCount: payload.viewerCount ?? c.viewerCount }
+                : c
+            );
+            return [...updated].sort((a, b) => Number(b.isLive ?? false) - Number(a.isLive ?? false));
+          });
+        } catch (err) {
+          console.error('Failed to parse stream status event:', err);
+        }
+      }
+    );
+
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // Subscribe to viewer count updates for displayed creators
+  useEffect(() => {
+    if (!isAuthenticated || creators.length === 0) return;
+
+    // Clean up previous viewer count subscriptions
+    unsubscribesRef.current.forEach(fn => fn());
+    unsubscribesRef.current = [];
+
+    const unsubs = creators.map(c =>
+      webSocketService.subscribe(
+        `/exchange/amq.topic/viewers.${c.userId}`,
+        (message) => {
+          try {
+            const data = JSON.parse(message.body);
+            const payload = data.payload;
+            if (!payload?.creatorUserId) return;
+
+            setCreators(prev =>
+              prev.map(p =>
+                p.userId === payload.creatorUserId
+                  ? { ...p, viewerCount: payload.viewerCount }
+                  : p
+              )
+            );
+          } catch (err) {
+            console.error('Failed to parse viewer count event:', err);
+          }
+        }
+      )
+    );
+
+    unsubscribesRef.current = unsubs;
+
+    return () => {
+      unsubs.forEach(fn => fn());
+      unsubscribesRef.current = [];
+    };
+  }, [isAuthenticated, creators.length]);
 
   const displayedCreators = useMemo(() => {
     return creators.map(c => {

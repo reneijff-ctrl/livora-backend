@@ -32,7 +32,8 @@ const TipModal: React.FC<TipModalProps> = ({ isOpen, onClose, creatorId, onSucce
       // Update local balance
       refreshTokenBalance().catch(err => console.error('Failed to refresh balance after tip:', err));
 
-      if (onSuccess) onSuccess(Number(amount));
+      // UI update is driven by WebSocket monetization event — no optimistic update here
+      // to avoid double-counting in leaderboard/top tipper.
       setAmount(10);
       onClose();
     } catch (error: any) {

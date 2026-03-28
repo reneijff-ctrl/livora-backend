@@ -2,32 +2,86 @@ services:
   livora-backend:
     image: ${BACKEND_IMAGE:-livora-backend}
     build: ./backend
+    restart: always
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8080}:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/joinlivora
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: postgres
-      SPRING_PROFILES_ACTIVE: docker
+      # ── Database (matches DB_URL in application-prod.yml) ──
+      DB_URL: jdbc:postgresql://livora-postgres:5432/joinlivora
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # ── Spring profile ──
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+
+      # ── Redis ──
       REDIS_HOST: livora-redis
       REDIS_PORT: 6379
-      MANAGEMENT_HEALTH_REDIS_ENABLED: "false"
-      JWT_SECRET: ${JWT_SECRET}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      FRONTEND_URL: ${FRONTEND_URL:-https://joinlivora.com}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+      # ── RabbitMQ (AMQP + STOMP) ──
+      SPRING_RABBITMQ_HOST: livora-rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       STOMP_BROKER_HOST: livora-rabbitmq
       STOMP_BROKER_PORT: 61613
-      STOMP_BROKER_USERNAME: livora
-      STOMP_BROKER_PASSWORD: livora
+      STOMP_BROKER_USERNAME: ${RABBITMQ_USER}
+      STOMP_BROKER_PASSWORD: ${RABBITMQ_PASS}
+
+      # ── Redis health for actuator ──
+      MANAGEMENT_HEALTH_REDIS_ENABLED: "true"
+
+      # ── Security / JWT ──
+      JWT_SECRET: ${JWT_SECRET}
+
+      # ── Stripe ──
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+
+      # ── Frontend URL ──
+      FRONTEND_URL: ${FRONTEND_URL:-https://joinlivora.com}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://joinlivora.com}
+
+      # ── Mail ──
+      MAIL_HOST: ${MAIL_HOST:-smtp.example.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+
+      # ── Mediasoup ──
+      MEDIASOUP_BASE_URL: ${MEDIASOUP_BASE_URL:-http://mediasoup-server:4000}
+      MEDIASOUP_AUTH_TOKEN: ${MEDIASOUP_AUTH_TOKEN}
+
+      # ── Misc ──
+      BASE_URL: ${BASE_URL:-https://joinlivora.com}
+      ENFORCE_HTTPS: ${ENFORCE_HTTPS:-true}
+      UPLOAD_DIR: /app/uploads
     volumes:
-      - ./uploads:/app/uploads
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
     depends_on:
-      - livora-postgres
-      - livora-redis
-      - livora-rabbitmq
+      livora-postgres:
+        condition: service_healthy
+      livora-redis:
+        condition: service_healthy
+      livora-rabbitmq:
+        condition: service_healthy
     networks:
       - livora-network
+
   nginx:
     image: tiangolo/nginx-rtmp
     restart: always
@@ -40,59 +94,107 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certbot/conf:/etc/letsencrypt:ro
       - ./nginx/certbot/www:/var/www/certbot:ro
-      - ./uploads:/var/www/uploads
+      - uploads_data:/var/www/uploads:ro
       - hls_data:/var/www/hls
     depends_on:
-      - livora-backend
+      livora-backend:
+        condition: service_healthy
+    networks:
+      - livora-network
+
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - ./nginx/certbot/conf:/etc/letsencrypt
+      - ./nginx/certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"
     networks:
       - livora-network
 
   livora-postgres:
     image: postgres:16-alpine
-    ports:
-      - "5432:5432"
     restart: always
     environment:
-      - POSTGRES_DB=joinlivora
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      POSTGRES_DB: joinlivora
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c effective_cache_size=1GB
+      -c max_connections=100
+      -c log_min_duration_statement=1000
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d joinlivora"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d joinlivora"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
     networks:
       - livora-network
 
   livora-redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+      --tcp-backlog 511
+      --timeout 300
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     networks:
       - livora-network
 
   livora-rabbitmq:
     image: rabbitmq:3-management-alpine
-    container_name: livora-rabbitmq
+    restart: always
+    hostname: livora-rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
-      - "61613:61613"
-      - "15674:15674"
+      - "127.0.0.1:15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: livora
-      RABBITMQ_DEFAULT_PASS: livora
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
     command: >
       bash -c "
       rabbitmq-plugins enable --offline rabbitmq_stomp &&
       rabbitmq-plugins enable --offline rabbitmq_web_stomp &&
       rabbitmq-server
       "
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     networks:
       - livora-network
 
@@ -104,3 +206,5 @@ volumes:
   postgres_data:
   redis_data:
   hls_data:
+  rabbitmq_data:
+  uploads_data:

@@ -45,6 +45,8 @@ const createConsumer = async (roomId, transport, producerId, rtpCapabilities, ap
     appData: { ...appData, routerId: router.id },
   });
 
+  console.log("CONSUMER CREATED:", consumer.kind, "id:", consumer.id, "producerId:", producerId, "roomId:", roomId);
+
   // Increment consumer count for load balancing
   router.appData.consumerCount++;
 

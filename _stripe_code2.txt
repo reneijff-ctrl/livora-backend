@@ -1,0 +1,1706 @@
+﻿========== wallet\WalletService.java ==========
+package com.joinlivora.backend.wallet;
+
+import com.joinlivora.backend.exception.InsufficientBalanceException;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserRepository;
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+@Deprecated
+public class WalletService {
+    // TODO: Consolidate all balance management into TokenWalletService and remove this class.
+
+    private final UserWalletRepository walletRepository;
+    private final WalletTransactionRepository transactionRepository;
+    private final UserRepository userRepository;
+
+    @Transactional
+    public void addTokens(Long userId, long amount, WalletTransactionType type, String referenceId) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+
+        UserWallet wallet = getOrCreateWallet(userId);
+        wallet.setBalance(wallet.getBalance() + amount);
+        wallet.setUpdatedAt(Instant.now());
+        walletRepository.save(wallet);
+
+        createTransaction(wallet.getUserId(), amount, type, referenceId);
+        log.info("WALLET: Added {} tokens to user {}. Type: {}, Ref: {}", amount, userId, type, referenceId);
+    }
+
+    @Transactional
+    public void deductTokens(Long userId, long amount, WalletTransactionType type, String referenceId) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+
+        UserWallet wallet = getOrCreateWallet(userId);
+        if (wallet.getAvailableBalance() < amount) {
+            throw new InsufficientBalanceException("Insufficient token balance");
+        }
+
+        wallet.setBalance(wallet.getBalance() - amount);
+        wallet.setUpdatedAt(Instant.now());
+        walletRepository.save(wallet);
+
+        createTransaction(wallet.getUserId(), -amount, type, referenceId);
+        log.info("WALLET: Deducted {} tokens from user {}. Type: {}, Ref: {}", amount, userId, type, referenceId);
+    }
+
+    public long getBalance(Long userId) {
+        return getOrCreateWallet(userId).getBalance();
+    }
+
+    public UserWallet getOrCreateWallet(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+
+        return walletRepository.findByUserId(user)
+                .orElseGet(() -> walletRepository.save(
+                        UserWallet.builder()
+                                .userId(user)
+                                .balance(0)
+                                .reservedBalance(0)
+                                .updatedAt(Instant.now())
+                                .build()
+                ));
+    }
+
+    private void createTransaction(User user, long amount, WalletTransactionType type, String referenceId) {
+        WalletTransaction tx = WalletTransaction.builder()
+                .userId(user)
+                .amount(amount)
+                .type(type)
+                .referenceId(referenceId)
+                .build();
+        
+        if (type == WalletTransactionType.LIVESTREAM_ADMISSION) {
+            tx.setReason("Unlock livestream access (creator=" + referenceId + ")");
+        } else {
+            tx.setReason(type.name());
+        }
+        
+        transactionRepository.save(tx);
+    }
+}
+
+========== wallet\UserWallet.java ==========
+package com.joinlivora.backend.wallet;
+
+import com.joinlivora.backend.user.User;
+import jakarta.persistence.*;
+import lombok.*;
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "user_wallets", indexes = {
+    @Index(name = "idx_user_wallet_user", columnList = "user_id", unique = true)
+})
+@Getter
+@Setter
+@ToString(exclude = "creator")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserWallet {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(nullable = false, updatable = false)
+    @EqualsAndHashCode.Include
+    private UUID id;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User userId;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private long balance = 0;
+
+    @Builder.Default
+    @Column(name = "reserved_balance", nullable = false)
+    private long reservedBalance = 0;
+
+    @Column(nullable = false)
+    private Instant updatedAt;
+
+    public long getAvailableBalance() {
+        return balance - reservedBalance;
+    }
+
+    @PrePersist
+    protected void onCreate() {
+        updatedAt = Instant.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = Instant.now();
+    }
+}
+
+========== wallet\WalletTransaction.java ==========
+package com.joinlivora.backend.wallet;
+
+import com.joinlivora.backend.user.User;
+import jakarta.persistence.*;
+import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
+
+import java.time.Instant;
+import java.util.UUID;
+
+@Entity
+@Table(name = "wallet_transactions", indexes = {
+    @Index(name = "idx_wallet_transaction_user", columnList = "user_id")
+})
+@Getter
+@Setter
+@ToString(exclude = "creator")
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class WalletTransaction {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @Column(nullable = false, updatable = false)
+    @EqualsAndHashCode.Include
+    private UUID id;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User userId;
+
+    @Column(nullable = false)
+    private long amount;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private WalletTransactionType type;
+
+    @Column(nullable = false)
+    private String reason;
+
+    private String referenceId;
+
+    @CreationTimestamp
+    @Column(nullable = false, updatable = false)
+    private Instant createdAt;
+}
+
+========== wallet\WalletTransactionType.java ==========
+package com.joinlivora.backend.wallet;
+
+public enum WalletTransactionType {
+    PURCHASE,
+    TIP,
+    CHAT,
+    BADGE,
+    PRIVATE_SHOW,
+    LIVESTREAM_ADMISSION,
+    MEDIA_UNLOCK
+}
+
+========== token\TokenService.java ==========
+package com.joinlivora.backend.token;
+
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserRepository;
+import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
+import com.joinlivora.backend.analytics.AnalyticsEventType;
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import com.joinlivora.backend.wallet.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Map;
+
+@Service("tokenService")
+@RequiredArgsConstructor
+@Slf4j
+public class TokenService {
+
+    private final UserWalletRepository tokenBalanceRepository;
+    private final WalletTransactionRepository tokenTransactionRepository;
+    private final TokenPackageRepository tokenPackageRepository;
+    private final TipRecordRepository tipRecordRepository;
+    private final CreatorEarningsRepository creatorEarningsRepository;
+    private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
+    private final UserRepository userRepository;
+    private final TokenWalletService tokenWalletService;
+    private final AnalyticsEventPublisher analyticsEventPublisher;
+    private final StringRedisTemplate redisTemplate;
+
+    private static final String ACCESS_KEY_PREFIX = "livestream:access:";
+
+
+    public List<TokenPackage> getActivePackages() {
+        return tokenPackageRepository.findAllByActiveTrue();
+    }
+
+    public UserWallet getBalance(User user) {
+        return tokenWalletService.getOrCreateWallet(user.getId());
+    }
+
+    @Transactional
+    public void creditTokens(User user, long amount, String reference) {
+        tokenWalletService.addTokens(user.getId(), amount, WalletTransactionType.PURCHASE, reference);
+        
+        analyticsEventPublisher.publishEvent(
+                AnalyticsEventType.PAYMENT_SUCCEEDED, // Reuse or create new type
+                user,
+                Map.of("tokenAmount", amount, "type", "purchase", "referenceId", reference)
+        );
+    }
+
+    @Transactional
+    public void deductTokens(User user, long amount, WalletTransactionType reason, String reference) {
+        tokenWalletService.deductTokens(user.getId(), amount, reason, reference);
+    }
+
+    @Transactional
+    public void spendTokens(Long userId, long amount, WalletTransactionType source, String referenceId) {
+        if (source == WalletTransactionType.LIVESTREAM_ADMISSION) {
+            log.info("LIVESTREAM_ADMISSION_DEBIT userId={} amount={} creator={}", userId, amount, referenceId);
+        }
+        tokenWalletService.deductTokens(userId, amount, source, referenceId);
+    }
+
+    public List<WalletTransaction> getTransactionHistory(User user) {
+        return tokenTransactionRepository.findAllByUserIdOrderByCreatedAtDesc(user);
+    }
+
+    public CreatorEarnings getCreatorEarnings(User user) {
+        return creatorEarningsRepository.findByUser(user)
+                .orElseGet(() -> creatorEarningsRepository.save(
+                        CreatorEarnings.builder()
+                                .user(user)
+                                .totalEarnedTokens(0)
+                                .availableTokens(0)
+                                .build()
+                ));
+    }
+
+    @Transactional
+    public void updateCreatorEarnings(CreatorEarnings earnings) {
+        creatorEarningsRepository.save(earnings);
+    }
+
+    public boolean hasEnoughTokens(Long userId, Long creatorUserId) {
+        if (userId.equals(creatorUserId)) return true;
+
+        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
+
+        if (!room.isPaid()) {
+            return true;
+        }
+
+        // Check if already has access (already paid for this session)
+        if (hasAccess(userId, creatorUserId)) {
+            return true;
+        }
+
+        return tokenWalletService.getTotalBalance(userId) >= room.getAdmissionPrice().longValue();
+    }
+
+    @Transactional
+    public void deductForLivestream(Long userId, Long creatorUserId) {
+        if (userId.equals(creatorUserId)) return;
+
+        // Double-check access to avoid double-charging
+        if (hasAccess(userId, creatorUserId)) {
+            return;
+        }
+
+        com.joinlivora.backend.streaming.Stream room = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .orElseThrow(() -> new ResourceNotFoundException("Active stream not found"));
+
+        if (room.isPaid()) {
+            spendTokens(userId, room.getAdmissionPrice().longValue(), 
+                WalletTransactionType.LIVESTREAM_ADMISSION, creatorUserId.toString());
+            
+            grantAccess(userId, creatorUserId);
+            
+            log.info("TOKEN: User {} paid {} tokens to watch creator {}", 
+                userId, room.getAdmissionPrice(), creatorUserId);
+        }
+    }
+
+    public boolean hasAccess(Long userId, Long creatorUserId) {
+        String key = ACCESS_KEY_PREFIX + creatorUserId;
+        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(key, userId.toString()));
+    }
+
+    public void grantAccess(Long userId, Long creatorUserId) {
+        String key = ACCESS_KEY_PREFIX + creatorUserId;
+        redisTemplate.opsForSet().add(key, userId.toString());
+    }
+
+    public void clearAccess(Long creatorUserId) {
+        String key = ACCESS_KEY_PREFIX + creatorUserId;
+        redisTemplate.delete(key);
+        log.info("TOKEN: Cleared access list for creator {}", creatorUserId);
+    }
+}
+
+========== token\TokenController.java ==========
+package com.joinlivora.backend.token;
+
+import com.joinlivora.backend.monetization.TipOrchestrationService;
+import com.joinlivora.backend.monetization.dto.TipResult;
+import com.joinlivora.backend.token.dto.TokenTipRequest;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.payment.PaymentService;
+import com.joinlivora.backend.payment.dto.CheckoutResponse;
+import com.joinlivora.backend.wallet.*;
+import com.joinlivora.backend.util.RequestUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/tokens")
+@RequiredArgsConstructor
+@Slf4j
+public class TokenController {
+
+    private final TokenService tokenService;
+    private final UserService userService;
+    private final PaymentService paymentService;
+    private final TokenPackageRepository tokenPackageRepository;
+    private final TipOrchestrationService tipService;
+    private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
+
+    @GetMapping("/packages")
+    public ResponseEntity<List<TokenPackage>> getPackages() {
+        return ResponseEntity.ok(tokenService.getActivePackages());
+    }
+
+    @GetMapping("/balance")
+    public ResponseEntity<Map<String, Long>> getBalance(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userService.getByEmail(userDetails.getUsername());
+        UserWallet balance = tokenService.getBalance(user);
+        return ResponseEntity.ok(Map.of("balance", balance.getBalance()));
+    }
+
+    @GetMapping("/transactions")
+    public ResponseEntity<List<WalletTransaction>> getTransactions(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userService.getByEmail(userDetails.getUsername());
+        return ResponseEntity.ok(tokenService.getTransactionHistory(user));
+    }
+
+    @PostMapping("/checkout")
+    public ResponseEntity<CheckoutResponse> createCheckoutSession(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestBody Map<String, String> payload,
+            HttpServletRequest request
+    ) throws com.stripe.exception.StripeException {
+        String packageIdStr = payload.get("packageId");
+        if (packageIdStr == null) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        UUID packageId = UUID.fromString(packageIdStr);
+        TokenPackage tokenPackage = tokenPackageRepository.findByActiveTrueAndId(packageId)
+                .orElseThrow(() -> new RuntimeException("Token package not found"));
+
+        log.info("SECURITY: Token checkout requested for creator: {} package: {}", userDetails.getUsername(), packageId);
+        User user = userService.getByEmail(userDetails.getUsername());
+        String ipAddress = RequestUtil.getClientIP(request);
+        String country = RequestUtil.getClientCountry(request);
+        String userAgent = RequestUtil.getUserAgent(request);
+        String fingerprint = RequestUtil.getDeviceFingerprint(request);
+
+        String checkoutUrl = paymentService.createTokenCheckoutSession(user, tokenPackage.getStripePriceId(), packageId, ipAddress, country, userAgent, fingerprint);
+        return ResponseEntity.ok(new CheckoutResponse(checkoutUrl));
+    }
+
+    @PostMapping("/tip")
+    public ResponseEntity<?> sendTip(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestBody TokenTipRequest tipRequest,
+            HttpServletRequest request
+    ) {
+        if (tipRequest.getAmount() == null || tipRequest.getAmount() <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Amount must be greater than 0"));
+        }
+
+        Long creatorUserId = tipRequest.getCreatorId();
+        if (creatorUserId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Creator ID is required"));
+        }
+
+        UUID roomId = streamRepository.findByCreatorIdAndIsLiveTrue(creatorUserId)
+                .map(com.joinlivora.backend.streaming.Stream::getId)
+                .orElse(null);
+
+        if (roomId == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Creator does not have an active stream room"));
+        }
+
+        User user = userService.getByEmail(userDetails.getUsername());
+        String ipAddress = RequestUtil.getClientIP(request);
+        String fingerprint = RequestUtil.getDeviceFingerprint(request);
+
+        try {
+            TipResult result = tipService.sendTokenTip(
+                    user,
+                    roomId,
+                    tipRequest.getAmount().longValue(),
+                    tipRequest.getMessage(),
+                    tipRequest.getClientRequestId(),
+                    ipAddress,
+                    fingerprint,
+                    tipRequest.getGiftName()
+            );
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("TOKEN: Tip failed", e);
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+}
+
+========== token\TokenWalletService.java ==========
+package com.joinlivora.backend.token;
+
+import com.joinlivora.backend.exception.InsufficientBalanceException;
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserRepository;
+import com.joinlivora.backend.wallet.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+
+@Service("tokenWalletService")
+@RequiredArgsConstructor
+@Slf4j
+public class TokenWalletService {
+
+    private final UserWalletRepository tokenBalanceRepository;
+    private final WalletTransactionRepository tokenTransactionRepository;
+    private final UserRepository userRepository;
+    private final SimpMessagingTemplate messagingTemplate;
+
+    /**
+     * Get the available balance for a creator (total balance - reserved balance).
+     */
+    public long getAvailableBalance(Long userId) {
+        return getOrCreateBalance(userId, false).getAvailableBalance();
+    }
+
+    /**
+     * Get the total balance for a creator (including reserved tokens).
+     */
+    public long getTotalBalance(Long userId) {
+        return getOrCreateBalance(userId, false).getBalance();
+    }
+
+    /**
+     * Reserve tokens for a pending transaction.
+     * Prevents the reserved amount from being used in other transactions.
+     */
+    @Transactional
+    @Retryable(
+            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2)
+    )
+    public void reserveTokens(Long userId, long amount) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Reservation amount must be positive");
+        }
+
+        UserWallet balance = getOrCreateBalance(userId, true);
+        if (balance.getAvailableBalance() < amount) {
+            throw new InsufficientBalanceException("Insufficient token balance");
+        }
+
+        balance.setReservedBalance(balance.getReservedBalance() + amount);
+        tokenBalanceRepository.save(balance);
+        log.info("TOKEN: Reserved {} tokens for creator {}", amount, userId);
+    }
+
+    /**
+     * Cancel a previously made token reservation.
+     */
+    @Transactional
+    @Retryable(
+            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2)
+    )
+    public void cancelReservation(Long userId, long amount) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Cancellation amount must be positive");
+        }
+
+        UserWallet balance = getOrCreateBalance(userId, true);
+        if (balance.getReservedBalance() < amount) {
+            throw new IllegalArgumentException("Cannot cancel more than reserved amount");
+        }
+
+        balance.setReservedBalance(balance.getReservedBalance() - amount);
+        tokenBalanceRepository.save(balance);
+        log.info("TOKEN: Cancelled reservation of {} tokens for creator {}", amount, userId);
+    }
+
+    /**
+     * Deduct tokens directly from the creator's balance without a prior reservation.
+     * Throws InsufficientBalanceException if the available balance is too low.
+     */
+    @Transactional
+    @Retryable(
+            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2)
+    )
+    public void deductTokens(Long userId, long amount, WalletTransactionType type, String reference) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+
+        UserWallet balance = getOrCreateBalance(userId, true);
+        if (balance.getAvailableBalance() < amount) {
+            throw new InsufficientBalanceException("Insufficient token balance");
+        }
+
+        balance.setBalance(balance.getBalance() - amount);
+        balance.setUpdatedAt(Instant.now());
+        tokenBalanceRepository.save(balance);
+
+        User user = balance.getUserId();
+        tokenTransactionRepository.save(WalletTransaction.builder()
+                .userId(user)
+                .amount(-amount)
+                .type(type)
+                .reason(deriveReason(type, reference))
+                .referenceId(reference)
+                .build());
+
+        log.info("TOKEN: Deducted {} tokens from creator {} for {}. Ref: {}", amount, user.getEmail(), type, reference);
+        
+        sendWalletUpdate(user, balance.getBalance(), -amount, type);
+    }
+
+    /**
+     * Add tokens directly to the user's balance.
+     */
+    @Transactional
+    @Retryable(
+            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2)
+    )
+    public void addTokens(Long userId, long amount, WalletTransactionType type, String reference) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Amount must be positive");
+        }
+
+        UserWallet balance = getOrCreateBalance(userId, true);
+        balance.setBalance(balance.getBalance() + amount);
+        balance.setUpdatedAt(Instant.now());
+        tokenBalanceRepository.save(balance);
+
+        User user = balance.getUserId();
+        tokenTransactionRepository.save(WalletTransaction.builder()
+                .userId(user)
+                .amount(amount)
+                .type(type)
+                .reason(deriveReason(type, reference))
+                .referenceId(reference)
+                .build());
+
+        log.info("TOKEN: Added {} tokens to user {}. Type: {}, Ref: {}", amount, user.getEmail(), type, reference);
+        
+        sendWalletUpdate(user, balance.getBalance(), amount, type);
+    }
+
+    /**
+     * Commit a previously made reservation, converting it into a final deduction.
+     */
+    @Transactional
+    @Retryable(
+            retryFor = {DeadlockLoserDataAccessException.class, PessimisticLockingFailureException.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 200, multiplier = 2)
+    )
+    public void commitReservation(Long userId, long amount, WalletTransactionType type, String reference) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("Commit amount must be positive");
+        }
+
+        UserWallet balance = getOrCreateBalance(userId, true);
+        if (balance.getReservedBalance() < amount) {
+            throw new IllegalArgumentException("Insufficient reserved tokens to commit");
+        }
+
+        // Deduct from total balance AND release reservation
+        balance.setBalance(balance.getBalance() - amount);
+        balance.setReservedBalance(balance.getReservedBalance() - amount);
+        balance.setUpdatedAt(Instant.now());
+        tokenBalanceRepository.save(balance);
+
+        User user = balance.getUserId();
+        tokenTransactionRepository.save(WalletTransaction.builder()
+                .userId(user)
+                .amount(-amount)
+                .type(type)
+                .reason(deriveReason(type, reference))
+                .referenceId(reference)
+                .build());
+
+        log.info("TOKEN: Committed reservation of {} tokens from creator {} for {}. Ref: {}", amount, user.getEmail(), type, reference);
+        
+        sendWalletUpdate(user, balance.getBalance(), -amount, type);
+    }
+
+    private void sendWalletUpdate(User user, long newBalance, long delta, WalletTransactionType type) {
+        Map<String, Object> payload = Map.of(
+            "type", "WALLET_UPDATE",
+            "balance", newBalance,
+            "delta", delta,
+            "transactionType", type.name()
+        );
+        
+        messagingTemplate.convertAndSendToUser(
+            user.getId().toString(),
+            "/queue/wallet",
+            payload
+        );
+    }
+
+    private String deriveReason(WalletTransactionType type, String referenceId) {
+        if (type == WalletTransactionType.LIVESTREAM_ADMISSION) {
+            return "Unlock livestream access (creator=" + referenceId + ")";
+        }
+        return type.name();
+    }
+
+    public UserWallet getOrCreateWallet(Long userId) {
+        return getOrCreateBalance(userId, false);
+    }
+
+    private UserWallet getOrCreateBalance(Long userId, boolean lock) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+
+        Optional<UserWallet> existing = lock ?
+                tokenBalanceRepository.findByUserIdWithLock(user) : 
+                tokenBalanceRepository.findByUserId(user);
+
+        return existing.orElseGet(() -> tokenBalanceRepository.save(
+                        UserWallet.builder()
+                                .userId(user)
+                                .balance(0)
+                                .reservedBalance(0)
+                                .updatedAt(Instant.now())
+                                .build()
+                ));
+    }
+}
+
+========== token\TokenPackage.java ==========
+package com.joinlivora.backend.token;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.math.BigDecimal;
+import java.util.UUID;
+
+@Entity
+@Table(name = "token_packages")
+@Getter
+@Setter
+@ToString
+@EqualsAndHashCode(onlyExplicitlyIncluded = true)
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class TokenPackage {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    @EqualsAndHashCode.Include
+    private UUID id;
+
+    @Column(nullable = false, unique = true)
+    private String name;
+
+    @Column(nullable = false)
+    private long tokenAmount;
+
+    @Column(nullable = false)
+    private BigDecimal price;
+
+    @Column(nullable = false)
+    private String currency;
+
+    @Column(nullable = false)
+    private String stripePriceId;
+
+    @Builder.Default
+    private boolean active = true;
+}
+
+========== payments\webhook\StripeWebhookController.java ==========
+package com.joinlivora.backend.payments.webhook;
+
+import com.joinlivora.backend.payments.exception.WebhookReplayException;
+import com.joinlivora.backend.payments.service.WebhookReplayProtectionService;
+import com.stripe.exception.SignatureVerificationException;
+import com.stripe.model.Dispute;
+import com.stripe.model.Event;
+import com.stripe.model.StripeObject;
+import com.stripe.net.Webhook;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+@RestController("paymentsStripeWebhookController")
+@RequestMapping("/webhooks/stripe")
+@Slf4j
+public class StripeWebhookController {
+
+    private final StripeWebhookService stripeWebhookService;
+    private final WebhookReplayProtectionService replayProtectionService;
+
+    @Value("${stripe.webhook.secret}")
+    private String endpointSecret;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    public StripeWebhookController(
+            @Qualifier("paymentsStripeWebhookService") StripeWebhookService stripeWebhookService,
+            WebhookReplayProtectionService replayProtectionService) {
+        this.stripeWebhookService = stripeWebhookService;
+        this.replayProtectionService = replayProtectionService;
+    }
+
+    @PostMapping
+    public ResponseEntity<String> handleStripeWebhook(
+            @RequestBody String payload,
+            @RequestHeader("Stripe-Signature") String sigHeader
+    ) {
+        // Hard guard: Disabling legacy controller in favor of /api/stripe/webhook
+        if (true) {
+            log.info("Stripe legacy webhook disabled: /webhooks/stripe short-circuited");
+            return ResponseEntity.ok("Success");
+        }
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: /webhooks/stripe short-circuited");
+            return ResponseEntity.ok("Stripe disabled");
+        }
+        log.info("SECURITY: Received Stripe webhook at /webhooks/stripe");
+        
+        try {
+            Event event;
+            if ("whsec_dev_fallback".equals(endpointSecret)) {
+                event = com.stripe.net.ApiResource.GSON.fromJson(payload, Event.class);
+            } else {
+                event = Webhook.constructEvent(payload, sigHeader, endpointSecret);
+            }
+
+            if (event != null && event.getId() != null) {
+                if (replayProtectionService.isReplay(event.getId())) {
+                    log.warn("SECURITY: Duplicate Stripe webhook event detected in controller: {}", event.getId());
+                    return ResponseEntity.status(HttpStatus.CONFLICT)
+                            .body("Stripe event " + event.getId() + " has already been processed");
+                }
+                // Record event to prevent replay
+                replayProtectionService.recordEvent(event.getId(), event.getType());
+            }
+
+            processEvent(event);
+            return ResponseEntity.ok("Success");
+        } catch (SignatureVerificationException e) {
+            log.warn("SECURITY: Stripe webhook signature validation failed: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Invalid signature");
+        } catch (WebhookReplayException e) {
+            log.warn("SECURITY: Duplicate Stripe webhook event: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(e.getMessage());
+        } catch (Exception e) {
+            log.error("SECURITY: Unexpected error during Stripe webhook processing", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Processing error");
+        }
+    }
+
+    private void processEvent(Event event) {
+        String eventType = event.getType();
+        log.info("WEBHOOK: Routing Stripe event: {}", eventType);
+
+        StripeObject stripeObject = event.getDataObjectDeserializer().getObject().orElse(null);
+        if (stripeObject == null) {
+            log.warn("WEBHOOK: Could not deserialize event data for: {}", eventType);
+            return;
+        }
+
+        switch (eventType) {
+            case "charge.dispute.created":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackOpened(dispute, event.getId());
+                }
+                break;
+            case "charge.dispute.closed":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackClosed(dispute, event.getId());
+                }
+                break;
+            default:
+                // Other events handled by service
+                stripeWebhookService.processEvent(event);
+                break;
+        }
+    }
+
+    private void handleChargebackOpened(Dispute dispute, String eventId) {
+        log.info("WEBHOOK: Handling chargeback opened for dispute: {}", dispute.getId());
+        stripeWebhookService.handleChargebackOpened(dispute, eventId);
+    }
+
+    private void handleChargebackClosed(Dispute dispute, String eventId) {
+        log.info("WEBHOOK: Handling chargeback closed for dispute: {}", dispute.getId());
+        stripeWebhookService.handleChargebackClosed(dispute, eventId);
+    }
+}
+
+========== payments\webhook\StripeWebhookService.java ==========
+package com.joinlivora.backend.payments.webhook;
+
+import com.joinlivora.backend.fraud.service.FraudEvaluationService;
+import com.joinlivora.backend.payment.Payment;
+import com.joinlivora.backend.payment.PaymentRepository;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.monetization.TipOrchestrationService;
+import com.joinlivora.backend.payout.CreatorEarningsService;
+import com.joinlivora.backend.user.UserService;
+import com.joinlivora.backend.audit.service.AuditService;
+import com.joinlivora.backend.payments.service.WebhookReplayProtectionService;
+import com.stripe.model.Dispute;
+import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
+import com.stripe.model.PaymentIntent;
+import com.stripe.model.StripeObject;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service("paymentsStripeWebhookService")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeWebhookService {
+
+    private final ApplicationEventPublisher eventPublisher;
+    private final PaymentRepository paymentRepository;
+    private final com.joinlivora.backend.user.UserRepository userRepository;
+    private final FraudEvaluationService fraudEvaluationService;
+    private final WebhookReplayProtectionService replayProtectionService;
+    private final com.joinlivora.backend.chargeback.ChargebackService chargebackService;
+    private final TipOrchestrationService tipService;
+    private final CreatorEarningsService creatorEarningsService;
+    private final UserService userService;
+    private final AuditService auditService;
+
+    public void processEvent(Event event) {
+        String eventType = event.getType();
+        log.info("WEBHOOK: Processing Stripe event: {}", eventType);
+
+        EventDataObjectDeserializer dataObjectDeserializer = event.getDataObjectDeserializer();
+        StripeObject stripeObject = dataObjectDeserializer.getObject().orElse(null);
+
+        if (stripeObject == null) {
+            log.warn("WEBHOOK: Could not deserialize event data for: {}", eventType);
+            return;
+        }
+
+        switch (eventType) {
+            case "charge.dispute.created":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackOpened(dispute, event.getId());
+                }
+                break;
+            case "charge.dispute.closed":
+                if (stripeObject instanceof Dispute dispute) {
+                    handleChargebackClosed(dispute, event.getId());
+                }
+                break;
+            case "payment_intent.succeeded":
+                if (stripeObject instanceof PaymentIntent intent) {
+                    handlePaymentIntentSucceeded(intent, event.getId());
+                }
+                break;
+            default:
+                log.debug("WEBHOOK: Ignoring unhandled event type: {}", eventType);
+                break;
+        }
+    }
+
+    public void handleChargebackOpened(Dispute dispute, String stripeEventId) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("WEBHOOK: Dispute created for PaymentIntent: {}", paymentIntentId);
+        
+        Optional<Payment> paymentOpt = paymentIntentId != null ? paymentRepository.findByStripePaymentIntentId(paymentIntentId) : Optional.empty();
+        
+        if (paymentOpt.isPresent()) {
+            chargebackService.handleDisputeCreated(paymentOpt.get().getUser(), paymentIntentId, dispute);
+        } else {
+            log.warn("WEBHOOK: Payment record not found for PaymentIntent: {}. Cannot handle dispute.", paymentIntentId);
+        }
+
+        // Maintain existing evaluation flow
+        UUID userId = extractUserId(dispute, paymentOpt);
+        if (userId != null) {
+            String ipAddress = paymentOpt.map(Payment::getIpAddress).orElse(null);
+            fraudEvaluationService.evaluateUser(userId, stripeEventId, dispute.getReason(), true, ipAddress);
+        }
+    }
+
+    private UUID extractUserId(Dispute dispute, Optional<Payment> paymentOpt) {
+        // 1. Try from Payment record
+        if (paymentOpt.isPresent()) {
+            return new UUID(0L, paymentOpt.get().getUser().getId());
+        }
+        
+        // 2. Try from metadata
+        if (dispute.getMetadata() != null) {
+            String userIdStr = dispute.getMetadata().get("creator");
+            if (userIdStr != null) {
+                try {
+                    return UUID.fromString(userIdStr);
+                } catch (IllegalArgumentException e) {
+                    // Ignore
+                }
+            }
+        }
+        
+        return null;
+    }
+
+    public void handleChargebackClosed(Dispute dispute, String stripeEventId) {
+        String paymentIntentId = dispute.getPaymentIntent();
+        log.info("WEBHOOK: Dispute closed for PaymentIntent: {}, Status: {}", paymentIntentId, dispute.getStatus());
+        
+        Optional<Payment> paymentOpt = paymentIntentId != null ? paymentRepository.findByStripePaymentIntentId(paymentIntentId) : Optional.empty();
+
+        chargebackService.handleDisputeClosed(dispute.getId(), dispute);
+        
+        // Maintain existing evaluation flow
+        UUID userId = extractUserId(dispute, paymentOpt);
+        if (userId != null) {
+            String ipAddress = paymentOpt.map(Payment::getIpAddress).orElse(null);
+            fraudEvaluationService.evaluateUser(userId, stripeEventId, null, false, ipAddress);
+        }
+    }
+
+    private void publishChargebackEvent(Dispute dispute, String paymentIntentId, Optional<Payment> paymentOpt) {
+        if (paymentIntentId == null || paymentIntentId.isEmpty()) {
+            log.warn("WEBHOOK: Received dispute without PaymentIntent ID: {}", dispute.getId());
+            return;
+        }
+
+        if (paymentOpt.isPresent()) {
+            Payment payment = paymentOpt.get();
+            User user = payment.getUser();
+            log.info("WEBHOOK: Publishing ChargebackEvent for creator: {}", user.getEmail());
+            eventPublisher.publishEvent(new ChargebackEvent(this, user, paymentIntentId, dispute));
+        } else {
+            log.warn("WEBHOOK: Payment record not found for PaymentIntent: {}", paymentIntentId);
+        }
+    }
+
+    @Transactional
+    public void handlePaymentIntentSucceeded(PaymentIntent intent, String stripeEventId) {
+        log.info("WEBHOOK: Payment intent succeeded: {}", intent.getId());
+
+        String type = intent.getMetadata() != null ? intent.getMetadata().get("type") : null;
+        
+        if (paymentRepository.existsByStripePaymentIntentId(intent.getId())) {
+            log.info("WEBHOOK: Payment already recorded for PaymentIntent: {}. Ensuring services are confirmed.", intent.getId());
+            if ("tip".equals(type) || "test_tip".equals(type)) {
+                tipService.confirmTip(intent.getId());
+            }
+            return;
+        }
+
+        if ("tip".equals(type) || "test_tip".equals(type)) {
+            tipService.confirmTip(intent.getId());
+            
+            String creatorIdStr = intent.getMetadata().get("creator_id");
+            String fromUserIdStr = intent.getMetadata().get("from_user_id");
+            
+            if (creatorIdStr != null && fromUserIdStr != null) {
+                User creator = userService.getById(Long.parseLong(creatorIdStr));
+                User fromUser = userService.getById(Long.parseLong(fromUserIdStr));
+                
+                Payment payment = new Payment();
+                payment.setUser(fromUser);
+                payment.setCreator(creator);
+                payment.setAmount(BigDecimal.valueOf(intent.getAmount()).divide(BigDecimal.valueOf(100)));
+                payment.setCurrency(intent.getCurrency());
+                payment.setStripePaymentIntentId(intent.getId());
+                payment.setSuccess(true);
+                
+                if (intent.getMetadata() != null) {
+                    payment.setIpAddress(intent.getMetadata().get("ip_address"));
+                    payment.setCountry(intent.getMetadata().get("country"));
+                    payment.setUserAgent(intent.getMetadata().get("user_agent"));
+                    String riskLevelStr = intent.getMetadata().get("fraud_risk_level");
+                    if (riskLevelStr != null) {
+                        try {
+                            payment.setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel.valueOf(riskLevelStr));
+                        } catch (Exception e) {
+                            // ignore
+                        }
+                    }
+                }
+                
+                paymentRepository.save(payment);
+                creatorEarningsService.recordTipEarning(payment, creator);
+
+                auditService.logEvent(
+                        new UUID(0L, fromUser.getId()),
+                        AuditService.TIP_CREATED,
+                        "TIP",
+                        null,
+                        Map.of("amount", payment.getAmount(), "currency", payment.getCurrency(), "creator", creator.getId(), "status", "COMPLETED"),
+                        payment.getIpAddress(),
+                        payment.getUserAgent()
+                );
+            }
+        }
+
+        UUID userId = null;
+        String ipAddress = null;
+        
+        // Try to get data from Payment record first
+        Optional<Payment> paymentOpt = paymentRepository.findByStripePaymentIntentId(intent.getId());
+        if (paymentOpt.isPresent()) {
+            Payment payment = paymentOpt.get();
+            userId = new UUID(0L, payment.getUser().getId());
+            ipAddress = payment.getIpAddress();
+        }
+
+        // Fallback to metadata for creator if not found in DB
+        if (userId == null && intent.getMetadata() != null) {
+            String userIdStr = intent.getMetadata().get("creator");
+            if (userIdStr == null) userIdStr = intent.getMetadata().get("creator_id");
+            if (userIdStr != null) {
+                try {
+                    userId = UUID.fromString(userIdStr);
+                } catch (IllegalArgumentException e) {
+                    try {
+                        // Try parsing as Long if it's not a UUID
+                        userId = new UUID(0L, Long.parseLong(userIdStr));
+                    } catch (NumberFormatException nfe) {
+                        log.warn("WEBHOOK: Invalid creator in PaymentIntent metadata: {}", userIdStr);
+                    }
+                }
+            }
+        }
+
+        if (userId == null) {
+            log.warn("WEBHOOK: Could not determine creator for PaymentIntent: {}", intent.getId());
+            return;
+        }
+
+        fraudEvaluationService.processSuccessfulPayment(
+                userId,
+                intent.getId(),
+                intent.getAmount(),
+                intent.getCurrency(),
+                stripeEventId,
+                ipAddress
+        );
+    }
+}
+
+========== payout\StripeConnectService.java ==========
+package com.joinlivora.backend.payout;
+
+import com.joinlivora.backend.creator.model.StripeOnboardingStatus;
+import com.joinlivora.backend.user.User;
+import com.stripe.StripeClient;
+import com.stripe.exception.StripeException;
+import com.stripe.model.Account;
+import com.stripe.model.AccountLink;
+import com.stripe.param.AccountCreateParams;
+import com.stripe.param.AccountLinkCreateParams;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Optional;
+
+@Service("stripeConnectService")
+@RequiredArgsConstructor
+@Slf4j
+public class StripeConnectService {
+
+    private final StripeClient stripeClient;
+    private final LegacyCreatorStripeAccountRepository repository;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    /**
+     * Creates or retrieves a Stripe Express account for a creator.
+     */
+    @Transactional
+    public String createOrGetStripeAccount(User creator) {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: createOrGetStripeAccount short-circuited for {}", creator.getEmail());
+            return repository.findByCreatorId(creator.getId())
+                    .map(LegacyCreatorStripeAccount::getStripeAccountId)
+                    .orElse("");
+        }
+        return repository.findByCreatorId(creator.getId())
+                .map(LegacyCreatorStripeAccount::getStripeAccountId)
+                .orElseGet(() -> {
+                    try {
+                        return createExpressAccount(creator);
+                    } catch (StripeException e) {
+                        log.error("STRIPE: Failed to create Express account for creator {}", creator.getEmail(), e);
+                        throw new RuntimeException("Failed to create Stripe account", e);
+                    }
+                });
+    }
+
+    private String createExpressAccount(User creator) throws StripeException {
+        log.info("STRIPE: Creating Express account for creator: {}", creator.getEmail());
+        AccountCreateParams params = AccountCreateParams.builder()
+                .setType(AccountCreateParams.Type.EXPRESS)
+                .setEmail(creator.getEmail())
+                .setCapabilities(
+                        AccountCreateParams.Capabilities.builder()
+                                .setTransfers(AccountCreateParams.Capabilities.Transfers.builder()
+                                        .setRequested(true)
+                                        .build())
+                                .build()
+                )
+                .build();
+
+        Account account = stripeClient.accounts().create(params);
+        String accountId = account.getId();
+
+        LegacyCreatorStripeAccount creatorStripeAccount = LegacyCreatorStripeAccount.builder()
+                .creatorId(creator.getId())
+                .stripeAccountId(accountId)
+                .onboardingStatus(StripeOnboardingStatus.PENDING)
+                .onboardingCompleted(false)
+                .chargesEnabled(false)
+                .payoutsEnabled(false)
+                .build();
+
+        repository.save(creatorStripeAccount);
+        log.info("STRIPE: Created Express account {} for creator {}", accountId, creator.getEmail());
+        return accountId;
+    }
+
+    public Optional<LegacyCreatorStripeAccount> getAccountByCreatorId(Long creatorId) {
+        return repository.findByCreatorId(creatorId);
+    }
+
+    /**
+     * Generates an onboarding link for a Stripe Express account.
+     */
+    public String generateOnboardingLink(String stripeAccountId, String returnUrl, String refreshUrl) throws StripeException {
+        if (!stripeEnabled) {
+            log.info("Stripe disabled: generateOnboardingLink short-circuited for account {}", stripeAccountId);
+            return "";
+        }
+        AccountLinkCreateParams params = AccountLinkCreateParams.builder()
+                .setAccount(stripeAccountId)
+                .setRefreshUrl(refreshUrl)
+                .setReturnUrl(returnUrl)
+                .setType(AccountLinkCreateParams.Type.ACCOUNT_ONBOARDING)
+                .build();
+
+        AccountLink accountLink = stripeClient.accountLinks().create(params);
+        return accountLink.getUrl();
+    }
+
+    /**
+     * Updates the status of a creator's Stripe account based on webhook data.
+     */
+    @Transactional
+    public void updateAccountStatus(String stripeAccountId, boolean chargesEnabled, boolean payoutsEnabled, boolean onboardingCompleted) {
+        repository.findByStripeAccountId(stripeAccountId).ifPresent(account -> {
+            boolean previousCharges = account.isChargesEnabled();
+            boolean previousPayouts = account.isPayoutsEnabled();
+            boolean previousOnboarding = account.isOnboardingCompleted();
+
+            account.setChargesEnabled(chargesEnabled);
+            account.setPayoutsEnabled(payoutsEnabled);
+            account.setOnboardingCompleted(onboardingCompleted);
+            
+            if (onboardingCompleted) {
+                account.setOnboardingStatus(StripeOnboardingStatus.VERIFIED);
+            } else {
+                account.setOnboardingStatus(StripeOnboardingStatus.PENDING);
+            }
+
+            repository.save(account);
+
+            log.info("STRIPE: Updated account {} status - Charges: {} -> {}, Payouts: {} -> {}, Onboarding: {} -> {}, Status: {}",
+                    stripeAccountId, previousCharges, chargesEnabled, previousPayouts, payoutsEnabled, previousOnboarding, onboardingCompleted, account.getOnboardingStatus());
+        });
+    }
+
+    @Transactional
+    public StripeOnboardingStatus refreshOnboardingStatus(User user) throws StripeException {
+        Optional<LegacyCreatorStripeAccount> accountOpt = repository.findByCreatorId(user.getId());
+        if (accountOpt.isEmpty()) {
+            return StripeOnboardingStatus.NOT_STARTED;
+        }
+
+        LegacyCreatorStripeAccount account = accountOpt.get();
+        if (!stripeEnabled) {
+            return account.isOnboardingCompleted() || account.getOnboardingStatus() == StripeOnboardingStatus.VERIFIED
+                    ? StripeOnboardingStatus.VERIFIED
+                    : StripeOnboardingStatus.PENDING;
+        }
+
+        if (account.getOnboardingStatus() == StripeOnboardingStatus.VERIFIED) {
+            return StripeOnboardingStatus.VERIFIED;
+        }
+
+        // Fetch latest from Stripe
+        Account stripeAccount = stripeClient.accounts().retrieve(account.getStripeAccountId());
+        boolean completed = stripeAccount.getDetailsSubmitted();
+        
+        if (completed) {
+            account.setOnboardingCompleted(true);
+            account.setOnboardingStatus(StripeOnboardingStatus.VERIFIED);
+            repository.save(account);
+            return StripeOnboardingStatus.VERIFIED;
+        }
+
+        return StripeOnboardingStatus.PENDING;
+    }
+}
+
+========== payout\StripePayoutService.java ==========
+package com.joinlivora.backend.payout;
+
+import com.joinlivora.backend.exception.ResourceNotFoundException;
+import com.stripe.StripeClient;
+import com.stripe.model.Transfer;
+import com.stripe.param.TransferCreateParams;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.UUID;
+
+@Service("stripePayoutService")
+@RequiredArgsConstructor
+@Slf4j
+public class StripePayoutService {
+
+    private final CreatorPayoutRepository payoutRepository;
+    private final CreatorEarningRepository earningRepository;
+    private final CreatorPayoutSettingsRepository settingsRepository;
+    private final StripeClient stripeClient;
+    private final PayoutAuditService payoutAuditService;
+
+    @Value("${payments.stripe.enabled:true}")
+    private boolean stripeEnabled;
+
+    @Transactional
+    public void triggerPayout(UUID payoutId) {
+        log.info("STRIPE_PAYOUT: Triggering payout {}", payoutId);
+
+        // 1. Find PENDING payout
+        CreatorPayout payout = payoutRepository.findById(payoutId)
+                .orElseThrow(() -> new ResourceNotFoundException("Payout not found: " + payoutId));
+
+        if (payout.getStatus() != PayoutStatus.PENDING) {
+            throw new IllegalStateException("Payout " + payoutId + " is not in PENDING status. Current status: " + payout.getStatus());
+        }
+
+        if (!stripeEnabled) {
+            log.info("STRIPE_PAYOUT: Stripe disabled, failing payout {} gracefully", payoutId);
+            PayoutStatus oldStatus = payout.getStatus();
+            payout.setStatus(PayoutStatus.FAILED);
+            payout.setFailureReason("Stripe disabled");
+            payoutRepository.save(payout);
+            payoutAuditService.logStatusChange(payout.getId(), oldStatus, PayoutStatus.FAILED, PayoutActorType.SYSTEM, null, "Stripe disabled" );
+            unlockEarnings(payout);
+            return;
+        }
+
+        UUID creatorId = payout.getCreatorId();
+        BigDecimal amount = payout.getAmount();
+        String currency = payout.getCurrency();
+
+        // 2. Validate Stripe account connected
+        CreatorPayoutSettings settings = settingsRepository.findByCreatorId(creatorId)
+                .orElseThrow(() -> new IllegalStateException("Payout settings not found for creator " + creatorId));
+
+        if (settings.getStripeAccountId() == null || settings.getStripeAccountId().isBlank()) {
+            log.error("STRIPE_PAYOUT: Stripe account not connected for creator {}", creatorId);
+            PayoutStatus oldStatus = payout.getStatus();
+            payout.setStatus(PayoutStatus.FAILED);
+            payout.setFailureReason("Stripe account not connected");
+            payoutRepository.save(payout);
+            payoutAuditService.logStatusChange(payout.getId(), oldStatus, PayoutStatus.FAILED, PayoutActorType.SYSTEM, null, "Payout failed: Stripe account not connected");
+            unlockEarnings(payout);
+            throw new IllegalStateException("Stripe account not connected for creator " + creatorId);
+        }
+
+        // 3. Mark payout as PROCESSING
+        PayoutStatus preProcessingStatus = payout.getStatus();
+        payout.setStatus(PayoutStatus.PROCESSING);
+        payoutRepository.save(payout);
+        payoutAuditService.logStatusChange(payout.getId(), preProcessingStatus, PayoutStatus.PROCESSING, PayoutActorType.SYSTEM, null, "Payout processing started");
+
+        try {
+            // 4. Create Stripe transfer
+            TransferCreateParams params = TransferCreateParams.builder()
+                    .setAmount(amount.multiply(BigDecimal.valueOf(100)).longValue()) // Amount in cents
+                    .setCurrency(currency.toLowerCase())
+                    .setDestination(settings.getStripeAccountId())
+                    .putMetadata("payoutId", payout.getId().toString())
+                    .putMetadata("creator", creatorId.toString())
+                    .build();
+
+            Transfer transfer = stripeClient.transfers().create(params);
+
+            // 5. On success mark COMPLETED
+            PayoutStatus oldStatus = payout.getStatus();
+            payout.setStripeTransferId(transfer.getId());
+            payout.setStatus(PayoutStatus.COMPLETED);
+            payout.setCompletedAt(java.time.Instant.now());
+            payoutRepository.save(payout);
+            payoutAuditService.logStatusChange(payout.getId(), oldStatus, PayoutStatus.COMPLETED, PayoutActorType.STRIPE, null, "Stripe transfer created: " + transfer.getId());
+            log.info("STRIPE_PAYOUT: Payout {} COMPLETED successfully with transfer ID {}", payout.getId(), transfer.getId());
+
+        } catch (Exception e) {
+            log.error("STRIPE_PAYOUT: Payout {} FAILED", payout.getId(), e);
+            // 6. On failure mark FAILED and unlock earnings
+            PayoutStatus oldStatus = payout.getStatus();
+            payout.setStatus(PayoutStatus.FAILED);
+            payout.setFailureReason(e.getMessage());
+            payoutRepository.save(payout);
+            payoutAuditService.logStatusChange(payout.getId(), oldStatus, PayoutStatus.FAILED, PayoutActorType.SYSTEM, null, "Stripe transfer failed: " + e.getMessage());
+
+            unlockEarnings(payout);
+        }
+    }
+
+    private void unlockEarnings(CreatorPayout payout) {
+        List<CreatorEarning> earnings = earningRepository.findAllByPayout(payout);
+        for (CreatorEarning earning : earnings) {
+            earning.setLocked(false);
+            // We keep the payout referenceId so we can re-lock them later if needed
+        }
+        earningRepository.saveAll(earnings);
+        log.info("STRIPE_PAYOUT: Unlocked {} earnings for failed payout {}", earnings.size(), payout.getId());
+    }
+}
+
+========== payout\StripePayoutAdapter.java ==========
+package com.joinlivora.backend.payout;
+
+import com.joinlivora.backend.exception.PayoutRestrictedException;
+import com.joinlivora.backend.fraud.model.RiskSubjectType;
+import com.stripe.StripeClient;
+import com.stripe.exception.StripeException;
+import com.stripe.param.AccountUpdateParams;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+
+@Service("stripePayoutAdapter")
+@RequiredArgsConstructor
+@Slf4j
+public class StripePayoutAdapter {
+
+    private final StripeClient stripeClient;
+    private final PayoutHoldService payoutHoldService;
+
+    /**
+     * Maps holdDays to Stripe payout delay.
+     * Log payout hold enforcement.
+     */
+    public void enforceHold(String stripeAccountId, int holdDays) throws StripeException {
+        log.info("STRIPE: Enforcing payout hold of {} days for account {}", holdDays, stripeAccountId);
+        
+        AccountUpdateParams params = AccountUpdateParams.builder()
+                .setSettings(AccountUpdateParams.Settings.builder()
+                        .setPayouts(AccountUpdateParams.Settings.Payouts.builder()
+                                .setSchedule(AccountUpdateParams.Settings.Payouts.Schedule.builder()
+                                        .setDelayDays((long) holdDays)
+                                        .build())
+                                .build())
+                        .build())
+                .build();
+
+        stripeClient.accounts().update(stripeAccountId, params);
+    }
+
+    /**
+     * Prevents payout release if there's an active hold.
+     */
+    public void validateNoActiveHold(UUID subjectId, RiskSubjectType subjectType) {
+        // We currently only support User/Creator based holds in the new system
+        // subjectId is expected to be the creator UUID
+        
+        Instant now = Instant.now();
+        
+        // Use PayoutHoldService to get the combined status
+        com.joinlivora.backend.payout.dto.PayoutHoldStatusDTO status = payoutHoldService.getPayoutHoldStatus(subjectId);
+        
+        if (status.getHoldLevel() != HoldLevel.NONE) {
+            log.warn("PAYOUT ENFORCEMENT: Active hold found for {} {}. Expires at: {}. Reason: {}", 
+                    subjectType, subjectId, status.getUnlockDate(), status.getReason());
+            throw new PayoutRestrictedException("Payout is held until " + status.getUnlockDate() + ". Reason: " + status.getReason());
+        }
+    }
+}
+
+========== payout\CreatorConnectController.java ==========
+package com.joinlivora.backend.payout;
+
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/creator/connect")
+@RequiredArgsConstructor
+@Slf4j
+@PreAuthorize("hasRole('CREATOR') or hasRole('ADMIN')")
+public class CreatorConnectController {
+
+    private final CreatorConnectService creatorConnectService;
+    private final UserService userService;
+    private final StripeAccountRepository stripeAccountRepository;
+
+    @PostMapping("/start")
+    public ResponseEntity<?> startOnboarding(@AuthenticationPrincipal UserDetails userDetails) {
+        log.info("SECURITY: Creator onboarding started for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        try {
+            String onboardingUrl = creatorConnectService.createOnboardingLink(user);
+            return ResponseEntity.ok(Map.of("redirectUrl", onboardingUrl));
+        } catch (Exception e) {
+            log.error("SECURITY: Failed to start creatorUserId onboarding for creator: {}", user.getEmail(), e);
+            return ResponseEntity.internalServerError().body(Map.of("message", "Failed to start onboarding"));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.GetMapping("/status")
+    public ResponseEntity<?> getStatus(@AuthenticationPrincipal UserDetails userDetails) {
+        User user = userService.getByEmail(userDetails.getUsername());
+        return stripeAccountRepository.findByUser(user)
+                .map(account -> ResponseEntity.ok(Map.of(
+                        "onboardingCompleted", account.isOnboardingCompleted(),
+                        "payoutsEnabled", account.isPayoutsEnabled(),
+                        "stripeAccountId", account.getStripeAccountId()
+                )))
+                .orElse(ResponseEntity.ok(Map.of("onboardingCompleted", false)));
+    }
+}
+
+========== payment\SubscriptionController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.payment.dto.SubscriptionResponse;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+@RequestMapping("/api/subscriptions")
+@RequiredArgsConstructor
+@Slf4j
+public class SubscriptionController {
+
+    private final SubscriptionService subscriptionService;
+    private final UserService userService;
+
+    @GetMapping("/plans")
+    public ResponseEntity<java.util.List<com.joinlivora.backend.payment.dto.SubscriptionPlanDTO>> getPlans() {
+        return ResponseEntity.ok(subscriptionService.getAvailablePlans());
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<SubscriptionResponse> getMySubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("SECURITY: Fetching subscription for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        SubscriptionResponse response = subscriptionService.getSubscriptionForUser(user);
+        if (response != null) {
+            return ResponseEntity.ok(response);
+        } else {
+            return ResponseEntity.notFound().build();
+        }
+    }
+    @PostMapping("/cancel")
+    public ResponseEntity<Void> cancelSubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Cancellation requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        subscriptionService.cancelSubscription(user);
+        return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/resume")
+    public ResponseEntity<Void> resumeSubscription(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Resume requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        subscriptionService.resumeSubscription(user);
+        return ResponseEntity.ok().build();
+    }
+}
+
+========== payment\BillingController.java ==========
+package com.joinlivora.backend.payment;
+
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/billing")
+@RequiredArgsConstructor
+@Slf4j
+public class BillingController {
+
+    private final PaymentRepository paymentRepository;
+    private final UserService userService;
+    private final SubscriptionService subscriptionService;
+
+    @GetMapping("/portal")
+    public ResponseEntity<Map<String, String>> openBillingPortal(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) throws com.stripe.exception.StripeException {
+        log.info("SECURITY: Billing portal requested for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        String portalUrl = subscriptionService.createBillingPortalSession(user);
+        return ResponseEntity.ok(Map.of("url", portalUrl));
+    }
+
+    @GetMapping("/invoices")
+    public ResponseEntity<List<Map<String, Object>>> getInvoices(
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("SECURITY: Fetching invoices for creator: {}", userDetails.getUsername());
+        User user = userService.getByEmail(userDetails.getUsername());
+        
+        List<Payment> payments = paymentRepository.findAllByUserOrderByCreatedAtDesc(user);
+        
+        List<Map<String, Object>> invoices = payments.stream().map(payment -> {
+            Map<String, Object> invoice = new java.util.HashMap<>();
+            invoice.put("id", payment.getId().toString());
+            invoice.put("amount", payment.getAmount().multiply(new java.math.BigDecimal(100)).intValue());
+            invoice.put("currency", payment.getCurrency().toUpperCase());
+            invoice.put("status", "COMPLETED");
+            invoice.put("date", payment.getCreatedAt().toString());
+            invoice.put("pdfUrl", payment.getReceiptUrl() != null ? payment.getReceiptUrl() : "#");
+            return invoice;
+        }).toList();
+
+        return ResponseEntity.ok(invoices);
+    }
+}
+

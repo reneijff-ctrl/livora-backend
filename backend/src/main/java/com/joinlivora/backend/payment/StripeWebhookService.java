@@ -202,12 +202,12 @@ public class StripeWebhookService {
             log.warn("WEBHOOK_DEBUG: getObject() returned empty for event type={}, attempting deserializeUnsafe()", eventType);
             try {
                 stripeObject = dataObjectDeserializer.deserializeUnsafe();
-                log.info("WEBHOOK_DEBUG: deserializeUnsafe() succeeded, class={}", stripeObject != null ? stripeObject.getClass().getName() : "null");
+                log.debug("WEBHOOK_DEBUG: deserializeUnsafe() succeeded, class={}", stripeObject != null ? stripeObject.getClass().getName() : "null");
             } catch (Exception deserEx) {
                 log.error("WEBHOOK_DEBUG: deserializeUnsafe() also failed for event type={}", eventType, deserEx);
             }
         } else {
-            log.info("WEBHOOK_DEBUG: getObject() succeeded, class={}", stripeObject.getClass().getName());
+            log.debug("WEBHOOK_DEBUG: getObject() succeeded, class={}", stripeObject.getClass().getName());
         }
 
         StripeWebhookService self = selfProvider.getIfAvailable();
@@ -222,16 +222,16 @@ public class StripeWebhookService {
                     log.warn("WEBHOOK_DEBUG: Session metadata is null/empty, re-fetching from Stripe API for session={}", session.getId());
                     try {
                         session = stripeClient.checkout().sessions().retrieve(session.getId());
-                        log.info("WEBHOOK_DEBUG: Re-fetched session={}, metadata={}", session.getId(), session.getMetadata());
+                        log.debug("WEBHOOK_DEBUG: Re-fetched session={}, metadata={}", session.getId(), session.getMetadata());
                     } catch (Exception refetchEx) {
                         log.error("WEBHOOK_DEBUG: Failed to re-fetch session={} from Stripe API", session.getId(), refetchEx);
                     }
                 } else {
-                    log.info("WEBHOOK_DEBUG: Session metadata present: {}", session.getMetadata());
+                    log.debug("WEBHOOK_DEBUG: Session metadata present: {}", session.getMetadata());
                 }
                 
                 String type = session.getMetadata() != null ? session.getMetadata().get("type") : null;
-                log.info("WEBHOOK_DEBUG: metadata type={}, routing to: {}", type,
+                log.debug("WEBHOOK_DEBUG: metadata type={}, routing to: {}", type,
                     "token_purchase".equalsIgnoreCase(type) ? "handleTokenCheckoutSession" :
                     "TIP".equalsIgnoreCase(type) ? "handleTipCheckoutSession" : "handleCheckoutSession(GENERIC)");
                 if ("token_purchase".equalsIgnoreCase(type)) {
@@ -917,7 +917,7 @@ public class StripeWebhookService {
 
     @Transactional
     public void handleTokenCheckoutSession(Session session) {
-        log.info("WEBHOOK_DEBUG: handleTokenCheckoutSession ENTERED for session={}", session.getId());
+        log.debug("WEBHOOK_DEBUG: handleTokenCheckoutSession ENTERED for session={}", session.getId());
         if (paymentRepository.existsByStripeSessionId(session.getId())) {
             log.info("SECURITY: Token purchase already processed for session: {}", session.getId());
             return;
@@ -1084,7 +1084,7 @@ public class StripeWebhookService {
                 creatorPayoutRepository.save(payout);
                 payoutAuditService.logStatusChange(payoutId, oldStatus, PayoutStatus.FAILED, PayoutActorType.STRIPE, null, "Stripe transfer failed: " + transferId);
                 log.info("SECURITY: CreatorPayout {} marked as FAILED due to Stripe transfer failure", payoutId);
-                log.info("PAYOUT_DEBUG: CreatorPayout {} FAILED — balance auto-restored because calculateAvailablePayout only subtracts COMPLETED and PENDING", payoutId);
+                log.info("PAYOUT_DEBUG: CreatorPayout {} FAILED â€” balance auto-restored because calculateAvailablePayout only subtracts COMPLETED and PENDING", payoutId);
             });
 
             payoutRepository.findById(payoutId).ifPresent(payout -> {

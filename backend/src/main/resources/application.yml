@@ -2,10 +2,10 @@ spring:
   application:
     name: joinlivora-backend
   rabbitmq:
-    host: localhost
-    port: 5672
-    username: livora
-    password: livora
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:livora}
+    password: ${SPRING_RABBITMQ_PASSWORD:livora}
   profiles:
     active: dev
   mvc:
@@ -48,9 +48,9 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       repositories:
         enabled: true
-      # password: ${REDIS_PASSWORD:}
 
   cache:
     type: redis
@@ -190,7 +190,7 @@ livora:
   security:
     enforce-https: ${ENFORCE_HTTPS:false}
     cors:
-      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,https://joinlivora.com}
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173,https://joinlivora.com}
     trusted-proxies: ${TRUSTED_PROXIES:127.0.0.1,::1}
     rate-limit:
       anonymous: 30

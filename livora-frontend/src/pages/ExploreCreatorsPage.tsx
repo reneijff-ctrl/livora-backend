@@ -5,10 +5,16 @@ import SEO from '../components/SEO';
 import creatorService from '../api/creatorService';
 import { ICreator } from '../domain/creator/ICreator';
 import CreatorCard from '../components/creator/CreatorCard';
-import { useWs, useTrackPresence } from '../ws/WsContext';
+import { COUNTRIES } from '../data/countries';
+import { getCountryLabel } from '../data/countries';
+import { useWs, useTrackPresence, useThumbnailCacheBuster } from '../ws/WsContext';
+import { useAuth } from '../auth/useAuth';
+import webSocketService from '../websocket/webSocketService';
 
 const ExploreCreatorsPage: React.FC = () => {
-  const { presenceMap, thumbnailCacheBuster } = useWs();
+  const { presenceMap } = useWs();
+  const { isAuthenticated } = useAuth();
+  const thumbnailCacheBuster = useThumbnailCacheBuster();
   const navigate = useNavigate();
   const [creators, setCreators] = useState<ICreator[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,6 +33,12 @@ const ExploreCreatorsPage: React.FC = () => {
   const [language, setLanguage] = useState("all");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
 
+  // Discovery state
+  const [userCountry, setUserCountry] = useState<string>('');
+  const [topCreators, setTopCreators] = useState<ICreator[]>([]);
+  const [liveByCountry, setLiveByCountry] = useState<ICreator[]>([]);
+  const [nearbyCreators, setNearbyCreators] = useState<ICreator[]>([]);
+
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(searchQuery);
 
   useEffect(() => {
@@ -35,6 +47,67 @@ const ExploreCreatorsPage: React.FC = () => {
     }, 500);
     return () => clearTimeout(handler);
   }, [searchQuery]);
+
+  // Subscribe to global stream status updates (STREAM_STARTED / STREAM_ENDED)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const unsub = webSocketService.subscribe(
+      '/exchange/amq.topic/streams.status',
+      (message) => {
+        try {
+          const data = JSON.parse(message.body);
+          const payload = data.payload;
+          if (!payload?.creatorUserId) return;
+
+          const updateCreatorList = (prev: ICreator[]) =>
+            prev.map(c =>
+              c.userId === payload.creatorUserId
+                ? { ...c, isLive: payload.isLive, viewerCount: payload.viewerCount ?? c.viewerCount }
+                : c
+            );
+
+          setCreators(updateCreatorList);
+          setTopCreators(updateCreatorList);
+          setLiveByCountry(updateCreatorList);
+          setNearbyCreators(updateCreatorList);
+        } catch (err) {
+          console.error('Failed to parse stream status event:', err);
+        }
+      }
+    );
+
+    return () => unsub();
+  }, [isAuthenticated]);
+
+  // Detect user country from browser locale
+  useEffect(() => {
+    try {
+      const locale = Intl.DateTimeFormat().resolvedOptions().locale || navigator.language || '';
+      const parts = locale.split('-');
+      const code = parts.length > 1 ? parts[parts.length - 1].toUpperCase() : '';
+      if (code && code.length === 2) {
+        setUserCountry(code);
+      }
+    } catch {
+      // Fallback: no country detected
+    }
+  }, []);
+
+  // Fetch discovery sections
+  useEffect(() => {
+    const fetchDiscovery = async () => {
+      const [top, live, nearby] = await Promise.all([
+        userCountry ? creatorService.getTopCreators(userCountry, 10) : creatorService.getTopCreators(undefined, 10),
+        userCountry ? creatorService.getLiveCreators(userCountry, 10) : creatorService.getLiveCreators(undefined, 10),
+        userCountry ? creatorService.getTopCreators(userCountry, 10) : Promise.resolve([]),
+      ]);
+      setTopCreators(top);
+      setLiveByCountry(live);
+      setNearbyCreators(nearby);
+    };
+    fetchDiscovery();
+  }, [userCountry]);
 
   // Pagination states
   const [page, setPage] = useState(0);
@@ -288,10 +361,11 @@ const ExploreCreatorsPage: React.FC = () => {
               className="premium-select md:w-1/4"
             >
               <option value="all">All Countries</option>
-              <option value="Netherlands">Netherlands</option>
-              <option value="Germany">Germany</option>
-              <option value="USA">USA</option>
-              <option value="Other">Other</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -448,7 +522,64 @@ const ExploreCreatorsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Live Now Section */}
+        {/* Discovery: Live Now in Your Country */}
+        {liveByCountry.length > 0 && (
+          <section className="mb-12">
+            <div className="flex items-center gap-2 mb-6">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Live now{userCountry ? ` in ${getCountryLabel(userCountry)}` : ''}
+              </h2>
+            </div>
+            <div className="flex overflow-x-auto pb-6 gap-6 scrollbar-hide -mx-4 px-4 sm:-mx-0 sm:px-0 snap-x">
+              {liveByCountry.map((c) => (
+                <div key={`live-country-${c.userId}`} className="flex-none snap-start w-56 sm:w-72">
+                  <CreatorCard creator={c} onClick={handleCreatorClick} variant="explore" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Discovery: Top Creators in Your Country */}
+        {topCreators.length > 0 && (
+          <section className="mb-12">
+            <div className="flex items-center gap-2 mb-6">
+              <span className="text-xl">🏆</span>
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Top creators{userCountry ? ` in ${getCountryLabel(userCountry)}` : ''}
+              </h2>
+            </div>
+            <div className="flex overflow-x-auto pb-6 gap-6 scrollbar-hide -mx-4 px-4 sm:-mx-0 sm:px-0 snap-x">
+              {topCreators.map((c) => (
+                <div key={`top-${c.userId}`} className="flex-none snap-start w-56 sm:w-72">
+                  <CreatorCard creator={c} onClick={handleCreatorClick} variant="explore" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Discovery: Creators Near You */}
+        {nearbyCreators.length > 0 && userCountry && (
+          <section className="mb-12">
+            <div className="flex items-center gap-2 mb-6">
+              <span className="text-xl">📍</span>
+              <h2 className="text-2xl font-bold text-white tracking-tight">
+                Creators near you
+              </h2>
+            </div>
+            <div className="flex overflow-x-auto pb-6 gap-6 scrollbar-hide -mx-4 px-4 sm:-mx-0 sm:px-0 snap-x">
+              {nearbyCreators.map((c) => (
+                <div key={`nearby-${c.userId}`} className="flex-none snap-start w-56 sm:w-72">
+                  <CreatorCard creator={c} onClick={handleCreatorClick} variant="explore" />
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Live Now Section (all countries) */}
         {!loading && !error && liveCreators.length > 0 && (
           <section className="mb-12">
             <div className="flex items-center gap-2 mb-6">

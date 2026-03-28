@@ -11,8 +11,8 @@ const tipService = {
     return response.data;
   },
 
-  async sendTokenTip(roomId: string, amount: number, message?: string, clientRequestId?: string): Promise<{ viewerBalance: number, creatorBalance: number, message: string }> {
-    const response = await apiClient.post('/tips/send', { roomId, amount, message, clientRequestId });
+  async sendTokenTip(roomId: string, amount: number, message?: string, clientRequestId?: string, giftName?: string): Promise<{ viewerBalance: number, creatorBalance: number, message: string }> {
+    const response = await apiClient.post('/tips/send', { roomId, amount, message, clientRequestId, giftName });
     return response.data;
   },
 

@@ -51,7 +51,7 @@ public class ChatMessageService {
     private final com.joinlivora.backend.websocket.PresenceService presenceService;
     private final com.joinlivora.backend.chat.service.ChatRoomService chatRoomService;
     private final ChatPersistenceService chatPersistenceService;
-    private final ChatBatchService chatBatchService;
+    private final RedisChatBatchService chatBatchService;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
     private final com.joinlivora.backend.moderation.CreatorRoomBanService creatorRoomBanService;
 
