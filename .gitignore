@@ -17,6 +17,11 @@ verification*.log
 # Env files
 .env
 .env.*
+**/.env
+**/.env.*
+**/.env.local
+**/.env.production
+notepad_env
 
 # OS
 .DS_Store
