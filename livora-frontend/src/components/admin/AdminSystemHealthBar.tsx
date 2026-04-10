@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import webSocketService from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 
 interface SystemHealth {
   api: 'UP' | 'DOWN' | 'LOADING';
@@ -14,6 +14,7 @@ interface AdminSystemHealthBarProps {
 }
 
 const AdminSystemHealthBar: React.FC<AdminSystemHealthBarProps> = React.memo(({ healthData, systemHealth }) => {
+  const { connected } = useWs();
   const [health, setHealth] = useState<SystemHealth>({
     api: 'LOADING',
     db: 'LOADING',
@@ -33,24 +34,11 @@ const AdminSystemHealthBar: React.FC<AdminSystemHealthBarProps> = React.memo(({ 
   }, [healthData]);
 
   useEffect(() => {
-    // Initial WS status
     setHealth(prev => ({
       ...prev,
-      websocket: webSocketService.isConnected() ? 'UP' : 'DOWN'
+      websocket: connected ? 'UP' : 'DOWN'
     }));
-
-    // Subscribe to WS state changes
-    const unsubscribe = webSocketService.subscribeStateChange((connected) => {
-      setHealth(prev => ({
-        ...prev,
-        websocket: connected ? 'UP' : 'DOWN'
-      }));
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
+  }, [connected]);
 
   const getLatencyStatus = (ms: number) => {
     if (ms === 0) return 'LOADING';

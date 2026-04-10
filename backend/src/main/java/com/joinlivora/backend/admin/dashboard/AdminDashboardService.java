@@ -4,7 +4,7 @@ import com.joinlivora.backend.creator.model.CreatorApplicationStatus;
 import com.joinlivora.backend.creator.repository.CreatorApplicationRepository;
 import com.joinlivora.backend.creator.verification.CreatorVerificationRepository;
 import com.joinlivora.backend.creator.verification.VerificationStatus;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
+import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.payout.PayoutRequestRepository;
 import com.joinlivora.backend.payout.PayoutRequestStatus;
 import com.joinlivora.backend.payout.freeze.PayoutFreezeAuditRepository;
@@ -24,7 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -43,11 +42,11 @@ public class AdminDashboardService {
     private final CreatorApplicationRepository creatorApplicationRepository;
     private final PresenceService presenceService;
     private final StreamService streamService;
-    private final LivestreamSessionRepository livestreamSessionRepository;
+    private final StreamRepository streamRepository;
     private final PaymentRepository paymentRepository;
     private final ReportRepository reportRepository;
 
-    @Cacheable("adminDashboardData")
+    @Cacheable(value = "adminDashboardData", unless = "#result == null")
     @Transactional(readOnly = true)
     public AdminDashboardResponse getDashboardData() {
         return AdminDashboardResponse.builder()
@@ -56,7 +55,7 @@ public class AdminDashboardService {
                 .build();
     }
 
-    @Cacheable("adminDashboardMetrics")
+    @Cacheable(value = "adminDashboardMetrics", unless = "#result == null")
     @Transactional(readOnly = true)
     public AdminDashboardMetrics getMetrics() {
         Long totalCreators = Optional.ofNullable(userRepository.countByRole(Role.CREATOR)).orElse(0L);
@@ -112,7 +111,7 @@ public class AdminDashboardService {
                 .build();
     }
     
-    @Cacheable("adminDashboardPayoutVolume")
+    @Cacheable(value = "adminDashboardPayoutVolume", unless = "#result == null")
     @Transactional(readOnly = true)
     public List<ChartDataPoint> getPayoutVolumeLast30Days() {
         Instant from = Instant.now().minus(30, ChronoUnit.DAYS);
@@ -134,7 +133,7 @@ public class AdminDashboardService {
         }).collect(Collectors.toList());
     }
 
-    @Cacheable("adminDashboardFreezesPerDay")
+    @Cacheable(value = "adminDashboardFreezesPerDay", unless = "#result == null")
     @Transactional(readOnly = true)
     public List<ChartDataPoint> getFreezesPerDayLast30Days() {
         Instant from = Instant.now().minus(30, ChronoUnit.DAYS);
@@ -156,11 +155,11 @@ public class AdminDashboardService {
         }).collect(Collectors.toList());
     }
 
-    @Cacheable("adminDashboardCharts")
+    @Cacheable(value = "adminDashboardCharts", unless = "#result == null")
     @Transactional(readOnly = true)
     public AdminDashboardChartsDTO getCharts() {
         Instant sevenDaysAgo = Instant.now().minus(7, ChronoUnit.DAYS);
-        LocalDateTime twentyFourHoursAgo = LocalDateTime.now().minus(24, ChronoUnit.HOURS);
+        Instant twentyFourHoursAgo = Instant.now().minus(24, ChronoUnit.HOURS);
 
         List<ChartPoint> dailyUsersLast7Days = userRepository.countNewUsersGroupedByDay(sevenDaysAgo).stream()
                 .map(row -> new ChartPoint(row[0].toString(), BigDecimal.valueOf(((Number) row[1]).longValue())))
@@ -170,13 +169,11 @@ public class AdminDashboardService {
                 .map(row -> new ChartPoint(row[0].toString(), (BigDecimal) row[1]))
                 .collect(Collectors.toList());
 
-        List<ChartPoint> streamsLast24Hours = livestreamSessionRepository.countStreamsGroupedByHour(twentyFourHoursAgo).stream()
+        List<ChartPoint> streamsLast24Hours = streamRepository.countStreamsGroupedByHour(twentyFourHoursAgo).stream()
                 .map(row -> {
                     String label = row[0].toString();
                     if (row[0] instanceof java.sql.Timestamp) {
                         label = ((java.sql.Timestamp) row[0]).toLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:00"));
-                    } else if (row[0] instanceof LocalDateTime) {
-                        label = ((LocalDateTime) row[0]).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:00"));
                     }
                     return new ChartPoint(label, BigDecimal.valueOf(((Number) row[1]).longValue()));
                 })

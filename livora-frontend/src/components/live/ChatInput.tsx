@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import EmojiPicker, { Theme, EmojiClickData } from 'emoji-picker-react';
 import GifPicker from './GifPicker';
-import { webSocketService } from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -13,6 +13,7 @@ interface ChatInputProps {
  * Includes an emoji picker, handles cursor-based insertion.
  */
 const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled = false }) => {
+  const { subscribe } = useWs();
   const [message, setMessage] = useState('');
   const [showPicker, setShowPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
@@ -23,7 +24,9 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled = false }) => {
   const gifPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const unsubscribe = webSocketService.subscribe('/user/queue/moderation', (msg) => {
+    let unsub = () => {};
+
+    const result = subscribe('/user/queue/moderation', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         if (data.type === 'MODERATION_BLOCKED' || data.type === 'RATE_LIMIT_EXCEEDED') {
@@ -45,11 +48,14 @@ const ChatInput: React.FC<ChatInputProps> = ({ onSend, disabled = false }) => {
         console.error('Error parsing moderation notification', e);
       }
     });
+    if (typeof result === 'function') {
+      unsub = result;
+    }
 
     return () => {
-      unsubscribe();
+      unsub();
     };
-  }, []);
+  }, [subscribe]);
 
   useEffect(() => {
     if (notification) {

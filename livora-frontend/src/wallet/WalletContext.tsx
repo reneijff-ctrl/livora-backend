@@ -19,7 +19,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [balance, setBalance] = useState(0);
   const [lastDelta, setLastDelta] = useState<number | null>(null);
   const deltaTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const subscriptionRef = useRef<{ unsubscribe: () => void } | null>(null);
+  const subscriptionRef = useRef<(() => void) | null>(null);
   const explosionListeners = useRef<Set<(amount: number) => void>>(new Set());
 
   const subscribeToExplosions = useCallback((listener: (amount: number) => void) => {
@@ -80,7 +80,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (!isAuthenticated || !connected || !subscribe) {
       if (subscriptionRef.current) {
         console.log('WALLET: Cleaning up subscription (not auth/connected)');
-        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current();
         subscriptionRef.current = null;
       }
       return;
@@ -90,7 +90,7 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     if (subscriptionRef.current) return;
 
     console.log('WALLET: Subscribing to /user/queue/wallet');
-    const sub = subscribe('/user/queue/wallet', (msg) => {
+    const result = subscribe('/user/queue/wallet', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         console.log('WALLET: Received update from WS', data);
@@ -102,14 +102,14 @@ export const WalletProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       }
     });
 
-    if (sub) {
-      subscriptionRef.current = sub;
+    if (typeof result === 'function') {
+      subscriptionRef.current = result;
     }
 
     return () => {
       if (subscriptionRef.current) {
         console.log('WALLET: Cleaning up subscription on unmount/re-init');
-        subscriptionRef.current.unsubscribe();
+        subscriptionRef.current();
         subscriptionRef.current = null;
       }
     };

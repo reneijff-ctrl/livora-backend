@@ -34,20 +34,4 @@ public class ChatRoomDto {
                 .build();
     }
 
-    /**
-     * @deprecated Use fromEntity(com.joinlivora.backend.chat.domain.ChatRoom) instead.
-     */
-    @Deprecated
-    public static ChatRoomDto fromEntity(com.joinlivora.backend.chat.ChatRoom chatRoom) {
-        if (chatRoom == null) return null;
-        return ChatRoomDto.builder()
-                .id(chatRoom.getId())
-                .name(chatRoom.getName())
-                .isLive(chatRoom.isLive())
-                .ppvRequired(chatRoom.isPpvRoom())
-                .isPaid(chatRoom.isPaid())
-                .pricePerMessage(chatRoom.getPricePerMessage())
-                .creatorId(chatRoom.getCreatedBy() != null ? chatRoom.getCreatedBy().getId() : null)
-                .build();
-    }
 }

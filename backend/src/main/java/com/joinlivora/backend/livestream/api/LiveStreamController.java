@@ -3,6 +3,7 @@ package com.joinlivora.backend.livestream.api;
 import com.joinlivora.backend.livestream.dto.LiveStreamResponse;
 import com.joinlivora.backend.livestream.service.LiveStreamService;
 import com.joinlivora.backend.streaming.Stream;
+import com.joinlivora.backend.streaming.StreamCacheDTO;
 import com.joinlivora.backend.streaming.dto.GoLiveRequest;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.streaming.service.LiveAccessService;
@@ -33,7 +34,6 @@ public class LiveStreamController {
 
     @PostMapping("/creator/live/start")
     @PreAuthorize("hasRole('CREATOR')")
-    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<LiveStreamResponse> startLive(
             @AuthenticationPrincipal UserPrincipal principal,
             @org.springframework.web.bind.annotation.RequestBody(required = false) GoLiveRequest request) {
@@ -43,7 +43,7 @@ public class LiveStreamController {
         
         creatorGoLiveService.goLive(creator.getId(), request);
         
-        Stream stream = liveStreamService.getActiveStream(userId);
+        StreamCacheDTO stream = liveStreamService.getActiveStream(userId);
         if (stream == null) {
             throw new RuntimeException("Failed to start live stream");
         }
@@ -59,7 +59,7 @@ public class LiveStreamController {
 
     @GetMapping("/public/creators/{id}/live")
     public ResponseEntity<LiveStreamResponse> getLiveStatus(@PathVariable Long id) {
-        Stream stream = liveStreamService.getActiveStream(id);
+        StreamCacheDTO stream = liveStreamService.getActiveStream(id);
         if (stream == null) {
             return ResponseEntity.ok(LiveStreamResponse.builder()
                     .creatorUserId(id)
@@ -92,6 +92,7 @@ public class LiveStreamController {
     }
 
     private LiveStreamResponse mapToResponse(Stream stream) {
+        if (stream == null) return null;
         return LiveStreamResponse.builder()
                 .id(stream.getId())
                 .streamId(stream.getId())
@@ -99,6 +100,24 @@ public class LiveStreamController {
                 .streamRoomId(stream.getMediasoupRoomId())
                 .streamKey(stream.getStreamKey())
                 .creatorUserId(stream.getCreator().getId())
+                .isLive(stream.isLive())
+                .status(stream.isLive() ? com.joinlivora.backend.livestream.domain.LiveStreamState.LIVE : com.joinlivora.backend.livestream.domain.LiveStreamState.ENDED)
+                .startedAt(stream.getStartedAt())
+                .endedAt(stream.getEndedAt())
+                .title(stream.getTitle())
+                .thumbnailUrl(stream.getThumbnailUrl())
+                .build();
+    }
+
+    private LiveStreamResponse mapToResponse(StreamCacheDTO stream) {
+        if (stream == null) return null;
+        return LiveStreamResponse.builder()
+                .id(stream.getId())
+                .streamId(stream.getId())
+                .roomId(stream.getMediasoupRoomId())
+                .streamRoomId(stream.getMediasoupRoomId())
+                .streamKey(stream.getStreamKey())
+                .creatorUserId(stream.getCreatorUserId())
                 .isLive(stream.isLive())
                 .status(stream.isLive() ? com.joinlivora.backend.livestream.domain.LiveStreamState.LIVE : com.joinlivora.backend.livestream.domain.LiveStreamState.ENDED)
                 .startedAt(stream.getStartedAt())

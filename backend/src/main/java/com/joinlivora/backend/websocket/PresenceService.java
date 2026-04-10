@@ -95,65 +95,10 @@ public class PresenceService {
         this.streamModeratorService = streamModeratorService;
     }
 
-    /**
-     * Legacy constructor for backward compatibility with tests and old wiring.
-     * Maps old dependencies to new service architecture.
-     */
-    public PresenceService(
-            @Lazy SimpMessagingTemplate messagingTemplate,
-            StreamService streamService,
-            @Lazy AnalyticsEventPublisher analyticsEventPublisher,
-            @Lazy UserService userService,
-            OnlineStatusService onlineStatusService,
-            CreatorPresenceService creatorPresenceService,
-            OnlineCreatorRegistry onlineCreatorRegistry,
-            CreatorRepository creatorRepository,
-            ChatRoomRepository chatRoomRepositoryV2,
-            ChatRoomService chatRoomServiceV2,
-            CreatorGoLiveService creatorGoLiveService,
-            LiveViewerCounterService liveViewerCounterService,
-            StreamAssistantBotService streamAssistantBotService,
-            RedisTemplate<String, Object> redisTemplate,
-            LiveStreamService liveStreamService) {
-        this(
-            new SessionRegistryService(),
-            new PresenceTrackingService(redisTemplate, onlineStatusService),
-            new ViewerCountService(liveViewerCounterService),
-            new PresenceEventOrchestrator(messagingTemplate, analyticsEventPublisher, streamAssistantBotService, chatRoomServiceV2, createAlwaysAvailableBrokerListener(), null),
-            userService,
-            streamService,
-            liveStreamService,
-            null, // Will be lazily resolved in production or remains null in tests if not needed
-            onlineCreatorRegistry,
-            liveViewerCounterService,
-            null,
-            null
-        );
-    }
-
     public static com.joinlivora.backend.presence.service.BrokerAvailabilityListener createAlwaysAvailableBrokerListener() {
         com.joinlivora.backend.presence.service.BrokerAvailabilityListener listener = new com.joinlivora.backend.presence.service.BrokerAvailabilityListener();
         listener.setBrokerAvailable(true);
         return listener;
-    }
-
-    /**
-     * Legacy constructor variation for tests.
-     */
-    public PresenceService(
-            @Lazy SimpMessagingTemplate messagingTemplate,
-            StreamService streamService,
-            @Lazy AnalyticsEventPublisher analyticsEventPublisher,
-            @Lazy UserService userService,
-            OnlineStatusService onlineStatusService,
-            CreatorPresenceService creatorPresenceService,
-            OnlineCreatorRegistry onlineCreatorRegistry,
-            CreatorRepository creatorRepository,
-            ChatRoomRepository chatRoomRepositoryV2,
-            ChatRoomService chatRoomServiceV2) {
-        this(messagingTemplate, streamService, analyticsEventPublisher, userService, onlineStatusService,
-                creatorPresenceService, onlineCreatorRegistry, creatorRepository, chatRoomRepositoryV2,
-                chatRoomServiceV2, null, null, null, null, null);
     }
 
 
@@ -210,8 +155,10 @@ public class PresenceService {
                 
                 Long creatorId = null;
                 if (role == Role.CREATOR) {
-                    creatorProfileService.initializeCreatorProfile(user);
-                    creatorId = creatorProfileService.getCreatorIdByUserId(userId).orElse(null);
+                    if (creatorProfileService != null) {
+                        creatorProfileService.initializeCreatorProfile(user);
+                        creatorId = creatorProfileService.getCreatorIdByUserId(userId).orElse(null);
+                    }
                     
                     log.info("CREATOR ONLINE: {} (userId: {})", creatorId, userId);
                     presenceTracking.markCreatorOnline(creatorId);
@@ -418,10 +365,10 @@ public class PresenceService {
                 }
             }
 
-            Long streamSessionId = liveViewerCounterService != null ? liveViewerCounterService.getActiveSessionId(creatorUserId) : null;
-            if (streamSessionId != null && sessionRegistry.markStreamJoined(sessionId, streamSessionId)) {
+            UUID activeStreamId = liveViewerCounterService != null ? liveViewerCounterService.getActiveStreamUuid(creatorUserId) : null;
+            if (activeStreamId != null) {
                 User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
-                viewerCountService.incrementViewerCount(streamSessionId, creatorUserId, user != null ? user.getId() : null, sessionId, ip, userAgent);
+                viewerCountService.incrementViewerCount(activeStreamId, creatorUserId, user != null ? user.getId() : null, sessionId, ip, userAgent);
             }
         }
     }
@@ -461,10 +408,11 @@ public class PresenceService {
         }
 
         if (creatorUserId != null) {
-            Long streamSessionId = liveViewerCounterService != null ? liveViewerCounterService.getActiveSessionId(creatorUserId) : null;
-            if (streamSessionId != null && sessionRegistry.markStreamLeft(sessionId, streamSessionId)) {
+            UUID activeStreamId = liveViewerCounterService != null ? liveViewerCounterService.getActiveStreamUuid(creatorUserId) : null;
+            if (activeStreamId != null) {
+                sessionRegistry.markStreamLeft(sessionId, null);
                 User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
-                viewerCountService.decrementViewerCount(streamSessionId, creatorUserId, user != null ? user.getId() : null, sessionId, ip, userAgent);
+                viewerCountService.decrementViewerCount(activeStreamId, creatorUserId, user != null ? user.getId() : null, sessionId, ip, userAgent);
             }
         }
     }

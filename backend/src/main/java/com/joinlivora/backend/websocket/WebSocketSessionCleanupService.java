@@ -106,20 +106,23 @@ public class WebSocketSessionCleanupService {
         if (sessionAttributes.containsKey("creatorUserId")) {
             Long creatorUserId = (Long) sessionAttributes.get("creatorUserId");
             Long userId = (Long) sessionAttributes.get("userId");
-            Long streamSessionId = (Long) sessionAttributes.get("streamSessionId");
+            String streamSessionIdStr = (String) sessionAttributes.get("streamSessionId");
 
-            if (creatorUserId != null && streamSessionId != null) {
+            if (creatorUserId != null && streamSessionIdStr != null) {
                 String sessionId = headerAccessor.getSessionId();
                 String ip = (String) sessionAttributes.get("ip");
                 String userAgent = (String) sessionAttributes.get("userAgent");
-                log.info("SESSION-CLEANUP: Removing viewer from count for creatorUserId={} (streamSessionId={}, viewerId={}, sessionId={}, ip={}, userAgent={})",
-                        creatorUserId, streamSessionId, userId != null ? userId : "unknown", sessionId, ip, userAgent);
-                liveViewerCounterService.removeViewer(streamSessionId, creatorUserId, userId, sessionId, ip, userAgent);
+                // streamSessionId is stored as UUID string since the migration to Stream (V2)
+                java.util.UUID streamUuid = null;
+                try { streamUuid = java.util.UUID.fromString(streamSessionIdStr); } catch (Exception ignored) {}
+                log.info("SESSION-CLEANUP: Removing viewer from count for creatorUserId={} (streamId={}, viewerId={}, sessionId={}, ip={}, userAgent={})",
+                        creatorUserId, streamUuid, userId != null ? userId : "unknown", sessionId, ip, userAgent);
+                liveViewerCounterService.removeViewer(streamUuid, creatorUserId, userId, sessionId, ip, userAgent);
 
                 // DIAGNOSTICS
                 String corrId = (String) sessionAttributes.get("corrId");
-                log.info("event=DISCONNECT_DECREMENT corrId={} sessionId={} viewerId={} creatorUserId={} streamSessionId={}",
-                        corrId, headerAccessor.getSessionId(), userId, creatorUserId, streamSessionId);
+                log.info("event=DISCONNECT_DECREMENT corrId={} sessionId={} viewerId={} creatorUserId={} streamId={}",
+                        corrId, headerAccessor.getSessionId(), userId, creatorUserId, streamUuid);
 
                 // Ensure we don't decrement multiple times for the same session
                 sessionAttributes.remove("creatorUserId");
@@ -139,15 +142,10 @@ public class WebSocketSessionCleanupService {
 
         try {
             if (streamSessionIds != null && !streamSessionIds.isEmpty()) {
-                log.info("SESSION-CLEANUP: Detected disconnected session {} with active joined streams", sessionId);
-                for (Long streamSessionId : streamSessionIds) {
-                    try {
-                        viewerCountService.decrementViewerCount(streamSessionId, creatorId, userId, sessionId, sessionIp, userAgent);
-                    } catch (Exception e) {
-                        log.error("SESSION-CLEANUP: Failed to decrement viewer count for streamSessionId={} sessionId={} userId={}",
-                                streamSessionId, sessionId, userId, e);
-                    }
-                }
+                log.info("SESSION-CLEANUP: Detected disconnected session {} with active joined streams (legacy Long IDs — cleanup skipped, handled via creatorUserId path)", sessionId);
+                // Stream IDs stored here are legacy Long session IDs from old markStreamJoined calls.
+                // The new UUID-based path stores the stream UUID in sessionAttributes[streamSessionId].
+                // No viewer count action needed here to avoid double-decrement.
             }
 
             // Remove presence entries

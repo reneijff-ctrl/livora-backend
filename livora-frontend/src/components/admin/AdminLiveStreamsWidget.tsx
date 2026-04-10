@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import adminService from '../../api/adminService';
 import { safeRender } from '@/utils/safeRender';
-import { webSocketService } from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 import { AdminRealtimeEventDTO, LiveStreamInfo } from '../../types';
 import { showToast } from '../Toast';
 
@@ -41,6 +41,7 @@ const LiveDuration: React.FC<{ startedAt: string }> = ({ startedAt }) => {
 
 const AdminLiveStreamsWidget: React.FC<AdminLiveStreamsWidgetProps> = React.memo(({ streams, setStreams, loading, onRefresh }) => {
   const navigate = useNavigate();
+  const { subscribe, connected } = useWs();
   const [viewerCounts, setViewerCounts] = useState<Record<number, number>>({});
   const [spikes, setSpikes] = useState<Record<number, boolean>>({});
   const subscriptions = useRef<Map<number, () => void>>(new Map());
@@ -100,10 +101,10 @@ const AdminLiveStreamsWidget: React.FC<AdminLiveStreamsWidgetProps> = React.memo
   }, [onRefresh, setStreams]);
 
   const subscribeToStream = useCallback((uId: number) => {
-    if (!webSocketService.isConnected()) return;
+    if (!connected) return;
     if (subscriptions.current.has(uId)) return;
 
-    const unsub = webSocketService.subscribe(`/exchange/amq.topic/viewers.${uId}`, (msg) => {
+    const unsub = subscribe(`/exchange/amq.topic/viewers.${uId}`, (msg) => {
       try {
         const data = JSON.parse(msg.body);
         const payload = data.payload || data;
@@ -130,7 +131,7 @@ const AdminLiveStreamsWidget: React.FC<AdminLiveStreamsWidgetProps> = React.memo
     if (typeof unsub === 'function') {
       subscriptions.current.set(uId, unsub);
     }
-  }, []);
+  }, [subscribe, connected]);
 
   useEffect(() => {
     return () => {
@@ -169,20 +170,8 @@ const AdminLiveStreamsWidget: React.FC<AdminLiveStreamsWidgetProps> = React.memo
     });
   }, [streams, subscribeToStream]);
 
-  // Re-subscribe to all active streams on WS reconnect
-  useEffect(() => {
-    const off = webSocketService.subscribeStateChange((connected) => {
-      if (connected) {
-        (streams || []).forEach(stream => {
-          if (stream.userId) {
-            subscribeToStream(stream.userId);
-          }
-        });
-      }
-    });
-
-    return () => off();
-  }, [streams, subscribeToStream]);
+  // Re-subscribe handled automatically via connected dependency in subscribeToStream
+  // and the streams useEffect below which depends on subscribeToStream
 
   return (
     <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/60 rounded-2xl overflow-hidden shadow-2xl mt-8">

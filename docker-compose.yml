@@ -3,8 +3,13 @@ services:
     image: ${BACKEND_IMAGE:-livora-backend}
     build: ./backend
     restart: always
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
+    # ORIGIN PROTECTION: no public port binding.
+    # All traffic enters via Nginx (ports 80/443) which lives on the same
+    # Docker network.  The backend is only reachable through Nginx or from
+    # other containers on livora-network.
+    # To expose the port temporarily for local debugging:
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up livora-backend
+    # (docker-compose.dev.yml re-adds the port binding for the dev profile only)
     environment:
       # ── Database (matches DB_URL in application-prod.yml) ──
       DB_URL: jdbc:postgresql://livora-postgres:5432/joinlivora
@@ -49,9 +54,14 @@ services:
       MAIL_USERNAME: ${MAIL_USERNAME:-}
       MAIL_PASSWORD: ${MAIL_PASSWORD:-}
 
-      # ── Mediasoup ──
-      MEDIASOUP_BASE_URL: ${MEDIASOUP_BASE_URL:-http://mediasoup-server:4000}
+      # ── Mediasoup (multi-node) ──
       MEDIASOUP_AUTH_TOKEN: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_NODES: >-
+        mediasoup-1:http://mediasoup-1:4000,
+        mediasoup-2:http://mediasoup-2:4001,
+        mediasoup-3:http://mediasoup-3:4002
+      MEDIASOUP_HEALTH_INTERVAL: ${MEDIASOUP_HEALTH_INTERVAL:-15000}
+      MEDIASOUP_MAX_VIEWERS_PER_STREAM: ${MEDIASOUP_MAX_VIEWERS_PER_STREAM:-500}
 
       # ── Misc ──
       BASE_URL: ${BASE_URL:-https://joinlivora.com}
@@ -59,6 +69,11 @@ services:
       UPLOAD_DIR: /app/uploads
     volumes:
       - uploads_data:/app/uploads
+      # Read-only mount of the HLS output volume.
+      # Primary serving is done by Nginx directly from this volume.
+      # The backend uses it ONLY as a safety fallback (HlsProxyController)
+      # and for startup validation that the volume is reachable.
+      - streams_data:/var/www/hls:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
       interval: 30s
@@ -95,10 +110,66 @@ services:
       - ./nginx/certbot/conf:/etc/letsencrypt:ro
       - ./nginx/certbot/www:/var/www/certbot:ro
       - uploads_data:/var/www/uploads:ro
-      - hls_data:/var/www/hls
+      - streams_data:/var/www/hls
     depends_on:
       livora-backend:
         condition: service_healthy
+      transcode-worker:
+        condition: service_healthy
+    networks:
+      - livora-network
+
+  # ── GPU Transcode Worker ──────────────────────────────────────────────────
+  transcode-worker:
+    image: ${TRANSCODE_WORKER_IMAGE:-livora-transcode-worker}
+    build: ./services/transcode-worker
+    container_name: transcode-worker
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: livora-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      TRANSCODE_OUTPUT_DIR: /streams
+      TRANSCODE_REGION: ${TRANSCODE_REGION:-eu}
+      TRANSCODE_MAX_CONCURRENT: ${TRANSCODE_MAX_CONCURRENT:-4}
+      TRANSCODE_MAX_RETRIES: ${TRANSCODE_MAX_RETRIES:-3}
+      TRANSCODE_RTMP_TIMEOUT: ${TRANSCODE_RTMP_TIMEOUT:-30}
+      TRANSCODE_RETRY_DELAY_MS: ${TRANSCODE_RETRY_DELAY_MS:-5000}
+      TRANSCODE_BLPOP_TIMEOUT: 5
+      TRANSCODE_LOW_LATENCY: ${TRANSCODE_LOW_LATENCY:-false}
+      # Heartbeat / failover
+      TRANSCODE_HEARTBEAT_ENABLED: ${TRANSCODE_HEARTBEAT_ENABLED:-true}
+      TRANSCODE_HEARTBEAT_INTERVAL_MS: ${TRANSCODE_HEARTBEAT_INTERVAL_MS:-5000}
+      TRANSCODE_HEARTBEAT_TTL_SECONDS: ${TRANSCODE_HEARTBEAT_TTL_SECONDS:-15}
+      # S3 / R2 object storage (set TRANSCODE_S3_ENABLED=true to activate)
+      TRANSCODE_S3_ENABLED: ${TRANSCODE_S3_ENABLED:-false}
+      TRANSCODE_S3_BUCKET: ${TRANSCODE_S3_BUCKET:-livora-hls}
+      TRANSCODE_S3_ENDPOINT: ${TRANSCODE_S3_ENDPOINT:-}
+      TRANSCODE_S3_REGION: ${TRANSCODE_S3_REGION:-auto}
+      TRANSCODE_S3_ACCESS_KEY_ID: ${TRANSCODE_S3_ACCESS_KEY_ID:-}
+      TRANSCODE_S3_SECRET_ACCESS_KEY: ${TRANSCODE_S3_SECRET_ACCESS_KEY:-}
+      TRANSCODE_S3_KEY_PREFIX: ${TRANSCODE_S3_KEY_PREFIX:-streams}
+      TRANSCODE_S3_WATCH_INTERVAL_MS: ${TRANSCODE_S3_WATCH_INTERVAL_MS:-1000}
+    volumes:
+      - streams_data:/streams
+    depends_on:
+      livora-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8090/actuator/health | grep -q UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - livora-network
 
@@ -168,6 +239,137 @@ services:
     networks:
       - livora-network
 
+  coturn:
+    image: coturn/coturn:latest
+    container_name: coturn
+    restart: unless-stopped
+    network_mode: "host"
+    command: >
+      turnserver
+      --log-file=stdout
+      --min-port=49152
+      --max-port=49200
+      --fingerprint
+      --lt-cred-mech
+      --realm=${TURN_REALM:-joinlivora.com}
+      --user=${TURN_USERNAME:-turnuser}:${TURN_CREDENTIAL:-turnpassword}
+      --external-ip=${TURN_EXTERNAL_IP:-${MEDIASOUP_ANNOUNCED_IP}}
+      --listening-port=3478
+      --no-cli
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ── Mediasoup SFU Nodes (horizontal scaling) ──
+  mediasoup-1:
+    image: ${MEDIASOUP_IMAGE:-livora-mediasoup}
+    build: ./services/mediasoup-server
+    container_name: mediasoup-1
+    restart: always
+    environment:
+      MEDIASOUP_NODE_ID: mediasoup-1
+      MEDIASOUP_REGION: ${MEDIASOUP_LOCAL_REGION:-eu}
+      MEDIASOUP_PORT: 4000
+      MEDIASOUP_INTERNAL_SECRET: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_LISTEN_IP: "0.0.0.0"
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      RTC_MIN_PORT: "40000"
+      RTC_MAX_PORT: "40100"
+      TURN_SERVER_URL: ${TURN_SERVER_URL:-turn:${MEDIASOUP_ANNOUNCED_IP}:3478}
+      TURN_USERNAME: ${TURN_USERNAME:-turnuser}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-turnpassword}
+      TURN_SERVER_TLS_URL: ${TURN_SERVER_TLS_URL:-}
+    ports:
+      - "40000-40100:40000-40100/udp"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+    networks:
+      - livora-network
+
+  mediasoup-2:
+    image: ${MEDIASOUP_IMAGE:-livora-mediasoup}
+    build: ./services/mediasoup-server
+    container_name: mediasoup-2
+    restart: always
+    environment:
+      MEDIASOUP_NODE_ID: mediasoup-2
+      MEDIASOUP_REGION: ${MEDIASOUP_LOCAL_REGION:-eu}
+      MEDIASOUP_PORT: 4001
+      MEDIASOUP_INTERNAL_SECRET: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_LISTEN_IP: "0.0.0.0"
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      RTC_MIN_PORT: "40101"
+      RTC_MAX_PORT: "40200"
+      TURN_SERVER_URL: ${TURN_SERVER_URL:-turn:${MEDIASOUP_ANNOUNCED_IP}:3478}
+      TURN_USERNAME: ${TURN_USERNAME:-turnuser}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-turnpassword}
+      TURN_SERVER_TLS_URL: ${TURN_SERVER_TLS_URL:-}
+    ports:
+      - "40101-40200:40101-40200/udp"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4001/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+    networks:
+      - livora-network
+
+  mediasoup-3:
+    image: ${MEDIASOUP_IMAGE:-livora-mediasoup}
+    build: ./services/mediasoup-server
+    container_name: mediasoup-3
+    restart: always
+    environment:
+      MEDIASOUP_NODE_ID: mediasoup-3
+      MEDIASOUP_REGION: ${MEDIASOUP_LOCAL_REGION:-eu}
+      MEDIASOUP_PORT: 4002
+      MEDIASOUP_INTERNAL_SECRET: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_LISTEN_IP: "0.0.0.0"
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP}
+      RTC_MIN_PORT: "40201"
+      RTC_MAX_PORT: "40300"
+      TURN_SERVER_URL: ${TURN_SERVER_URL:-turn:${MEDIASOUP_ANNOUNCED_IP}:3478}
+      TURN_USERNAME: ${TURN_USERNAME:-turnuser}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-turnpassword}
+      TURN_SERVER_TLS_URL: ${TURN_SERVER_TLS_URL:-}
+    ports:
+      - "40201-40300:40201-40300/udp"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4002/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+    networks:
+      - livora-network
+
   livora-rabbitmq:
     image: rabbitmq:3-management-alpine
     restart: always
@@ -198,6 +400,120 @@ services:
     networks:
       - livora-network
 
+  # ── Monitoring Stack ──
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - livora-network
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - livora-network
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9093:9093"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - livora-network
+
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - livora-network
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: -config.file=/etc/promtail/config.yml
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - livora-network
+
 networks:
   livora-network:
     driver: bridge
@@ -205,6 +521,9 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  hls_data:
+  streams_data:
   rabbitmq_data:
   uploads_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:

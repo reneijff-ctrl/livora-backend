@@ -6,6 +6,7 @@ import com.joinlivora.backend.exception.BusinessException;
 import com.joinlivora.backend.exception.ResourceNotFoundException;
 import com.joinlivora.backend.user.User;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,10 @@ public class CreatorFollowService {
     private final CreatorFollowRepository creatorFollowRepository;
 
     @Transactional
+    @CacheEvict(
+        value = {"creatorExplore", "creatorHomepage"},
+        allEntries = true
+    )
     public boolean follow(User follower, User creator) {
         if (creator == null) {
             throw new ResourceNotFoundException("Creator not found");
@@ -35,6 +40,10 @@ public class CreatorFollowService {
     }
 
     @Transactional
+    @CacheEvict(
+        value = {"creatorExplore", "creatorHomepage"},
+        allEntries = true
+    )
     public void unfollow(User follower, User creator) {
         if (creator == null) {
             throw new ResourceNotFoundException("Creator not found");

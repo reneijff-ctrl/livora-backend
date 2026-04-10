@@ -78,38 +78,4 @@ public class ChatRoomResponse {
                 .build();
     }
 
-    /**
-     * @deprecated Use fromEntity(com.joinlivora.backend.chat.domain.ChatRoom) instead.
-     */
-    @Deprecated
-    public static ChatRoomResponse fromEntity(com.joinlivora.backend.chat.ChatRoom chatRoom, User user) {
-        if (chatRoom == null) return null;
-        boolean canChangeChatMode = false;
-        boolean canBypassChatRestrictions = false;
-
-        if (user != null) {
-            boolean isRoomCreator = chatRoom.getCreatedBy() != null && chatRoom.getCreatedBy().getId().equals(user.getId());
-            boolean isStaff = user.getRole() == Role.ADMIN || user.getRole() == Role.MODERATOR;
-            boolean isPpvCreator = chatRoom.getPpvContent() != null &&
-                    chatRoom.getPpvContent().getCreator() != null &&
-                    chatRoom.getPpvContent().getCreator().getId().equals(user.getId());
-
-            canChangeChatMode = isRoomCreator || isStaff;
-            canBypassChatRestrictions = isRoomCreator || isStaff || isPpvCreator;
-        }
-
-        return ChatRoomResponse.builder()
-                .id(chatRoom.getId())
-                .name(chatRoom.getName())
-                .createdByEmail(chatRoom.getCreatedBy() != null ? chatRoom.getCreatedBy().getEmail() : null)
-                .isPrivate(chatRoom.isPrivate())
-                .ppvContentId(chatRoom.getPpvContentId())
-                .isPpvRoom(chatRoom.isPpvRoom())
-                .requiresPurchase(chatRoom.isRequiresPurchase())
-                .chatMode(chatRoom.getChatMode())
-                .canChangeChatMode(canChangeChatMode)
-                .canBypassChatRestrictions(canBypassChatRestrictions)
-                .createdAt(chatRoom.getCreatedAt())
-                .build();
-    }
 }

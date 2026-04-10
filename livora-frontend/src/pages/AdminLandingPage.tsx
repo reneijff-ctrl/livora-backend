@@ -15,7 +15,7 @@ import AdminModerationEventsFeed from '../components/admin/AdminModerationEvents
 import LiveStreamRiskMonitor from "../components/admin/LiveStreamRiskMonitor";
 import RealtimeAbuseRadar from '../components/admin/RealtimeAbuseRadar';
 import AIModerationRadar from "../components/admin/AIModerationRadar";
-import { webSocketService } from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import { AdminRealtimeEventDTO, MediasoupStats, FraudDashboardMetrics, LiveStreamInfo } from '../types';
 
 let cachedStreams: LiveStreamInfo[] = [];
@@ -39,6 +39,7 @@ const DEFAULT_METRICS = {
 
 const AdminLandingPage: React.FC = () => {
   const { user, authLoading, isAuthenticated } = useAuth();
+  const { subscribe, connected } = useWs();
 
   const [metrics, setMetrics] = useState<any>(DEFAULT_METRICS);
   const [activity, setActivity] = useState<any[]>([]);
@@ -274,30 +275,29 @@ const AdminLandingPage: React.FC = () => {
     }
 
     // Subscribe to real-time admin events only when WS is connected
-    let adminUnsub: (() => void) | null = null;
-
-    const trySubscribe = () => {
-      if (adminUnsub) return; // already subscribed
-      if (webSocketService.isConnected()) {
-        adminUnsub = webSocketService.subscribeToAdminEvents(handleAdminEvent);
+    let adminUnsub = () => {};
+    if (connected) {
+      const result = subscribe('/exchange/amq.topic/admin.events', (msg) => {
+        try {
+          const event = JSON.parse(msg.body) as AdminRealtimeEventDTO;
+          handleAdminEvent(event);
+        } catch (e) {
+          console.error('Failed to parse admin event', e);
+        }
+      });
+      if (typeof result === 'function') {
+        adminUnsub = result;
       }
-    };
-
-    // Attempt immediately, then re-attempt on state changes
-    trySubscribe();
-    const unsubState = webSocketService.subscribeStateChange((connected) => {
-      if (connected) trySubscribe();
-    });
+    }
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       stopPolling();
-      if (adminUnsub) adminUnsub();
-      unsubState();
+      adminUnsub();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [authLoading, isAuthenticated, user?.role, fetchDashboardData, startPolling, stopPolling, handleAdminEvent]);
+  }, [authLoading, isAuthenticated, user?.role, fetchDashboardData, startPolling, stopPolling, handleAdminEvent, subscribe, connected]);
 
   const formatCurrency = useCallback((amount: number | string) => {
     const val = typeof amount === 'string' ? parseFloat(amount) : amount;

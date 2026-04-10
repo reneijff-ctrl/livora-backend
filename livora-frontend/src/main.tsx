@@ -5,6 +5,7 @@ import './index.css'
 import { HelmetProvider } from 'react-helmet-async'
 import { AuthProvider } from './auth/AuthContext'
 import { WsProvider } from './ws/WsContext'
+import { PresenceProvider } from './ws/PresenceContext'
 import { WalletProvider } from './wallet/WalletContext'
 import { SoundProfileProvider } from './contexts/SoundProfileContext'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -58,13 +59,15 @@ try {
       <HelmetProvider>
         <AuthProvider>
           <WsProvider>
-            <SoundProfileProvider>
-              <WalletProvider>
-                <RouterProvider 
-                  router={router} 
-                />
-              </WalletProvider>
-            </SoundProfileProvider>
+            <PresenceProvider>
+              <SoundProfileProvider>
+                <WalletProvider>
+                  <RouterProvider 
+                    router={router} 
+                  />
+                </WalletProvider>
+              </SoundProfileProvider>
+            </PresenceProvider>
           </WsProvider>
         </AuthProvider>
       </HelmetProvider>

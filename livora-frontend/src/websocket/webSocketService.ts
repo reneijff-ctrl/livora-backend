@@ -58,7 +58,6 @@ class WebSocketService {
    */
   connect() {
     const token = localStorage.getItem("token");
-    console.log("WS: Retrieved token from storage:", token);
 
     if (!token || !token.includes(".")) {
       console.log("WS: No valid token found. Skipping connection.");
@@ -76,7 +75,7 @@ class WebSocketService {
     this.lastAuthError = false;
 
     this.client = new Client({
-      webSocketFactory: () => new SockJS('http://localhost:8080/ws'),
+      webSocketFactory: () => new SockJS(`${import.meta.env.VITE_WS_URL || ''}/ws`),
       connectHeaders: {
         Authorization: `Bearer ${token}`,
       },

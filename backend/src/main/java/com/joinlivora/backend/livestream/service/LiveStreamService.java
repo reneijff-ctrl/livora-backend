@@ -13,6 +13,7 @@ import com.joinlivora.backend.monetization.PpvService;
 import com.joinlivora.backend.payment.SubscriptionStatus;
 import com.joinlivora.backend.payment.UserSubscriptionRepository;
 import com.joinlivora.backend.streaming.Stream;
+import com.joinlivora.backend.streaming.StreamCacheDTO;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.streaming.client.MediasoupClient;
 import com.joinlivora.backend.streaming.service.LivestreamAnalyticsService;
@@ -26,6 +27,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
+import com.joinlivora.backend.livestream.event.StreamEndedEventV2;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
@@ -49,7 +51,6 @@ public class LiveStreamService {
     private final SimpMessagingTemplate messagingTemplate;
     private final LiveViewerCounterService liveViewerCounterService;
     private final StreamRepository streamRepository;
-    private final com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
     private final ApplicationEventPublisher eventPublisher;
 
     private final UserRepository userRepository;
@@ -71,7 +72,6 @@ public class LiveStreamService {
             @Lazy SimpMessagingTemplate messagingTemplate,
             @Lazy LiveViewerCounterService liveViewerCounterService,
             StreamRepository streamRepository,
-            com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository,
             ApplicationEventPublisher eventPublisher,
             UserRepository userRepository,
             UserSubscriptionRepository subscriptionRepository,
@@ -87,7 +87,6 @@ public class LiveStreamService {
         this.messagingTemplate = messagingTemplate;
         this.liveViewerCounterService = liveViewerCounterService;
         this.streamRepository = streamRepository;
-        this.livestreamSessionRepository = livestreamSessionRepository;
         this.eventPublisher = eventPublisher;
         this.userRepository = userRepository;
         this.subscriptionRepository = subscriptionRepository;
@@ -112,7 +111,7 @@ public class LiveStreamService {
      * Validates that the creator is active, public, and doesn't already have an active stream.
      */
     @Transactional
-    @CacheEvict(value = "active_streams", key = "#creatorUserId")
+    @CacheEvict(value = {"active_streams", "creatorExplore"}, allEntries = true)
     public Stream startLiveStream(Long creatorUserId) {
         // 1. Validate creator status and visibility
         CreatorProfile profile = creatorProfileService.getCreatorByUserId(creatorUserId);
@@ -153,6 +152,7 @@ public class LiveStreamService {
     }
 
     @Transactional
+    @CacheEvict(value = "creatorExplore", allEntries = true)
     public boolean verifyStreamKeyAndStart(String streamKey) {
         log.info("RTMP: Verifying stream key: {}", streamKey);
         
@@ -187,6 +187,7 @@ public class LiveStreamService {
             stream.setStartedAt(Instant.now());
             stream.setEndedAt(null);
             streamRepository.save(stream);
+            log.info("STREAM_LIVE: streamId={}, creatorId={}", stream.getId(), stream.getCreator().getId());
             log.info("RTMP: Stream key verified via Unified Stream, creator={}, stream {} is now LIVE", stream.getCreator().getId(), stream.getId());
 
             if (!isReconnecting) {
@@ -215,7 +216,7 @@ public class LiveStreamService {
     }
 
     @Transactional
-    @CacheEvict(value = "active_streams", key = "#creatorUserId")
+    @CacheEvict(value = {"active_streams", "creatorExplore"}, allEntries = true)
     public Stream stopLiveStream(Long creatorUserId) {
         java.util.List<Stream> liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
         if (liveStreams.isEmpty()) {
@@ -240,21 +241,17 @@ public class LiveStreamService {
         // Sync with chat room
         chatRoomService.setCreatorRoomLiveStatus(creatorUserId, false);
         
-        Long streamSessionId = null;
+        // Publish V2 event (UUID-based only — legacy StreamEndedEvent removed)
+        log.info("Publishing StreamEndedEventV2 for streamId={} creatorUserId={}", stream.getId(), creatorUserId);
+        eventPublisher.publishEvent(new StreamEndedEventV2(this,
+                stream.getId(),
+                creatorUserId,
+                stream.isPaid(),
+                reason,
+                stream.getEndedAt()));
         
-        // End LivestreamSession
-        var sessionOpt = livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(creatorUserId, com.joinlivora.backend.livestream.domain.LivestreamStatus.LIVE);
-        if (sessionOpt.isPresent()) {
-            var session = sessionOpt.get();
-            session.end();
-            livestreamSessionRepository.save(session);
-            streamSessionId = session.getId();
-            log.info("LIVESTREAM: Ended LivestreamSession {} for creator {}", session.getId(), creatorUserId);
-            eventPublisher.publishEvent(new com.joinlivora.backend.livestream.event.StreamEndedEvent(this, session, reason, stream.getId()));
-        }
-        
-        // Notify viewers and cleanup (logic moved from V1 notifyStreamStop)
-        notifyStreamStop(stream, streamSessionId);
+        // Notify viewers and cleanup
+        notifyStreamStop(stream);
         
         // Broadcast state change
         broadcastStreamState(creatorUserId, false);
@@ -262,17 +259,13 @@ public class LiveStreamService {
         return stream;
     }
 
-    private void notifyStreamStop(Stream stream, Long streamSessionId) {
+    private void notifyStreamStop(Stream stream) {
         if (stream == null) return;
         Long creatorId = stream.getCreator().getId();
         UUID roomId = stream.getMediasoupRoomId();
         
-        // 1. Reset viewer count in Redis (MANDATORY cleanup)
-        if (streamSessionId != null) {
-            liveViewerCounterService.resetViewerCount(streamSessionId, creatorId);
-        } else {
-            log.warn("LIVESTREAM: No streamSessionId found during notifyStreamStop for creator {}. Key cleanup may be incomplete.", creatorId);
-        }
+        // 1. Reset viewer count in Redis using UUID-based key
+        liveViewerCounterService.resetViewerCountByStreamId(stream.getId(), creatorId);
 
         if (roomId != null) {
             // 2. Broadcast system message to chat (Using creatorId routing)
@@ -327,6 +320,7 @@ public class LiveStreamService {
     }
 
     @Transactional
+    @CacheEvict(value = "creatorExplore", allEntries = true)
     public void stopStream(Long creatorId, String reason) {
         log.info("Stopping live stream for creatorUserId: {} reason: {}", creatorId, reason);
         
@@ -344,7 +338,7 @@ public class LiveStreamService {
     @Cacheable(
             value = "viewer_access",
             key = "#streamId.toString() + ':' + (#user != null ? #user.id : 'anonymous')",
-            unless = "#result == false"
+            unless = "#result == null"
     )
     public boolean validateViewerAccess(UUID streamId, User user) {
         if (streamId == null) return false;
@@ -420,14 +414,30 @@ public class LiveStreamService {
     }
 
     /**
-     * Retrieves the current active live stream for a creator.
+     * Retrieves the current active live stream for a creator as a cached DTO.
      */
+    @Transactional(readOnly = true)
     @Cacheable(
         value = "active_streams",
-        key = "#creatorId"
+        key = "#creatorId",
+        unless = "#result == null"
     )
-    public Stream getActiveStream(Long creatorId) {
+    public StreamCacheDTO getActiveStream(Long creatorId) {
         java.util.List<Stream> streams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorId);
-        return streams.isEmpty() ? null : streams.get(0);
+        if (streams.isEmpty()) return null;
+        
+        Stream stream = streams.get(0);
+        return StreamCacheDTO.builder()
+                .id(stream.getId())
+                .creatorUserId(stream.getCreator().getId())
+                .title(stream.getTitle())
+                .isLive(stream.isLive())
+                .startedAt(stream.getStartedAt())
+                .endedAt(stream.getEndedAt())
+                .streamKey(stream.getStreamKey())
+                .thumbnailUrl(stream.getThumbnailUrl())
+                .mediasoupRoomId(stream.getMediasoupRoomId())
+                .admissionPrice(stream.getAdmissionPrice())
+                .build();
     }
 }

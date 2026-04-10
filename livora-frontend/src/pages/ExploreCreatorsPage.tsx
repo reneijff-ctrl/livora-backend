@@ -7,12 +7,13 @@ import { ICreator } from '../domain/creator/ICreator';
 import CreatorCard from '../components/creator/CreatorCard';
 import { COUNTRIES } from '../data/countries';
 import { getCountryLabel } from '../data/countries';
-import { useWs, useTrackPresence, useThumbnailCacheBuster } from '../ws/WsContext';
+import { useWs, useThumbnailCacheBuster } from '../ws/WsContext';
+import { usePresence, useTrackPresence } from '../ws/PresenceContext';
 import { useAuth } from '../auth/useAuth';
-import webSocketService from '../websocket/webSocketService';
 
 const ExploreCreatorsPage: React.FC = () => {
-  const { presenceMap } = useWs();
+  const { subscribe } = useWs();
+  const { presenceMap } = usePresence();
   const { isAuthenticated } = useAuth();
   const thumbnailCacheBuster = useThumbnailCacheBuster();
   const navigate = useNavigate();
@@ -52,7 +53,7 @@ const ExploreCreatorsPage: React.FC = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const unsub = webSocketService.subscribe(
+    const unsub = subscribe(
       '/exchange/amq.topic/streams.status',
       (message) => {
         try {
@@ -77,8 +78,8 @@ const ExploreCreatorsPage: React.FC = () => {
       }
     );
 
-    return () => unsub();
-  }, [isAuthenticated]);
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [isAuthenticated, subscribe]);
 
   // Detect user country from browser locale
   useEffect(() => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import apiClient from '@/api/apiClient';
 import tipService from '@/api/tipService';
-import { webSocketService } from '@/websocket/webSocketService';
+import { useWs } from '@/ws/WsContext';
 import { normalizeLiveEvent } from '@/components/live/LiveEventsController';
 import { GoalStatusEvent } from '@/types/events';
 import { resolveAnimationByAmount, resolveRarityByAmount } from '@/utils/animationUtils';
@@ -35,6 +35,7 @@ export const useStreamTips = (
   userDisplayName: string | undefined,
   roomId?: string,
 ): UseStreamTipsResult => {
+  const { subscribe, connected } = useWs();
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [topTipper, setTopTipper] = useState<{ name: string | null; amount: number }>({ name: null, amount: 0 });
   const [tokenExplosion, setTokenExplosion] = useState({ amount: 0, key: 0 });
@@ -170,68 +171,95 @@ export const useStreamTips = (
 
   // Dedicated monetization stream subscription
   useEffect(() => {
-    if (!creatorUserId || availability !== 'LIVE') return;
-    const unsubMonetization = webSocketService.subscribe(`/exchange/amq.topic/monetization.${creatorUserId}`, (msg) => {
-      try {
-        const incoming = JSON.parse(msg.body);
-        const message = normalizeLiveEvent(incoming);
-        console.debug('MONETIZATION STREAM:', message.type, message);
-        switch (message.type) {
-          case 'TIP':
-          case 'SUPER_TIP':
-            handleTip(message);
-            break;
-          case 'SUPER_TIP_END':
-            handleSuperTipEnd();
-            break;
-          case 'PIN_MESSAGE':
-          case 'ACTION_TRIGGERED':
-          case 'TIP_MENU':
-            break;
-        }
-      } catch (e) { console.error('Error processing monetization event', e); }
-    });
-    return () => { if (typeof unsubMonetization === "function") unsubMonetization(); };
-  }, [creatorUserId, availability, handleTip, handleSuperTipEnd]);
+    let unsub = () => {};
+
+    if (connected && creatorUserId && availability === 'LIVE') {
+      const result = subscribe(`/exchange/amq.topic/monetization.${creatorUserId}`, (msg) => {
+        try {
+          const incoming = JSON.parse(msg.body);
+          const message = normalizeLiveEvent(incoming);
+          console.debug('MONETIZATION STREAM:', message.type, message);
+          switch (message.type) {
+            case 'TIP':
+            case 'SUPER_TIP':
+              handleTip(message);
+              break;
+            case 'SUPER_TIP_END':
+              handleSuperTipEnd();
+              break;
+            case 'PIN_MESSAGE':
+            case 'ACTION_TRIGGERED':
+            case 'TIP_MENU':
+              break;
+          }
+        } catch (e) { console.error('Error processing monetization event', e); }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, creatorUserId, availability, handleTip, handleSuperTipEnd]);
 
   // Dedicated goals stream subscription
   useEffect(() => {
-    if (!creatorUserId || availability !== 'LIVE') return;
-    const unsubGoals = webSocketService.subscribe(`/exchange/amq.topic/goals.${creatorUserId}`, (msg) => {
-      try {
-        const incoming = JSON.parse(msg.body);
-        const message = normalizeLiveEvent(incoming);
-        const eventType = message.type || incoming.type;
-        const goalData = { ...(message.payload || message), type: eventType };
-        console.debug('GOALS STREAM:', eventType, goalData);
-        handleGoalUpdate(goalData);
-      } catch (e) { console.error('Error processing goal event', e); }
-    });
-    return () => { if (typeof unsubGoals === "function") unsubGoals(); };
-  }, [creatorUserId, availability, handleGoalUpdate]);
+    let unsub = () => {};
+
+    if (connected && creatorUserId && availability === 'LIVE') {
+      const result = subscribe(`/exchange/amq.topic/goals.${creatorUserId}`, (msg) => {
+        try {
+          const incoming = JSON.parse(msg.body);
+          const message = normalizeLiveEvent(incoming);
+          const eventType = message.type || incoming.type;
+          const goalData = { ...(message.payload || message), type: eventType };
+          console.debug('GOALS STREAM:', eventType, goalData);
+          handleGoalUpdate(goalData);
+        } catch (e) { console.error('Error processing goal event', e); }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, creatorUserId, availability, handleGoalUpdate]);
 
   // Dedicated leaderboard stream subscription
   useEffect(() => {
-    if (!creatorUserId || availability !== 'LIVE') return;
-    const unsubLeaderboard = webSocketService.subscribe(`/exchange/amq.topic/leaderboard.${creatorUserId}`, (msg) => {
-      try {
-        const incoming = JSON.parse(msg.body);
-        const data = incoming.data || incoming;
-        console.debug('LEADERBOARD STREAM:', data);
-        if (Array.isArray(data)) {
-          const entries: LeaderboardEntry[] = data.map((e: any) => ({
-            username: e.username,
-            total: e.totalAmount ?? e.total ?? 0
-          }));
-          setLeaderboard(entries);
-          if (entries.length > 0) {
-            setTopTipper({ name: entries[0].username, amount: entries[0].total });
+    let unsub = () => {};
+
+    if (connected && creatorUserId && availability === 'LIVE') {
+      const result = subscribe(`/exchange/amq.topic/leaderboard.${creatorUserId}`, (msg) => {
+        try {
+          const incoming = JSON.parse(msg.body);
+          const data = incoming.data || incoming;
+          console.debug('LEADERBOARD STREAM:', data);
+          if (Array.isArray(data)) {
+            const entries: LeaderboardEntry[] = data.map((e: any) => ({
+              username: e.username,
+              total: e.totalAmount ?? e.total ?? 0
+            }));
+            setLeaderboard(entries);
+            if (entries.length > 0) {
+              setTopTipper({ name: entries[0].username, amount: entries[0].total });
+            }
           }
-        }
-      } catch (e) { console.error('Error processing leaderboard event', e); }
-    });
-    return () => { if (typeof unsubLeaderboard === "function") unsubLeaderboard(); };
-  }, [creatorUserId, availability]);
+        } catch (e) { console.error('Error processing leaderboard event', e); }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, creatorUserId, availability]);
 
   return {
     leaderboard,

@@ -1,4 +1,11 @@
 services:
+  # Restore the backend's public port for local development.
+  # In production docker-compose.yml the port binding is intentionally removed
+  # (origin protection — all traffic via Nginx).
+  livora-backend:
+    ports:
+      - "8080:8080"
+
   postgres:
     image: postgres:16-alpine
     container_name: livora-postgres

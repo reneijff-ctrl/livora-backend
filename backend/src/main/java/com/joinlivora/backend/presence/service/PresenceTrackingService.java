@@ -1,15 +1,18 @@
 package com.joinlivora.backend.presence.service;
 
 import com.joinlivora.backend.creator.service.OnlineStatusService;
+import com.joinlivora.backend.resilience.RedisCircuitBreakerService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 /**
  * Service for tracking online/offline status of users and creators.
@@ -24,12 +27,11 @@ public class PresenceTrackingService {
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final OnlineStatusService onlineStatusService;
+    private final RedisCircuitBreakerService redisCircuitBreaker;
     
     private static final String ONLINE_USERS_KEY = "online_users";
     private static final String USER_SESSION_COUNT_PREFIX = "user_session_count:";
-
-    // Set of currently connected creator entity IDs for heartbeat refresh
-    private final Set<Long> activeCreatorIds = ConcurrentHashMap.newKeySet();
+    private static final String ACTIVE_CREATORS_KEY = "presence:active:creators";
 
     // In-memory fallback ONLY for session counting when RedisTemplate is not available
     private final Map<Long, Integer> userSessionCount = new ConcurrentHashMap<>();
@@ -37,15 +39,35 @@ public class PresenceTrackingService {
     public PresenceTrackingService(RedisTemplate<String, Object> redisTemplate, OnlineStatusService onlineStatusService) {
         this.redisTemplate = redisTemplate;
         this.onlineStatusService = onlineStatusService;
+        // Circuit breaker may be null in tests that inject only redisTemplate+onlineStatusService
+        this.redisCircuitBreaker = null;
+    }
+
+    /** Full constructor with circuit breaker (production path). */
+    @org.springframework.beans.factory.annotation.Autowired
+    public PresenceTrackingService(RedisTemplate<String, Object> redisTemplate,
+                                   OnlineStatusService onlineStatusService,
+                                   RedisCircuitBreakerService redisCircuitBreaker) {
+        this.redisTemplate = redisTemplate;
+        this.onlineStatusService = onlineStatusService;
+        this.redisCircuitBreaker = redisCircuitBreaker;
     }
 
     public void markUserOnline(Long userId) {
         if (userId == null) return;
         if (redisTemplate != null) {
             String countKey = USER_SESSION_COUNT_PREFIX + userId;
-            redisTemplate.opsForValue().increment(countKey);
-            redisTemplate.expire(countKey, Duration.ofHours(24));
-            redisTemplate.opsForSet().add(ONLINE_USERS_KEY, userId);
+            if (redisCircuitBreaker != null) {
+                redisCircuitBreaker.execute(() -> {
+                    redisTemplate.opsForValue().increment(countKey);
+                    redisTemplate.expire(countKey, Duration.ofHours(24));
+                    redisTemplate.opsForSet().add(ONLINE_USERS_KEY, userId);
+                });
+            } else {
+                redisTemplate.opsForValue().increment(countKey);
+                redisTemplate.expire(countKey, Duration.ofHours(24));
+                redisTemplate.opsForSet().add(ONLINE_USERS_KEY, userId);
+            }
         } else {
             userSessionCount.merge(userId, 1, Integer::sum);
         }
@@ -58,6 +80,18 @@ public class PresenceTrackingService {
         if (userId == null) return false;
         if (redisTemplate != null) {
             String countKey = USER_SESSION_COUNT_PREFIX + userId;
+            if (redisCircuitBreaker != null) {
+                Boolean[] lastSession = {false};
+                redisCircuitBreaker.execute(() -> {
+                    Long count = redisTemplate.opsForValue().decrement(countKey);
+                    if (count == null || count <= 0) {
+                        redisTemplate.delete(countKey);
+                        redisTemplate.opsForSet().remove(ONLINE_USERS_KEY, userId);
+                        lastSession[0] = true;
+                    }
+                });
+                return lastSession[0];
+            }
             Long count = redisTemplate.opsForValue().decrement(countKey);
             if (count == null || count <= 0) {
                 redisTemplate.delete(countKey);
@@ -76,7 +110,17 @@ public class PresenceTrackingService {
 
     public void markCreatorOnline(Long creatorId) {
         if (creatorId != null) {
-            activeCreatorIds.add(creatorId);
+            if (redisTemplate != null) {
+                if (redisCircuitBreaker != null) {
+                    redisCircuitBreaker.execute(() -> redisTemplate.opsForSet().add(ACTIVE_CREATORS_KEY, creatorId));
+                } else {
+                    try {
+                        redisTemplate.opsForSet().add(ACTIVE_CREATORS_KEY, creatorId);
+                    } catch (Exception e) {
+                        log.warn("PRESENCE REDIS ERROR: failed to add creatorId={} to active set", creatorId, e);
+                    }
+                }
+            }
             if (onlineStatusService != null) {
                 onlineStatusService.setOnline(creatorId);
             }
@@ -85,7 +129,17 @@ public class PresenceTrackingService {
 
     public void markCreatorOffline(Long creatorId) {
         if (creatorId != null) {
-            activeCreatorIds.remove(creatorId);
+            if (redisTemplate != null) {
+                if (redisCircuitBreaker != null) {
+                    redisCircuitBreaker.execute(() -> redisTemplate.opsForSet().remove(ACTIVE_CREATORS_KEY, creatorId));
+                } else {
+                    try {
+                        redisTemplate.opsForSet().remove(ACTIVE_CREATORS_KEY, creatorId);
+                    } catch (Exception e) {
+                        log.warn("PRESENCE REDIS ERROR: failed to remove creatorId={} from active set", creatorId, e);
+                    }
+                }
+            }
             if (onlineStatusService != null) {
                 onlineStatusService.setOffline(creatorId);
             }
@@ -111,12 +165,34 @@ public class PresenceTrackingService {
     }
     
     public Set<Long> getActiveCreatorIds() {
-        return activeCreatorIds;
+        if (redisTemplate == null) return Collections.emptySet();
+        if (redisCircuitBreaker != null) {
+            @SuppressWarnings("unchecked")
+            Set<Object> raw = (Set<Object>) redisCircuitBreaker.execute(
+                    () -> redisTemplate.opsForSet().members(ACTIVE_CREATORS_KEY),
+                    Collections.emptySet());
+            if (raw == null || raw.isEmpty()) return Collections.emptySet();
+            return raw.stream()
+                    .filter(o -> o instanceof Number)
+                    .map(o -> ((Number) o).longValue())
+                    .collect(Collectors.toSet());
+        }
+        try {
+            Set<Object> raw = redisTemplate.opsForSet().members(ACTIVE_CREATORS_KEY);
+            if (raw == null) return Collections.emptySet();
+            return raw.stream()
+                    .filter(o -> o instanceof Number)
+                    .map(o -> ((Number) o).longValue())
+                    .collect(Collectors.toSet());
+        } catch (Exception e) {
+            log.warn("PRESENCE REDIS ERROR: failed to read active creators set, returning empty", e);
+        }
+        return Collections.emptySet();
     }
 
     public void refreshPresence(Set<Long> userIds) {
         if (redisTemplate != null) {
-            activeCreatorIds.forEach(creatorId -> {
+            getActiveCreatorIds().forEach(creatorId -> {
                 if (onlineStatusService != null) onlineStatusService.refreshOnlineStatus(creatorId);
             });
             

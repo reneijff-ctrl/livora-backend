@@ -3,8 +3,6 @@ package com.joinlivora.backend.presence.service;
 import com.joinlivora.backend.presence.model.CreatorAvailabilityStatus;
 import com.joinlivora.backend.presence.entity.CreatorPresence;
 import com.joinlivora.backend.presence.repository.CreatorPresenceRepository;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
-import com.joinlivora.backend.livestream.domain.LivestreamStatus;
 import com.joinlivora.backend.creator.repository.CreatorRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +22,7 @@ public class CreatorPresenceService {
     private final CreatorPresenceRepository repository;
     private final RedisTemplate<String, Object> redisTemplate;
     private final OnlineCreatorRegistry onlineCreatorRegistry;
-    private final LivestreamSessionRepository livestreamSessionRepository;
+    private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
     private final CreatorRepository creatorRepository;
     private static final long OFFLINE_THRESHOLD_SECONDS = 60;
 
@@ -32,12 +30,12 @@ public class CreatorPresenceService {
             CreatorPresenceRepository repository,
             @Autowired(required = false) RedisTemplate<String, Object> redisTemplate,
             OnlineCreatorRegistry onlineCreatorRegistry,
-            LivestreamSessionRepository livestreamSessionRepository,
+            com.joinlivora.backend.streaming.StreamRepository streamRepository,
             CreatorRepository creatorRepository) {
         this.repository = repository;
         this.redisTemplate = redisTemplate;
         this.onlineCreatorRegistry = onlineCreatorRegistry;
-        this.livestreamSessionRepository = livestreamSessionRepository;
+        this.streamRepository = streamRepository;
         this.creatorRepository = creatorRepository;
     }
 
@@ -125,8 +123,8 @@ public class CreatorPresenceService {
 
         if (creatorUserId == null) return CreatorAvailabilityStatus.OFFLINE;
 
-        // 2. Check for active live stream (LIVE status) via the new aggregate
-        if (livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(creatorUserId, LivestreamStatus.LIVE).isPresent()) {
+        // 2. Check for active live stream (LIVE status) via Unified Stream (Single Source of Truth)
+        if (streamRepository.countByCreatorIdAndIsLiveTrue(creatorUserId) > 0) {
             return CreatorAvailabilityStatus.LIVE;
         }
 

@@ -86,6 +86,15 @@ class PresenceServiceTest {
     @Mock
     private com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService;
 
+    @Mock
+    private com.joinlivora.backend.presence.service.RedisSessionRegistryService redisSessionRegistry;
+
+    @Mock
+    private com.joinlivora.backend.config.MetricsService metricsService;
+
+    @Mock
+    private io.micrometer.core.instrument.Counter metricsCounter;
+
     private PresenceService presenceService;
 
     private UUID liveStreamId;
@@ -103,9 +112,38 @@ class PresenceServiceTest {
         creatorProfileMock.setId(777L);
         lenient().when(creatorProfileService.initializeCreatorProfile(any())).thenReturn(creatorProfileMock);
         lenient().when(creatorProfileService.getCreatorIdByUserId(anyLong())).thenReturn(Optional.of(777L));
-        lenient().when(liveViewerCounterService.getActiveSessionId(anyLong())).thenReturn(1001L);
+        liveStreamId = UUID.randomUUID();
+        lenient().when(liveViewerCounterService.getActiveStreamUuid(anyLong())).thenReturn(liveStreamId);
+
+        // Make redisSessionRegistry mock stateful: store/retrieve session data just like the real implementation
+        java.util.concurrent.ConcurrentHashMap<String, String> principalStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, Long> userIdStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, Long> creatorIdStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, java.util.Set<String>> subsStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, String>> subIdToDestStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, java.util.Set<Long>> streamsStore = new java.util.concurrent.ConcurrentHashMap<>();
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); String p = inv.getArgument(1); Long u = inv.getArgument(2); Long c = inv.getArgument(3); if (p != null) principalStore.put(sid, p); if (u != null) userIdStore.put(sid, u); if (c != null) creatorIdStore.put(sid, c); return null; }).when(redisSessionRegistry).registerSession(anyString(), any(), any(), any(), any(), any());
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); principalStore.remove(sid); userIdStore.remove(sid); creatorIdStore.remove(sid); subsStore.remove(sid); subIdToDestStore.remove(sid); streamsStore.remove(sid); return null; }).when(redisSessionRegistry).unregisterSession(anyString());
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); String subId = inv.getArgument(1); String dest = inv.getArgument(2); boolean added = subsStore.computeIfAbsent(sid, k -> java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>())).add(dest); subIdToDestStore.computeIfAbsent(sid, k -> new java.util.concurrent.ConcurrentHashMap<>()).put(subId, dest); return added; }).when(redisSessionRegistry).addSubscription(anyString(), anyString(), anyString());
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); String subId = inv.getArgument(1); java.util.concurrent.ConcurrentHashMap<String, String> map = subIdToDestStore.get(sid); if (map == null) return null; String dest = map.remove(subId); if (dest != null) { java.util.Set<String> s = subsStore.get(sid); if (s != null) s.remove(dest); } return dest; }).when(redisSessionRegistry).removeSubscription(anyString(), anyString());
+        lenient().doAnswer(inv -> streamsStore.computeIfAbsent(inv.getArgument(0), k -> java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>())).add(inv.getArgument(1))).when(redisSessionRegistry).markStreamJoined(anyString(), any());
+        lenient().doAnswer(inv -> { java.util.Set<Long> s = streamsStore.get(inv.getArgument(0)); return s != null && s.remove(inv.getArgument(1)); }).when(redisSessionRegistry).markStreamLeft(anyString(), any());
+        lenient().when(redisSessionRegistry.getPrincipal(anyString())).thenAnswer(inv -> principalStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getUserId(anyString())).thenAnswer(inv -> userIdStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getCreatorId(anyString())).thenAnswer(inv -> creatorIdStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getIp(anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getUserAgent(anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getSubscriptions(anyString())).thenAnswer(inv -> subsStore.getOrDefault(inv.getArgument(0), java.util.Collections.emptySet()));
+        lenient().when(redisSessionRegistry.isSubscribedTo(anyString(), anyString())).thenAnswer(inv -> { java.util.Set<String> s = subsStore.get(inv.getArgument(0)); return s != null && s.contains(inv.getArgument(1)); });
+        lenient().when(redisSessionRegistry.getJoinedStreams(anyString())).thenAnswer(inv -> streamsStore.getOrDefault(inv.getArgument(0), java.util.Collections.emptySet()));
+        lenient().when(redisSessionRegistry.getJoinTime(anyString(), anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getAllActiveSessions()).thenAnswer(inv -> new java.util.HashMap<>(principalStore));
+        lenient().when(redisSessionRegistry.getActiveSessionsCount()).thenAnswer(inv -> (long) principalStore.size());
         
-        com.joinlivora.backend.presence.service.SessionRegistryService sessionRegistry = new com.joinlivora.backend.presence.service.SessionRegistryService();
+        lenient().when(metricsService.getRedisFailuresTotal()).thenReturn(metricsCounter);
+        com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCb =
+                new com.joinlivora.backend.resilience.RedisCircuitBreakerService(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        com.joinlivora.backend.presence.service.SessionRegistryService sessionRegistry = new com.joinlivora.backend.presence.service.SessionRegistryService(redisSessionRegistry, metricsService, redisCb);
         com.joinlivora.backend.presence.service.PresenceTrackingService presenceTracking = new com.joinlivora.backend.presence.service.PresenceTrackingService(null, onlineStatusService);
         com.joinlivora.backend.presence.service.ViewerCountService viewerCountService = new com.joinlivora.backend.presence.service.ViewerCountService(liveViewerCounterService);
         com.joinlivora.backend.presence.service.PresenceEventOrchestrator eventOrchestrator = new com.joinlivora.backend.presence.service.PresenceEventOrchestrator(messagingTemplate, analyticsEventPublisher, liveStreamAssistantBotService, chatRoomServiceV2, brokerAvailabilityListener, null);
@@ -124,7 +162,6 @@ class PresenceServiceTest {
                 null,  // creatorFollowRepository
                 null   // streamModeratorService
         );
-        liveStreamId = UUID.randomUUID();
         destination = "/exchange/amq.topic/viewers." + liveStreamId;
     }
 
@@ -146,10 +183,10 @@ class PresenceServiceTest {
         room.setViewerCount(1);
         room.setCreator(creator);
         lenient().when(LiveStreamService.getRoom(liveStreamId)).thenReturn(room);
-        lenient().when(liveViewerCounterService.getActiveSessionId(1L)).thenReturn(1001L);
+        lenient().when(liveViewerCounterService.getActiveStreamUuid(1L)).thenReturn(liveStreamId);
 
         presenceService.handleSubscriptionEvent(event);
-        verify(liveViewerCounterService).addViewer(eq(1001L), eq(1L), any(), eq(sessionId), any(), any());
+        verify(liveViewerCounterService).addViewer(eq(liveStreamId), eq(1L), any(), eq(sessionId), any(), any());
         verify(analyticsEventPublisher).publishEvent(eq(com.joinlivora.backend.analytics.AnalyticsEventType.STREAM_JOIN), any(), anyMap());
     }
 
@@ -169,7 +206,7 @@ class PresenceServiceTest {
         room.setViewerCount(1);
         room.setCreator(creator);
         when(LiveStreamService.getRoom(liveStreamId)).thenReturn(room);
-        when(liveViewerCounterService.getActiveSessionId(1L)).thenReturn(1001L);
+        when(liveViewerCounterService.getActiveStreamUuid(1L)).thenReturn(liveStreamId);
 
         // First subscribe
         presenceService.handleSubscriptionEvent(new SessionSubscribeEvent(this, message));
@@ -181,7 +218,7 @@ class PresenceServiceTest {
         when(message2.getHeaders()).thenReturn(new MessageHeaders(headers2));
         presenceService.handleSubscriptionEvent(new SessionSubscribeEvent(this, message2));
 
-        verify(liveViewerCounterService, times(1)).addViewer(eq(1001L), eq(1L), any(), eq(sessionId), any(), any());
+        verify(liveViewerCounterService, times(1)).addViewer(eq(liveStreamId), eq(1L), any(), eq(sessionId), any(), any());
     }
 
     @Test
@@ -219,10 +256,10 @@ class PresenceServiceTest {
         roomAfterLeave.setViewerCount(0);
         roomAfterLeave.setCreator(creator);
         when(LiveStreamService.getRoom(liveStreamId)).thenReturn(roomAfterLeave);
-        when(liveViewerCounterService.getActiveSessionId(1L)).thenReturn(1001L);
+        when(liveViewerCounterService.getActiveStreamUuid(1L)).thenReturn(liveStreamId);
 
         presenceService.handleUnsubscribeEvent(event);
-        verify(liveViewerCounterService).removeViewer(eq(1001L), eq(1L), any(), eq(sessionId), any(), any());
+        verify(liveViewerCounterService).removeViewer(eq(liveStreamId), eq(1L), any(), eq(sessionId), any(), any());
         verify(analyticsEventPublisher).publishEvent(eq(com.joinlivora.backend.analytics.AnalyticsEventType.STREAM_LEAVE), any(), anyMap());
     }
 
@@ -258,7 +295,7 @@ class PresenceServiceTest {
         when(LiveStreamService.getRoom(liveStreamId)).thenReturn(roomAfterLeave);
 
         presenceService.handleWebSocketDisconnectListener(event);
-        verify(liveViewerCounterService).removeViewer(eq(1001L), eq(1L), any(), eq(sessionId), any(), any());
+        verify(liveViewerCounterService).removeViewer(eq(liveStreamId), eq(1L), any(), eq(sessionId), any(), any());
         verify(analyticsEventPublisher).publishEvent(eq(com.joinlivora.backend.analytics.AnalyticsEventType.STREAM_LEAVE), any(), anyMap());
     }
 
@@ -295,7 +332,7 @@ class PresenceServiceTest {
 
         presenceService.handleWebSocketDisconnectListener(disconnectEvent);
 
-        verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat/1"), any(RealtimeMessage.class));
+        verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat.v2.creator.1.status"), any(RealtimeMessage.class));
     }
 
     @Test
@@ -554,8 +591,29 @@ class PresenceServiceTest {
         com.joinlivora.backend.creator.service.OnlineStatusService offlineStatusService = mock(com.joinlivora.backend.creator.service.OnlineStatusService.class);
         when(offlineStatusService.isAvailable()).thenReturn(false);
         
+        com.joinlivora.backend.resilience.RedisCircuitBreakerService localRedisCb =
+                new com.joinlivora.backend.resilience.RedisCircuitBreakerService(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        com.joinlivora.backend.presence.service.SessionRegistryService localSessionRegistry = new com.joinlivora.backend.presence.service.SessionRegistryService(redisSessionRegistry, metricsService, localRedisCb);
+        com.joinlivora.backend.presence.service.PresenceTrackingService localPresenceTracking = new com.joinlivora.backend.presence.service.PresenceTrackingService(null, offlineStatusService);
+        com.joinlivora.backend.presence.service.ViewerCountService localViewerCountService = new com.joinlivora.backend.presence.service.ViewerCountService(liveViewerCounterService);
+        com.joinlivora.backend.presence.service.PresenceEventOrchestrator localEventOrchestrator = new com.joinlivora.backend.presence.service.PresenceEventOrchestrator(
+                messagingTemplate, analyticsEventPublisher, liveStreamAssistantBotService, chatRoomServiceV2,
+                PresenceService.createAlwaysAvailableBrokerListener(), null);
+
         PresenceService localOnlyPresenceService = new PresenceService(
-                messagingTemplate, LiveStreamService, analyticsEventPublisher, userService, offlineStatusService, creatorPresenceService, onlineCreatorRegistry, creatorRepository, chatRoomRepositoryV2, chatRoomServiceV2);
+                localSessionRegistry,
+                localPresenceTracking,
+                localViewerCountService,
+                localEventOrchestrator,
+                userService,
+                LiveStreamService,
+                liveStreamServiceReal,
+                creatorProfileService,
+                onlineCreatorRegistry,
+                liveViewerCounterService,
+                null,  // creatorFollowRepository
+                null   // streamModeratorService
+        );
 
         // Try to connect
         Message<byte[]> connectMsg = (Message<byte[]>) mock(Message.class);

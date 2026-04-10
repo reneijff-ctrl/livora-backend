@@ -10,6 +10,7 @@ import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.util.UrlUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.core.env.Environment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -36,7 +37,6 @@ public class CreatorSearchService {
     private final CreatorPresenceRepository creatorPresenceRepository;
     private final CreatorRepository creatorRepository;
     private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
-    private final com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
     private final com.joinlivora.backend.payout.CreatorEarningRepository earningRepository;
     private final OnlineStatusService onlineStatusService;
     private final LiveViewerCounterService viewerCounterService;
@@ -61,15 +61,7 @@ public class CreatorSearchService {
     }
 
     boolean isCreatorLive(CreatorProfile profile) {
-        boolean isLive = !streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(profile.getUser()).isEmpty();
-        if (!isLive) {
-            log.warn("STREAM_METADATA_FALLBACK: Unified Stream not found for creator {}, checking legacy sessions", profile.getUser().getId());
-            return livestreamSessionRepository.existsByCreator_IdAndStatus(
-                profile.getUser().getId(),
-                com.joinlivora.backend.livestream.domain.LivestreamStatus.LIVE
-            );
-        }
-        return true;
+        return !streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(profile.getUser()).isEmpty();
     }
 
     com.joinlivora.backend.monetization.TipGoal getStructuredActiveGoal(Long userId, boolean isLive) {
@@ -146,6 +138,11 @@ public class CreatorSearchService {
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(
+        value = "creatorHomepage",
+        key = "'homepage'",
+        unless = "#result == null"
+    )
     public List<HomepageCreatorDto> getPublicCreatorsForHomepage() {
         Instant threshold = Instant.now().minusSeconds(60);
         boolean includeOffline = isDevOrTest();
@@ -190,6 +187,52 @@ public class CreatorSearchService {
                             .viewerCount(viewerCounterService.getViewerCount(profile.getUser().getId()))
                             .build();
                 })
+                .collect(Collectors.toList());
+    }
+
+    @Cacheable(
+        value = "creatorExplore",
+        key = "{#page, #size, #country}",
+        unless = "#result == null"
+    )
+    public List<CreatorDTO> getExploreCreators(int page, int size, String country) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<CreatorProfileDTO> creatorsPage = getCreators(
+                null, null, country, null, "all", "relevance",
+                null, null, null, null, null, null, pageable);
+        
+        return creatorsPage.getContent().stream()
+                .map(p -> CreatorDTO.builder()
+                        .id(p.getId())
+                        .username(p.getUsername())
+                        .displayName(p.getDisplayName())
+                        .avatarUrl(p.getAvatarUrl())
+                        .isLive(p.isLive())
+                        .viewerCount(p.getViewerCount())
+                        .build())
+                .collect(Collectors.toList());
+    }
+
+    @Cacheable(
+        value = "creatorSearch",
+        key = "{#query, #page, #size}",
+        unless = "#result == null"
+    )
+    public List<CreatorDTO> searchCreators(String query, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<CreatorProfileDTO> creatorsPage = getCreators(
+                null, query, null, null, "all", "relevance",
+                null, null, null, null, null, null, pageable);
+
+        return creatorsPage.getContent().stream()
+                .map(p -> CreatorDTO.builder()
+                        .id(p.getId())
+                        .username(p.getUsername())
+                        .displayName(p.getDisplayName())
+                        .avatarUrl(p.getAvatarUrl())
+                        .isLive(p.isLive())
+                        .viewerCount(p.getViewerCount())
+                        .build())
                 .collect(Collectors.toList());
     }
 

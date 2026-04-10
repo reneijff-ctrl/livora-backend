@@ -25,7 +25,7 @@ const GIF_URL_REGEX = /https?:\/\/\S+\.gif(?:\?\S+)?/i;
 
 const ChatRoom: React.FC<ChatRoomProps> = ({ roomId }) => {
   const { user } = useAuth();
-  const { subscribe } = useWs();
+  const { subscribe, send } = useWs();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isMuted, setIsMuted] = useState(false);
@@ -96,9 +96,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ roomId }) => {
       }
     };
 
-    const subscription = subscribe(`/exchange/amq.topic/chat.${roomId}`, handleIncomingMessage);
+    const unsubChat = subscribe(`/exchange/amq.topic/chat.${roomId}`, handleIncomingMessage);
 
-    const privateSub = subscribe('/user/queue/chat', (message) => {
+    const unsubPrivate = subscribe('/user/queue/chat', (message) => {
       const data = JSON.parse(message.body);
       const msgRoomId = data.roomId || (data.chatMessage && data.chatMessage.roomId);
       if (String(msgRoomId) === String(roomId)) {
@@ -106,7 +106,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ roomId }) => {
       }
     });
 
-    const notificationSub = subscribe('/user/queue/notifications', (message) => {
+    const unsubNotifications = subscribe('/user/queue/notifications', (message) => {
       const data = JSON.parse(message.body);
       if (data.type === 'DISCONNECT') {
         import('../components/Toast').then(({ showToast }) => {
@@ -116,15 +116,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ roomId }) => {
     });
 
     return () => {
-      if (subscription) {
-        subscription.unsubscribe();
-      }
-      if (privateSub) {
-        privateSub.unsubscribe();
-      }
-      if (notificationSub) {
-        notificationSub.unsubscribe();
-      }
+      if (typeof unsubChat === 'function') unsubChat();
+      if (typeof unsubPrivate === 'function') unsubPrivate();
+      if (typeof unsubNotifications === 'function') unsubNotifications();
     };
   }, [roomId, subscribe, user]);
 
@@ -166,7 +160,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ roomId }) => {
   const handleSend = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && user) {
-      chatService.sendMessage(roomId, user.id, user.role, input.trim());
+      chatService.sendMessage(roomId, user.id, user.role, input.trim(), undefined, send);
       setInput('');
     }
   };

@@ -8,7 +8,7 @@ import { CreatorEarningsDashboard as EarningsData } from '../types';
 import CreatorSidebar from '../components/CreatorSidebar';
 import EmptyState from '../components/EmptyState';
 import { useAuth } from '../auth/useAuth';
-import { webSocketService } from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import SEO from '../components/SEO';
 import { useLocation } from 'react-router-dom';
 import apiClient from '../api/apiClient';
@@ -18,6 +18,7 @@ const MIN_PAYOUT_AMOUNT = 50.00;
 
 const CreatorEarningsDashboard: React.FC = () => {
     const { user, authLoading } = useAuth();
+    const { subscribe, connected } = useWs();
     const location = useLocation();
     const [earnings, setEarnings] = useState<EarningsData | null>(null);
     const [initialTotalEarnings, setInitialTotalEarnings] = useState<number | null>(null);
@@ -660,7 +661,7 @@ const CreatorEarningsDashboard: React.FC = () => {
         const earningsTopic = `/exchange/amq.topic/creator.${user.id}.earnings`;
         const tipsQueue = '/user/queue/tips';
         
-        const unsubEarnings = webSocketService.subscribe(earningsTopic, (message) => {
+        const unsubEarnings = subscribe(earningsTopic, (message) => {
             try {
                 const data = JSON.parse(message.body);
                 const aggregated = data.currentAggregatedEarnings;
@@ -690,7 +691,7 @@ const CreatorEarningsDashboard: React.FC = () => {
             }
         });
 
-        const unsubTips = webSocketService.subscribe(tipsQueue, () => {
+        const unsubTips = subscribe(tipsQueue, () => {
             try {
                 setLiveTipCount(prev => prev + 1);
             } catch (err) {
@@ -699,10 +700,10 @@ const CreatorEarningsDashboard: React.FC = () => {
         });
 
         return () => {
-            if (unsubEarnings) unsubEarnings.unsubscribe();
-            if (unsubTips) unsubTips.unsubscribe();
+            if (typeof unsubEarnings === 'function') unsubEarnings();
+            if (typeof unsubTips === 'function') unsubTips();
         };
-    }, [user?.id, authLoading]);
+    }, [user?.id, authLoading, subscribe, connected]);
 
     const handleConnectStripe = async () => {
         try {

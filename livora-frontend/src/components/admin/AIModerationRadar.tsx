@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { webSocketService } from "../../websocket/webSocketService";
+import { useEffect, useState } from "react";
+import { useWs } from "../../ws/WsContext";
 
 interface ModerationDecision {
   streamId: string | number;
@@ -10,42 +10,30 @@ interface ModerationDecision {
 }
 
 export default function AIModerationRadar() {
+  const { subscribe, connected } = useWs();
   const [decisions, setDecisions] = useState<ModerationDecision[]>([]);
-  const subscriptions = useRef<Array<() => void>>([]);
 
   useEffect(() => {
-    const trySubscribe = () => {
-      if (webSocketService.isConnected()) {
-        const unsubscribe = webSocketService.subscribe(
-          "/exchange/amq.topic/admin.abuse",
-          (message: any) => {
-            try {
-              const data = JSON.parse(message.body);
-              if (data && data.type === "AI_MODERATION_DECISION") {
-                setDecisions((prev) => [data, ...prev.slice(0, 20)]);
-              }
-            } catch (e) {
-              console.error("WS: Failed to parse moderation decision", e);
-            }
+    if (!connected) return;
+
+    const unsub = subscribe(
+      "/exchange/amq.topic/admin.abuse",
+      (message: any) => {
+        try {
+          const data = JSON.parse(message.body);
+          if (data && data.type === "AI_MODERATION_DECISION") {
+            setDecisions((prev) => [data, ...prev.slice(0, 20)]);
           }
-        );
-        if (typeof unsubscribe === 'function') {
-          subscriptions.current.push(unsubscribe);
+        } catch (e) {
+          console.error("WS: Failed to parse moderation decision", e);
         }
       }
-    };
-
-    trySubscribe();
-    const off = webSocketService.subscribeStateChange((connected) => {
-      if (connected) trySubscribe();
-    });
+    );
 
     return () => {
-      subscriptions.current.forEach(fn => fn());
-      subscriptions.current = [];
-      off();
+      if (typeof unsub === 'function') unsub();
     };
-  }, []);
+  }, [subscribe, connected]);
 
   return (
     <div className="card">

@@ -31,7 +31,7 @@ export const usePrivateShow = (
   isOwnPage: boolean,
   sessionId: string,
   connected: boolean,
-  subscribe: ((dest: string, cb: (msg: any) => void) => { unsubscribe: () => void } | null) | null | undefined,
+  subscribe: ((dest: string, cb: (msg: any) => void) => (() => void)) | null | undefined,
 ): UsePrivateShowResult => {
   const [privateSettings, setPrivateSettings] = useState<PrivateSettings | null>(null);
   const [privateSession, setPrivateSession] = useState<PrivateSession | null>(null);
@@ -75,7 +75,8 @@ export const usePrivateShow = (
   // Subscribe to private show status events
   useEffect(() => {
     if (!connected || !userId || !subscribe) return;
-    const unsub = subscribe('/user/queue/private-show-status', (message) => {
+    let unsub = () => {};
+    const result = subscribe('/user/queue/private-show-status', (message) => {
       try {
         const data = JSON.parse(message.body);
         if (data.type === 'PRIVATE_SHOW_ACCEPTED') {
@@ -117,7 +118,10 @@ export const usePrivateShow = (
         console.error('Failed to parse private show event', e);
       }
     });
-    return () => { if (unsub) unsub.unsubscribe(); };
+    if (typeof result === 'function') {
+      unsub = result;
+    }
+    return () => { unsub(); };
   }, [connected, subscribe, userId, creatorUserId, spySession]);
 
   // Poll for session status updates (fallback for unreliable WebSocket)

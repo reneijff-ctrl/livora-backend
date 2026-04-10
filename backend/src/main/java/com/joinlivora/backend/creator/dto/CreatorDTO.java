@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreatorDTO {
     private Long id;
+    private String username;
     private String displayName;
     private String bio;
     private String avatarUrl;
@@ -18,4 +19,6 @@ public class CreatorDTO {
     private long postCount;
     private java.math.BigDecimal totalTips;
     private java.math.BigDecimal totalEarnings;
+    private boolean isLive;
+    private long viewerCount;
 }

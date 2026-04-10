@@ -59,9 +59,6 @@ class LiveStreamServiceTest {
     private LivestreamAnalyticsService analyticsService;
 
     @Mock
-    private com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
-
-    @Mock
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @Mock

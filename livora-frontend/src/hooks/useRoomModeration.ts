@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import apiClient from '@/api/apiClient';
 import creatorService from '@/api/creatorService';
-import { webSocketService } from '@/websocket/webSocketService';
+import { useWs } from '@/ws/WsContext';
 
 interface Viewer {
   id: number;
@@ -31,6 +31,7 @@ export const useRoomModeration = (
   isOwnPage: boolean,
   activeTab: 'CHAT' | 'PM' | 'USERS',
 ): UseRoomModerationResult => {
+  const { subscribe, connected } = useWs();
   const [isCurrentUserMod, setIsCurrentUserMod] = useState(false);
   const isCurrentUserModRef = useRef(false);
   const [isRoomBanned, setIsRoomBanned] = useState(false);
@@ -65,39 +66,57 @@ export const useRoomModeration = (
 
   // Listen for moderator status changes via WS
   useEffect(() => {
-    if (!userId || !creatorUserId) return;
-    const unsub = webSocketService.subscribe('/user/queue/moderation', (msg) => {
-      try {
-        const data = typeof msg.body === 'string' ? JSON.parse(msg.body) : msg.body;
-        console.debug('[MOD_DEBUG] WS /queue/moderation event:', data);
-        if (data.type === 'MODERATOR_STATUS' && data.payload?.creatorId === creatorUserId) {
-          const isMod = !!data.payload?.isModerator;
-          console.debug('[MOD_DEBUG] WS MODERATOR_STATUS update: isModerator=', isMod);
-          isCurrentUserModRef.current = isMod;
-          setIsCurrentUserMod(isMod);
-        }
-      } catch {}
-    });
-    return () => { if (unsub) unsub(); };
-  }, [userId, creatorUserId]);
+    let unsub = () => {};
+
+    if (connected && userId && creatorUserId) {
+      const result = subscribe('/user/queue/moderation', (msg) => {
+        try {
+          const data = typeof msg.body === 'string' ? JSON.parse(msg.body) : msg.body;
+          console.debug('[MOD_DEBUG] WS /queue/moderation event:', data);
+          if (data.type === 'MODERATOR_STATUS' && data.payload?.creatorId === creatorUserId) {
+            const isMod = !!data.payload?.isModerator;
+            console.debug('[MOD_DEBUG] WS MODERATOR_STATUS update: isModerator=', isMod);
+            isCurrentUserModRef.current = isMod;
+            setIsCurrentUserMod(isMod);
+          }
+        } catch {}
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, userId, creatorUserId]);
 
   // Listen for ban/unban WS events
   useEffect(() => {
-    if (!userId) return;
-    const unsub = webSocketService.subscribe('/user/queue/notifications', (msg) => {
-      try {
-        const data = JSON.parse(msg.body);
-        if (data.type === 'ROOM_BANNED' && data.payload?.creatorId === creatorUserId) {
-          setIsRoomBanned(true);
-          setRoomBanInfo({ banType: data.payload.banType, expiresAt: data.payload.expiresAt });
-        } else if (data.type === 'ROOM_UNBANNED' && data.payload?.creatorId === creatorUserId) {
-          setIsRoomBanned(false);
-          setRoomBanInfo(null);
-        }
-      } catch {}
-    });
-    return () => { if (unsub) unsub(); };
-  }, [userId, creatorUserId]);
+    let unsub = () => {};
+
+    if (connected && userId) {
+      const result = subscribe('/user/queue/notifications', (msg) => {
+        try {
+          const data = JSON.parse(msg.body);
+          if (data.type === 'ROOM_BANNED' && data.payload?.creatorId === creatorUserId) {
+            setIsRoomBanned(true);
+            setRoomBanInfo({ banType: data.payload.banType, expiresAt: data.payload.expiresAt });
+          } else if (data.type === 'ROOM_UNBANNED' && data.payload?.creatorId === creatorUserId) {
+            setIsRoomBanned(false);
+            setRoomBanInfo(null);
+          }
+        } catch {}
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, userId, creatorUserId]);
 
   // Fetch viewers when USERS tab is active
   useEffect(() => {

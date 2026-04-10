@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { webSocketService } from "../../websocket/webSocketService";
+import { useEffect, useState } from "react";
+import { useWs } from "../../ws/WsContext";
 
 interface AbuseEvent {
   type: string;
@@ -10,32 +10,25 @@ interface AbuseEvent {
 }
 
 export default function RealtimeAbuseRadar() {
+  const { subscribe, connected } = useWs();
   const [events, setEvents] = useState<AbuseEvent[]>([]);
-  const subscriptions = useRef<Array<() => void>>([]);
 
   useEffect(() => {
-    const trySubscribe = () => {
-      if (webSocketService.isConnected()) {
-        const unsub = webSocketService.subscribeToAbuseEvents((event: AbuseEvent) => {
-          setEvents((prev) => [event, ...prev.slice(0, 19)]);
-        });
-        if (typeof unsub === 'function') {
-          subscriptions.current.push(unsub);
-        }
-      }
-    };
+    if (!connected) return;
 
-    trySubscribe();
-    const off = webSocketService.subscribeStateChange((connected) => {
-      if (connected) trySubscribe();
+    const unsub = subscribe('/exchange/amq.topic/admin.abuse', (message: any) => {
+      try {
+        const event = JSON.parse(message.body) as AbuseEvent;
+        setEvents((prev) => [event, ...prev.slice(0, 19)]);
+      } catch (e) {
+        console.error('Failed to parse abuse event', e);
+      }
     });
 
     return () => {
-      subscriptions.current.forEach(fn => fn());
-      subscriptions.current = [];
-      off();
+      if (typeof unsub === 'function') unsub();
     };
-  }, []);
+  }, [subscribe, connected]);
 
   return (
     <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-800 shadow-xl overflow-hidden flex flex-col h-full">

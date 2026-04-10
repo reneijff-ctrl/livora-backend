@@ -13,7 +13,7 @@ public class IpReputationService {
 
     private final IpReputationProvider provider;
 
-    @Cacheable(value = "ipReputation", key = "#ip")
+    @Cacheable(value = "ipReputation", key = "#ip", unless = "#result == null")
     public IpReputation getReputation(String ip) {
         log.info("Looking up IP reputation for: {}", ip);
         return provider.lookup(ip);

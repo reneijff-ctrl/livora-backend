@@ -1,27 +1,31 @@
 package com.joinlivora.backend.chat;
 
-import com.joinlivora.backend.user.User;
-import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.Bucket;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class ChatRateLimitService {
 
     @Value("${livora.chat.slow-mode-interval-seconds:3}")
     private int slowModeIntervalSeconds;
 
-    private final Map<String, Bucket> userRoomBuckets = new ConcurrentHashMap<>();
+    private final StringRedisTemplate redisTemplate;
+
+    private static final String SLOW_MODE_KEY_PREFIX = "chat:slow:";
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCircuitBreaker;
+
+    public ChatRateLimitService(StringRedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
 
     /**
      * Validates if a creator can send a message in a specific room based on slow mode rules.
@@ -35,28 +39,34 @@ public class ChatRateLimitService {
             return;
         }
 
-        String key = userId + ":" + roomId;
-        Bucket bucket = userRoomBuckets.computeIfAbsent(key, k -> createNewBucket());
-
-        if (!bucket.tryConsume(1)) {
+        // Use execute() — no isOpen() pre-check — so HALF_OPEN probing is not blocked.
+        // Fail-open: if Redis is down, slow-mode cannot be enforced; message is allowed through.
+        // This is acceptable because slow-mode is a UX feature, not a payment gate.
+        final String key = SLOW_MODE_KEY_PREFIX + userId + ":" + roomId;
+        final int interval = slowModeIntervalSeconds;
+        Boolean wasAbsent;
+        if (redisCircuitBreaker != null) {
+            wasAbsent = redisCircuitBreaker.execute(
+                    () -> redisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofSeconds(interval)),
+                    Boolean.TRUE, // FAIL-OPEN fallback: treat as "key was absent" = allow message
+                    "redis:chat:slow-mode:" + userId);
+        } else {
+            try {
+                wasAbsent = redisTemplate.opsForValue().setIfAbsent(key, "1", Duration.ofSeconds(interval));
+            } catch (org.springframework.dao.DataAccessException ex) {
+                // Fail-open: if Redis is unavailable and no circuit breaker, allow the message through
+                log.warn("CHAT RATE LIMIT REDIS ERROR for userId={} room={}: {}", userId, roomId, ex.getMessage());
+                wasAbsent = Boolean.TRUE;
+            }
+        }
+        if (!Boolean.TRUE.equals(wasAbsent)) {
             log.warn("CHAT: Slow mode active for creator {} in room {}. Interval: {}s", userId, roomId, slowModeIntervalSeconds);
             throw new RuntimeException("Slow mode is active. Please wait " + slowModeIntervalSeconds + " seconds between messages.");
         }
     }
 
-    private Bucket createNewBucket() {
-        // Slow mode: 1 message per slowModeIntervalSeconds
-        return Bucket.builder()
-                .addLimit(Bandwidth.builder()
-                        .capacity(1)
-                        .refillIntervally(1, Duration.ofSeconds(slowModeIntervalSeconds))
-                        .build())
-                .build();
-    }
-
     // Visible for testing
     public void setSlowModeIntervalSeconds(int seconds) {
         this.slowModeIntervalSeconds = seconds;
-        userRoomBuckets.clear();
     }
 }

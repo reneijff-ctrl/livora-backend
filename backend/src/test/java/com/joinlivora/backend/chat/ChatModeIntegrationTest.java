@@ -1,5 +1,7 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.joinlivora.backend.chat.dto.ChatErrorCode;
 import com.joinlivora.backend.chat.dto.ChatModeRequest;
@@ -72,7 +74,7 @@ class ChatModeIntegrationTest {
 
         room = ChatRoom.builder()
                 .name("test-room-" + suffix)
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .chatMode(ChatMode.PUBLIC)
                 .isPrivate(false)
                 .build();
@@ -98,7 +100,7 @@ class ChatModeIntegrationTest {
     @Test
     void testSubscriberOnlyEnforcement() {
         // Update mode via service
-        chatRoomService.updateChatMode(room.getId(), ChatMode.SUBSCRIBERS_ONLY, creator.getId());
+        chatRoomService.updateChatMode(new UUID(0, room.getId()), ChatMode.SUBSCRIBERS_ONLY, creator.getId());
 
         // Regular creator should be rejected
         ChatAccessException ex = assertThrows(ChatAccessException.class, () ->
@@ -117,7 +119,7 @@ class ChatModeIntegrationTest {
     @Test
     void testCreatorOnlyEnforcement() {
         // Update mode
-        chatRoomService.updateChatMode(room.getId(), ChatMode.CREATORS_ONLY, creator.getId());
+        chatRoomService.updateChatMode(new UUID(0, room.getId()), ChatMode.CREATORS_ONLY, creator.getId());
 
         // Regular creator and subscriber should be rejected
         assertThrows(ChatAccessException.class, () ->
@@ -140,7 +142,7 @@ class ChatModeIntegrationTest {
     @Test
     void testModeratorsOnlyEnforcementAndOverride() {
         // Update mode
-        chatRoomService.updateChatMode(room.getId(), ChatMode.MODERATORS_ONLY, creator.getId());
+        chatRoomService.updateChatMode(new UUID(0, room.getId()), ChatMode.MODERATORS_ONLY, creator.getId());
 
         // Regular creator, subscriber, and other creators should be rejected
         assertThrows(ChatAccessException.class, () ->
@@ -164,7 +166,7 @@ class ChatModeIntegrationTest {
     void testUpdateChatModeViaApi() throws Exception {
         ChatModeRequest request = new ChatModeRequest(ChatMode.MODERATORS_ONLY);
 
-        mockMvc.perform(put("/api/rooms/" + room.getId() + "/chat-mode")
+        mockMvc.perform(put("/api/rooms/" + new UUID(0, room.getId()) + "/chat-mode")
                         .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(creator.getEmail()).roles("CREATOR"))
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
@@ -180,7 +182,7 @@ class ChatModeIntegrationTest {
     void testUpdateChatModeViaApi_ForbiddenForRegularUser() throws Exception {
         ChatModeRequest request = new ChatModeRequest(ChatMode.MODERATORS_ONLY);
 
-        mockMvc.perform(put("/api/rooms/" + room.getId() + "/chat-mode")
+        mockMvc.perform(put("/api/rooms/" + new UUID(0, room.getId()) + "/chat-mode")
                         .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(regularUser.getEmail()).roles("USER"))
                         .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)

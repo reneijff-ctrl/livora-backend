@@ -1,12 +1,14 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.joinlivora.backend.exception.ResourceNotFoundException;
 import com.joinlivora.backend.monetization.PpvContent;
 import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,14 +17,24 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class PPVChatAccessService {
 
     private final PPVChatAccessRepository repository;
-    private final com.joinlivora.backend.user.UserRepository userRepository;
+    private final UserRepository userRepository;
     private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
     private final ChatRoomRepository chatRoomRepository;
+
+    public PPVChatAccessService(
+            PPVChatAccessRepository repository,
+            UserRepository userRepository,
+            com.joinlivora.backend.streaming.StreamRepository streamRepository,
+            @Qualifier("chatRoomRepositoryV2") ChatRoomRepository chatRoomRepository) {
+        this.repository = repository;
+        this.userRepository = userRepository;
+        this.streamRepository = streamRepository;
+        this.chatRoomRepository = chatRoomRepository;
+    }
 
     @Transactional
     public void grantAccess(User user, Stream room, PpvContent ppvContent, Instant expiresAt) {
@@ -49,7 +61,7 @@ public class PPVChatAccessService {
                 .orElseGet(() -> streamRepository.findByMediasoupRoomId(roomId)
                         .orElseThrow(() -> new ResourceNotFoundException("Active unified stream not found for roomId: " + roomId)));
 
-        // Find associated PpvContent via ChatRoom
+        // Find associated PpvContent via ChatRoom (V2)
         ChatRoom chatRoom = chatRoomRepository.findByName("stream-" + roomId)
                 .orElseThrow(() -> new ResourceNotFoundException("Chat room not found for stream: " + roomId));
 

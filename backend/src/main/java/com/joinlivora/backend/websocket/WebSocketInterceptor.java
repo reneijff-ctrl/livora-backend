@@ -1,4 +1,11 @@
 package com.joinlivora.backend.websocket;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.joinlivora.backend.chat.ChatMode;
+import com.joinlivora.backend.chat.PPVChatAccessService;
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
+import com.joinlivora.backend.config.MetricsService;
+import com.joinlivora.backend.streaming.service.LivestreamAccessService;
 import com.joinlivora.backend.user.Role;
 import com.joinlivora.backend.user.UserStatus;
 import com.joinlivora.backend.security.JwtService;
@@ -6,6 +13,8 @@ import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.streaming.service.LiveAccessService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.stomp.StompCommand;
@@ -18,6 +27,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Component;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,17 +36,39 @@ import java.util.UUID;
 @Slf4j
 public class WebSocketInterceptor implements ChannelInterceptor {
 
+    /** Cache key prefix for ChatRoom objects: {@code chat:cache:room:{creatorId}} */
+    private static final String CHAT_ROOM_CACHE_PREFIX = "chat:cache:room:";
+    private static final Duration CHAT_ROOM_CACHE_TTL = Duration.ofMinutes(5);
+
     private final JwtService jwtService;
     private final StreamRepository streamRepository;
     private final LiveAccessService liveAccessService;
+    private final LivestreamAccessService livestreamAccessService;
+    private final ChatRoomRepository chatRoomRepository;
+    private final PPVChatAccessService ppvChatAccessService;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
+    private final MetricsService metricsService;
 
     public WebSocketInterceptor(
             JwtService jwtService,
             StreamRepository streamRepository,
-            LiveAccessService liveAccessService) {
+            LiveAccessService liveAccessService,
+            LivestreamAccessService livestreamAccessService,
+            @Qualifier("chatRoomRepositoryV2") ChatRoomRepository chatRoomRepository,
+            PPVChatAccessService ppvChatAccessService,
+            StringRedisTemplate stringRedisTemplate,
+            ObjectMapper objectMapper,
+            MetricsService metricsService) {
         this.jwtService = jwtService;
         this.streamRepository = streamRepository;
         this.liveAccessService = liveAccessService;
+        this.livestreamAccessService = livestreamAccessService;
+        this.chatRoomRepository = chatRoomRepository;
+        this.ppvChatAccessService = ppvChatAccessService;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.objectMapper = objectMapper;
+        this.metricsService = metricsService;
     }
 
     @Override
@@ -131,8 +163,14 @@ public class WebSocketInterceptor implements ChannelInterceptor {
             return;
         }
 
-        // --- Presence & Chat (Public) ---
-        if ("/exchange/amq.topic/presence".equals(destination) || "/exchange/amq.topic/creators.presence".equals(destination) || destination.startsWith("/exchange/amq.topic/chat.")) {
+        // --- Presence (Public) ---
+        if ("/exchange/amq.topic/presence".equals(destination) || "/exchange/amq.topic/creators.presence".equals(destination)) {
+            return;
+        }
+
+        // --- Chat (access-controlled) ---
+        if (destination.startsWith("/exchange/amq.topic/chat.")) {
+            validateChatSubscription(destination, accessor);
             return;
         }
 
@@ -204,11 +242,185 @@ public class WebSocketInterceptor implements ChannelInterceptor {
     }
 
     private void validateStreamVideoAccess(String streamIdStr, StompHeaderAccessor accessor) {
-        // Simplified validation to break circular dependency.
-        // Business logic validation moved to specific signaling services.
-        if (getAuthenticatedUser(accessor) == null) {
+        WebSocketUserInfo user = getAuthenticatedUser(accessor);
+        if (user == null) {
+            log.warn("WebSocket subscription denied: unauthenticated attempt to subscribe to stream video topic {}", streamIdStr);
             throw new AccessDeniedException("Authentication required to access stream video");
         }
+
+        UUID streamId;
+        try {
+            streamId = UUID.fromString(streamIdStr);
+        } catch (IllegalArgumentException e) {
+            log.warn("WebSocket subscription denied: invalid stream UUID '{}' for user {}", streamIdStr, user.email());
+            throw new AccessDeniedException("Invalid stream ID");
+        }
+
+        Optional<Stream> streamOpt = streamRepository.findById(streamId);
+        if (streamOpt.isEmpty()) {
+            log.warn("WebSocket subscription denied: stream {} not found for user {}", streamId, user.email());
+            throw new AccessDeniedException("Stream not found");
+        }
+
+        Stream stream = streamOpt.get();
+
+        // Admins and moderators always allowed
+        if (Role.ADMIN.name().equals(user.role()) || Role.MODERATOR.name().equals(user.role())) {
+            return;
+        }
+
+        // Creator of the stream is always allowed
+        if (stream.getCreator() != null && stream.getCreator().getId().equals(user.id())) {
+            return;
+        }
+
+        // Stream must be live for viewers
+        if (!stream.isLive()) {
+            log.warn("WebSocket subscription denied: stream {} is not live, user {}", streamId, user.email());
+            throw new AccessDeniedException("Stream is not live");
+        }
+
+        // For paid streams, verify the viewer has purchased admission (UUID-based check only)
+        if (stream.isPaid()) {
+            if (!livestreamAccessService.hasAccess(streamId, user.id())) {
+                log.warn("WebSocket subscription denied: paid stream {} requires purchased access, user {}", streamId, user.email());
+                throw new AccessDeniedException("Paid stream access required");
+            }
+        }
+    }
+
+    private void validateChatSubscription(String destination, StompHeaderAccessor accessor) {
+        WebSocketUserInfo user = getAuthenticatedUser(accessor);
+        if (user == null) {
+            log.warn("WebSocket subscription denied: unauthenticated attempt to subscribe to chat topic {}", destination);
+            throw new AccessDeniedException("Authentication required to subscribe to chat");
+        }
+
+        // destination format: /exchange/amq.topic/chat.{creatorUserId}
+        String creatorIdStr = destination.substring("/exchange/amq.topic/chat.".length());
+        Long creatorId;
+        try {
+            creatorId = Long.parseLong(creatorIdStr);
+        } catch (NumberFormatException e) {
+            log.warn("WebSocket subscription denied: invalid chat topic format '{}', user {}", destination, user.email());
+            throw new AccessDeniedException("Invalid chat topic");
+        }
+
+        Optional<ChatRoom> roomOpt = getChatRoomCached(creatorId);
+        if (roomOpt.isEmpty()) {
+            // No room yet — allow subscription (room may not have been created yet)
+            log.debug("Chat subscription: no ChatRoom found for creatorId={}, allowing subscription for user {}", creatorId, user.email());
+            return;
+        }
+
+        ChatRoom room = roomOpt.get();
+        ChatMode chatMode = room.getChatMode();
+
+        // Admins and moderators bypass all chat access restrictions
+        if (Role.ADMIN.name().equals(user.role()) || Role.MODERATOR.name().equals(user.role())) {
+            return;
+        }
+
+        // Creator of the room is always allowed
+        if (creatorId.equals(user.id())) {
+            return;
+        }
+
+        // PUBLIC rooms: allow everyone authenticated
+        if (chatMode == ChatMode.PUBLIC && !room.isPaid() && !room.isPrivate()) {
+            return;
+        }
+
+        // PRIVATE rooms: only the creator (already handled above) and the assigned viewer
+        if (room.isPrivate()) {
+            if (room.getViewerId() != null && room.getViewerId().equals(user.id())) {
+                return;
+            }
+            log.warn("WebSocket subscription denied: private chat room for creator {}, user {}", creatorId, user.email());
+            throw new AccessDeniedException("Private chat room access denied");
+        }
+
+        // SUBSCRIBERS_ONLY: requires ROLE_PREMIUM (subscriber)
+        if (chatMode == ChatMode.SUBSCRIBERS_ONLY) {
+            if (!hasAuthority(accessor, "ROLE_PREMIUM")) {
+                log.warn("WebSocket subscription denied: subscribers-only chat for creator {}, user {}", creatorId, user.email());
+                throw new AccessDeniedException("Subscriber access required for this chat room");
+            }
+            return;
+        }
+
+        // CREATORS_ONLY: requires ROLE_CREATOR or higher
+        if (chatMode == ChatMode.CREATORS_ONLY) {
+            if (!hasAuthority(accessor, "ROLE_CREATOR") && !hasAuthority(accessor, "ROLE_ADMIN")) {
+                log.warn("WebSocket subscription denied: creators-only chat for creator {}, user {}", creatorId, user.email());
+                throw new AccessDeniedException("Creator access required for this chat room");
+            }
+            return;
+        }
+
+        // MODERATORS_ONLY: requires ROLE_MODERATOR or ROLE_ADMIN
+        if (chatMode == ChatMode.MODERATORS_ONLY) {
+            log.warn("WebSocket subscription denied: moderators-only chat for creator {}, user {}", creatorId, user.email());
+            throw new AccessDeniedException("Moderator access required for this chat room");
+        }
+
+        // PPV-paid room: verify PPV access using the creator's live stream UUID
+        if (room.isPaid()) {
+            var liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorId);
+            if (liveStreams.isEmpty()) {
+                log.warn("WebSocket subscription denied: PPV chat for creator {} — no live stream found, user {}", creatorId, user.email());
+                throw new AccessDeniedException("No live stream found for PPV chat room");
+            }
+            UUID streamId = liveStreams.get(0).getId();
+            if (!ppvChatAccessService.hasAccess(user.id(), streamId)) {
+                log.warn("WebSocket subscription denied: PPV chat for creator {}, stream {}, user {}", creatorId, streamId, user.email());
+                throw new AccessDeniedException("PPV access required for this chat room");
+            }
+        }
+    }
+
+    /**
+     * Look up a ChatRoom by creatorId with a 5-minute Redis cache.
+     * On Redis failure, falls back to a direct DB query (fail-open).
+     */
+    private Optional<ChatRoom> getChatRoomCached(Long creatorId) {
+        String cacheKey = CHAT_ROOM_CACHE_PREFIX + creatorId;
+        try {
+            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                ChatRoom room = objectMapper.readValue(cached, ChatRoom.class);
+                metricsService.getCacheCharoomHit().increment();
+                log.debug("ChatRoom cache HIT for creatorId={}", creatorId);
+                return Optional.of(room);
+            }
+        } catch (Exception e) {
+            log.debug("ChatRoom cache read failed for creatorId={}, falling back to DB: {}", creatorId, e.getMessage());
+        }
+
+        // Cache miss — fetch from DB
+        metricsService.getCacheCharoomMiss().increment();
+        log.debug("ChatRoom cache MISS for creatorId={}, querying DB", creatorId);
+        Optional<ChatRoom> roomOpt = chatRoomRepository.findByCreatorId(creatorId);
+
+        // Populate cache on hit
+        roomOpt.ifPresent(room -> {
+            try {
+                String json = objectMapper.writeValueAsString(room);
+                stringRedisTemplate.opsForValue().set(cacheKey, json, CHAT_ROOM_CACHE_TTL);
+            } catch (Exception e) {
+                log.debug("ChatRoom cache write failed for creatorId={}: {}", creatorId, e.getMessage());
+            }
+        });
+        return roomOpt;
+    }
+
+    private boolean hasAuthority(StompHeaderAccessor accessor, String authority) {
+        Principal principal = accessor.getUser();
+        if (principal instanceof UsernamePasswordAuthenticationToken auth) {
+            return auth.getAuthorities().stream()
+                    .anyMatch(a -> a.getAuthority().equals(authority));
+        }
+        return false;
     }
 
     private void validateWebRtcRoomAccess(String destination, StompHeaderAccessor accessor) {

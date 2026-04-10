@@ -11,6 +11,7 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -35,6 +36,9 @@ class RedisSessionRegistryServiceTest {
     @Mock
     private SetOperations<String, String> setOps;
 
+    @Mock
+    private ValueOperations<String, String> valueOps;
+
     private RedisSessionRegistryService service;
 
     private static final String SESSION_ID = "ws-session-abc123";
@@ -43,12 +47,17 @@ class RedisSessionRegistryServiceTest {
     private static final Long CREATOR_ID = 7L;
     private static final String IP = "192.168.1.1";
     private static final String USER_AGENT = "Mozilla/5.0";
-    private static final Duration TTL = Duration.ofMinutes(5);
+    private static final Duration TTL = Duration.ofHours(24);
 
     @BeforeEach
     void setUp() {
         lenient().when(redis.opsForHash()).thenReturn(hashOps);
         lenient().when(redis.opsForSet()).thenReturn(setOps);
+        lenient().when(redis.opsForValue()).thenReturn(valueOps);
+        // Stub INCR/DECR for global session count
+        lenient().when(valueOps.increment(anyString())).thenReturn(1L);
+        lenient().when(valueOps.increment(anyString(), anyLong())).thenReturn(0L);
+        lenient().when(valueOps.get(anyString())).thenReturn(null);
         service = new RedisSessionRegistryService(redis);
     }
 

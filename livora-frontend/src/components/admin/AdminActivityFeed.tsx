@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { safeRender } from '@/utils/safeRender';
-import { webSocketService } from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 
 interface ActivityEvent {
   id: string | number;
@@ -15,6 +15,7 @@ interface AdminActivityFeedProps {
 }
 
 const AdminActivityFeed: React.FC<AdminActivityFeedProps> = React.memo(({ events }) => {
+  const { subscribe, connected } = useWs();
   const [localEvents, setLocalEvents] = useState<ActivityEvent[]>(events);
 
   useEffect(() => {
@@ -42,29 +43,35 @@ const AdminActivityFeed: React.FC<AdminActivityFeedProps> = React.memo(({ events
   }, [events]);
 
   useEffect(() => {
-    const unsub = webSocketService.subscribeToAdminEvents((event) => {
-      const newEvent: ActivityEvent = {
-        id: `rt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        type: event.type,
-        description: event.message,
-        timestamp: event.timestamp
-      };
+    if (!connected) return;
 
-      setLocalEvents(prev => {
-        // Avoid duplicate events if possible (though RT events don't have IDs)
-        const isDuplicate = prev.some(e => e.description === newEvent.description && 
-          new Date(e.timestamp).getTime() === new Date(newEvent.timestamp).getTime());
-        
-        if (isDuplicate) return prev;
-        
-        return [newEvent, ...prev].slice(0, 10);
-      });
+    const unsub = subscribe('/exchange/amq.topic/admin.events', (msg) => {
+      try {
+        const event = JSON.parse(msg.body);
+        const newEvent: ActivityEvent = {
+          id: `rt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: event.type,
+          description: event.message,
+          timestamp: event.timestamp
+        };
+
+        setLocalEvents(prev => {
+          const isDuplicate = prev.some(e => e.description === newEvent.description && 
+            new Date(e.timestamp).getTime() === new Date(newEvent.timestamp).getTime());
+          
+          if (isDuplicate) return prev;
+          
+          return [newEvent, ...prev].slice(0, 10);
+        });
+      } catch (e) {
+        console.error('Failed to parse admin event', e);
+      }
     });
 
     return () => {
-      if (unsub) unsub();
+      if (typeof unsub === 'function') unsub();
     };
-  }, []);
+  }, [subscribe, connected]);
 
   const formatTimestamp = (ts: string | Date) => {
     const date = typeof ts === 'string' ? new Date(ts) : ts;

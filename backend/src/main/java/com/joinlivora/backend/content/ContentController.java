@@ -28,7 +28,7 @@ public class ContentController {
     private final com.joinlivora.backend.payment.SubscriptionService subscriptionService;
 
     @GetMapping("/public")
-    @Cacheable("publicContent")
+    @Cacheable(value = "publicContent", unless = "#result == null")
     public List<ContentResponse> getPublicContent() {
         return contentService.getPublicContent().stream()
                 .map(this::mapToResponse)

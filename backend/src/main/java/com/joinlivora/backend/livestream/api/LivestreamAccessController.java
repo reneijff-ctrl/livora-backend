@@ -1,10 +1,6 @@
 package com.joinlivora.backend.livestream.api;
 
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
-import com.joinlivora.backend.livestream.domain.LivestreamStatus;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
 import com.joinlivora.backend.security.UserPrincipal;
-import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.streaming.dto.LivestreamAccessResponse;
 import com.joinlivora.backend.streaming.service.LivestreamAccessService;
@@ -19,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.Duration;
 import java.util.Map;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/livestream")
@@ -31,7 +26,6 @@ public class LivestreamAccessController {
     private final LiveViewerCounterService liveViewerCounterService;
     private final TokenService tokenService;
     private final StreamRepository streamRepository;
-    private final LivestreamSessionRepository sessionRepository;
     private final com.joinlivora.backend.presence.service.CreatorPresenceService creatorPresenceService;
 
     @GetMapping("/{creatorUserId}/access")
@@ -41,40 +35,34 @@ public class LivestreamAccessController {
     ) {
         Long viewerUserId = principal != null ? principal.getUserId() : null;
 
-        // 1. Fetch active session
-        var sessionOpt = sessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(
-                creatorUserId, LivestreamStatus.LIVE);
+        // 1. Fetch active unified Stream (Single Source of Truth)
+        var liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
 
-        if (sessionOpt.isEmpty()) {
+        if (liveStreams.isEmpty()) {
             return ResponseEntity.ok(LivestreamAccessResponse.builder()
                     .hasAccess(false)
                     .isLive(false)
                     .build());
         }
 
-        var session = sessionOpt.get();
+        var unifiedStream = liveStreams.get(0);
 
-        // 2. Determine access
-        boolean hasAccess = accessService.hasAccess(session.getId(), viewerUserId);
+        // 2. Determine access via UUID-based key (no legacy session fallback)
+        boolean hasAccess = accessService.hasAccess(unifiedStream.getId(), viewerUserId);
 
         long viewerCount = liveViewerCounterService.getViewerCount(creatorUserId);
 
-        log.info("event=ACCESS_CHECK creatorUserId={} viewerUserId={} isLive=true isPaid={} hasAccess={} viewerCount={}",
-                creatorUserId, viewerUserId, session.isPaid(), hasAccess, viewerCount);
-
-        var liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
-        if (liveStreams.isEmpty()) {
-            log.warn("LIVESTREAM: Creator {} is LIVE but has no active unified Stream entity! UI may be inconsistent.", creatorUserId);
-        }
+        log.info("event=ACCESS_CHECK creatorUserId={} viewerUserId={} streamId={} isLive=true isPaid={} hasAccess={} viewerCount={}",
+                creatorUserId, viewerUserId, unifiedStream.getId(), unifiedStream.isPaid(), hasAccess, viewerCount);
 
         return ResponseEntity.ok(LivestreamAccessResponse.builder()
                 .hasAccess(hasAccess)
-                .isPaid(session.isPaid())
+                .isPaid(unifiedStream.isPaid())
                 .isLive(true)
                 .viewerCount(viewerCount)
-                .admissionPrice(session.getAdmissionPrice() != null ? session.getAdmissionPrice() : java.math.BigDecimal.ZERO)
-                .sessionId(session.getId())
-                .streamRoomId(liveStreams.isEmpty() ? null : liveStreams.get(0).getMediasoupRoomId())
+                .admissionPrice(unifiedStream.getAdmissionPrice())
+                .streamId(unifiedStream.getId())
+                .streamRoomId(unifiedStream.getMediasoupRoomId())
                 .build());
     }
 
@@ -89,35 +77,33 @@ public class LivestreamAccessController {
         }
         Long viewerUserId = principal.getUserId();
 
-        // Fetch active session
-        var sessionOpt = sessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(
-                creatorUserId, LivestreamStatus.LIVE);
-
-        if (sessionOpt.isEmpty()) {
+        // 1. Fetch active unified Stream (Single Source of Truth)
+        var liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
+        if (liveStreams.isEmpty()) {
             return ResponseEntity.status(404).body(Map.of("success", false));
         }
-        var session = sessionOpt.get();
+        var unifiedStream = liveStreams.get(0);
 
-        // If viewer already has access, treat as idempotent success
-        if (accessService.hasAccess(session.getId(), viewerUserId)) {
+        // 2. Check idempotency via UUID-based access key
+        if (accessService.hasAccess(unifiedStream.getId(), viewerUserId)) {
             return ResponseEntity.ok(Map.of("success", true));
         }
 
-        if (!session.isPaid()) {
+        if (!unifiedStream.isPaid()) {
             return ResponseEntity.badRequest().body(Map.of("success", false));
         }
 
-        long price = session.getAdmissionPrice() != null ? session.getAdmissionPrice().longValue() : 0L;
+        long price = unifiedStream.getAdmissionPrice() != null ? unifiedStream.getAdmissionPrice().longValue() : 0L;
         if (price <= 0) {
-            log.warn("PURCHASE_ACCESS: Paid flag set but non-positive admissionPrice for sessionId={}", session.getId());
+            log.warn("PURCHASE_ACCESS: Paid flag set but non-positive admissionPrice for streamId={}", unifiedStream.getId());
             return ResponseEntity.badRequest().body(Map.of("success", false));
         }
 
         // Deduct tokens from viewer wallet
         tokenService.spendTokens(viewerUserId, price, WalletTransactionType.LIVESTREAM_ADMISSION, creatorUserId.toString());
 
-        // Grant access for 7200 seconds
-        accessService.grantAccess(session.getId(), viewerUserId, Duration.ofSeconds(7200));
+        // Grant access for 7200 seconds via UUID-based key
+        accessService.grantAccess(unifiedStream.getId(), viewerUserId, Duration.ofSeconds(7200));
 
         return ResponseEntity.ok(Map.of("success", true));
     }

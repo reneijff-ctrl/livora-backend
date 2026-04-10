@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import streamingService, { StreamRoom } from '../api/streamingService';
 import { useWs } from '../ws/WsContext';
+import { usePresence } from '../ws/PresenceContext';
 import { showToast } from './Toast';
 
 const CreatorLivePanel: React.FC = () => {
-  const { subscribe, connected, presenceMap } = useWs();
+  const { subscribe, connected } = useWs();
+  const { presenceMap } = usePresence();
   const [room, setRoom] = useState<StreamRoom | null>(null);
   const [loading, setLoading] = useState(true);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
@@ -50,8 +52,8 @@ const CreatorLivePanel: React.FC = () => {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Presence-driven viewer count updates (from global WsContext subscription)
-  // NOTE: creators.presence is subscribed globally via WsContext — do not subscribe here.
+  // Presence-driven viewer count updates (from global PresenceContext subscription)
+  // NOTE: creators.presence is subscribed globally via PresenceProvider — do not subscribe here.
   useEffect(() => {
     if (!room?.userId) return;
     const creatorUserId = Number(room.userId);

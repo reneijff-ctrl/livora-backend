@@ -1,8 +1,5 @@
 package com.joinlivora.backend.livestream.websocket;
 
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
-import com.joinlivora.backend.livestream.domain.LivestreamStatus;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
 import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.websocket.WebRtcSessionRegistry;
@@ -22,6 +19,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import com.joinlivora.backend.streaming.client.MediasoupClient;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
@@ -34,16 +32,19 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
 import java.time.Duration;
 import org.slf4j.MDC;
 import com.joinlivora.backend.websocket.RealtimeMessage;
+import com.joinlivora.backend.config.MetricsService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.web.socket.messaging.SessionConnectEvent;
@@ -60,10 +61,13 @@ public class WebRTCSignalingController {
     private final LivestreamAccessService livestreamAccessService;
     private final SessionRegistryService sessionRegistryService;
     private final PresenceTrackingService presenceTrackingService;
-    private final LivestreamSessionRepository livestreamSessionRepository;
     private final StreamRepository streamRepository;
     private final UserService userService;
     private final MediasoupClient mediasoupClient;
+    private final StringRedisTemplate redisTemplate;
+    private final MetricsService metricsService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCircuitBreaker;
 
     @Value("${livora.security.max-sessions-per-ip:10}")
     private int maxSessionsPerIp;
@@ -80,9 +84,29 @@ public class WebRTCSignalingController {
     private final Map<String, RateLimitState> signalingRateLimits = new ConcurrentHashMap<>();
     private final Map<String, RateLimitState> ipRateLimits = new ConcurrentHashMap<>();
     private final Map<String, BucketWrapper> roomJoinBuckets = new ConcurrentHashMap<>();
-    private final Map<String, Integer> ipSessionCounts = new ConcurrentHashMap<>();
+    // sessionIdToIp kept in-memory for O(1) reverse-lookup on disconnect
     private final Map<String, String> sessionIdToIp = new ConcurrentHashMap<>();
-    private final AtomicInteger globalSessionCount = new AtomicInteger(0);
+
+    // Redis key prefixes for cluster-safe session counters
+    private static final String REDIS_IP_SESSION_KEY_PREFIX = "rtc:sessions:ip:";
+    private static final String REDIS_GLOBAL_SESSION_KEY = "rtc:sessions:global";
+
+    /**
+     * Mediasoup join batching.
+     * Incoming CONSUME requests from multiple viewers are queued for 100ms and then
+     * drained in parallel, replacing the one-HTTP-call-per-viewer pattern.
+     * Key: mediasoupRoomId (UUID string); Value: list of pending consume futures.
+     */
+    private final Map<String, List<PendingConsumeRequest>> joinQueue = new ConcurrentHashMap<>();
+
+    /** Holds a pending CONSUME request for a single viewer. */
+    @Data
+    @Builder
+    public static class PendingConsumeRequest {
+        private final String roomId;          // mediasoup rid
+        private final Map<String, Object> consumeData;
+        private final CompletableFuture<Map<String, Object>> resultFuture;
+    }
 
     @Autowired
     @Qualifier("webrtcTaskExecutor")
@@ -100,7 +124,7 @@ public class WebRTCSignalingController {
         private String signalingRoomId;
         private Long currentUserId;
         private Long creatorId;
-        private LivestreamSession session;
+        private Stream unifiedStream;
         private boolean isMediasoup;
         private String principalName;
         private String sessionId;
@@ -307,6 +331,60 @@ public class WebRTCSignalingController {
         return false;
     }
 
+    /**
+     * Drains the Mediasoup join queue every 100ms, processing all pending CONSUME
+     * requests in parallel. This replaces the 1-HTTP-call-per-viewer pattern under
+     * burst joins (e.g. 500 viewers joining simultaneously after a stream announcement).
+     *
+     * <p>Each room's pending requests are drained atomically (CopyOnWriteArrayList.clear()
+     * is not atomic so we swap the list) and dispatched as parallel
+     * {@link CompletableFuture} tasks. Results (or errors) are propagated back to
+     * the waiting CONSUME futures so the caller's response chain is unblocked.
+     */
+    @Scheduled(fixedDelay = 100)
+    public void drainJoinQueue() {
+        if (joinQueue.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, List<PendingConsumeRequest>> entry : joinQueue.entrySet()) {
+            String roomId = entry.getKey();
+            List<PendingConsumeRequest> queue = entry.getValue();
+            if (queue.isEmpty()) {
+                continue;
+            }
+            // Drain atomically: swap in a new empty list and process the drained batch
+            List<PendingConsumeRequest> batch = new ArrayList<>(queue);
+            queue.subList(0, batch.size()).clear();
+
+            if (batch.isEmpty()) {
+                continue;
+            }
+
+            log.debug("JoinBatch: draining {} CONSUME requests for room={}", batch.size(), roomId);
+
+            // Process all requests in parallel
+            for (PendingConsumeRequest req : batch) {
+                CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return mediasoupClient.consume(req.getRoomId(), req.getConsumeData()).join();
+                    } catch (Exception e) {
+                        log.warn("JoinBatch: CONSUME failed for room={}: {}", req.getRoomId(), e.getMessage());
+                        return null;
+                    }
+                }, taskExecutor).thenAccept(result -> {
+                    if (result != null) {
+                        req.getResultFuture().complete(result);
+                    } else {
+                        req.getResultFuture().complete(Map.of());
+                    }
+                }).exceptionally(e -> {
+                    req.getResultFuture().completeExceptionally(e);
+                    return null;
+                });
+            }
+        }
+    }
+
     @Scheduled(fixedRate = 600000) // Every 10 minutes
     public void cleanupRateLimits() {
         long now = System.currentTimeMillis();
@@ -370,25 +448,71 @@ public class WebRTCSignalingController {
             ip = (String) headers.getSessionAttributes().get("ip");
         }
 
-        if (globalSessionCount.get() >= maxGlobalSessions) {
-            log.warn("GLOBAL SESSION LIMIT VIOLATION on CONNECT: current={}, limit={}, sessionId={}", 
-                    globalSessionCount.get(), maxGlobalSessions, sessionId);
-            throw new RuntimeException("GLOBAL_SESSION_LIMIT_EXCEEDED");
-        }
-
-        if (ip != null) {
-            int currentSessions = ipSessionCounts.getOrDefault(ip, 0);
-            if (currentSessions >= maxSessionsPerIp) {
-                log.warn("MAX SESSIONS PER IP VIOLATION on CONNECT: ip={}, current={}, limit={}, sessionId={}", 
-                        ip, currentSessions, maxSessionsPerIp, sessionId);
-                throw new RuntimeException("SESSION_LIMIT_EXCEEDED");
+        // Use execute() — no isOpen() pre-check — so HALF_OPEN probing is not blocked.
+        // Fail-open: if Redis is down, session limits cannot be enforced; connection is allowed.
+        final String finalIp = ip;
+        final String finalSessionId = sessionId;
+        if (redisCircuitBreaker != null) {
+            redisCircuitBreaker.execute(() -> {
+                // --- Global session limit check (Redis) ---
+                Long globalCount = redisTemplate.opsForValue().increment(REDIS_GLOBAL_SESSION_KEY);
+                if (globalCount != null && globalCount > maxGlobalSessions) {
+                    redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                    log.warn("WEBRTC LIMIT EXCEEDED: global session limit reached. current={}, limit={}, sessionId={}",
+                            globalCount - 1, maxGlobalSessions, finalSessionId);
+                    throw new RuntimeException("GLOBAL_SESSION_LIMIT_EXCEEDED");
+                }
+                metricsService.incrementWebrtcSessionsGlobal();
+                // --- Per-IP session limit check (Redis) ---
+                if (finalIp != null) {
+                    String ipKey = REDIS_IP_SESSION_KEY_PREFIX + finalIp;
+                    Long ipCount = redisTemplate.opsForValue().increment(ipKey);
+                    if (ipCount != null && ipCount == 1) {
+                        redisTemplate.expire(ipKey, java.time.Duration.ofHours(8));
+                    }
+                    if (ipCount != null && ipCount > maxSessionsPerIp) {
+                        redisTemplate.opsForValue().decrement(ipKey);
+                        redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                        metricsService.decrementWebrtcSessionsGlobal();
+                        log.warn("WEBRTC LIMIT EXCEEDED: per-IP session limit reached. ip={}, current={}, limit={}, sessionId={}",
+                                finalIp, ipCount - 1, maxSessionsPerIp, finalSessionId);
+                        throw new RuntimeException("SESSION_LIMIT_EXCEEDED");
+                    }
+                    if (ipCount != null) metricsService.setWebrtcSessionsPerIp(ipCount);
+                    sessionIdToIp.put(finalSessionId, finalIp);
+                }
+                log.debug("WebRTC session connected: {}. Global Redis count: {}", finalSessionId, globalCount);
+                return null;
+            }, null, "redis:webrtc:session-connect");  // Supplier<Void> form avoids ambiguity
+        } else {
+            try {
+                Long globalCount = redisTemplate.opsForValue().increment(REDIS_GLOBAL_SESSION_KEY);
+                if (globalCount != null && globalCount > maxGlobalSessions) {
+                    redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                    throw new RuntimeException("GLOBAL_SESSION_LIMIT_EXCEEDED");
+                }
+                metricsService.incrementWebrtcSessionsGlobal();
+                if (ip != null) {
+                    String ipKey = REDIS_IP_SESSION_KEY_PREFIX + ip;
+                    Long ipCount = redisTemplate.opsForValue().increment(ipKey);
+                    if (ipCount != null && ipCount == 1) redisTemplate.expire(ipKey, java.time.Duration.ofHours(8));
+                    if (ipCount != null && ipCount > maxSessionsPerIp) {
+                        redisTemplate.opsForValue().decrement(ipKey);
+                        redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                        metricsService.decrementWebrtcSessionsGlobal();
+                        throw new RuntimeException("SESSION_LIMIT_EXCEEDED");
+                    }
+                    if (ipCount != null) metricsService.setWebrtcSessionsPerIp(ipCount);
+                    sessionIdToIp.put(sessionId, ip);
+                }
+            } catch (RuntimeException rte) {
+                throw rte;
+            } catch (Exception e) {
+                log.warn("WEBRTC session connect: Redis unavailable for sessionId={}, failing open.", sessionId);
+                metricsService.getRedisFailuresTotal().increment();
+                if (ip != null) sessionIdToIp.put(sessionId, ip);
             }
-            ipSessionCounts.merge(ip, 1, Integer::sum);
-            sessionIdToIp.put(sessionId, ip);
         }
-
-        globalSessionCount.incrementAndGet();
-        log.debug("Session connected: {}. Global count: {}", sessionId, globalSessionCount.get());
     }
 
     /**
@@ -400,11 +524,44 @@ public class WebRTCSignalingController {
 
         signalingRateLimits.remove(sessionId);
         String ip = sessionIdToIp.remove(sessionId);
-        if (ip != null) {
-            ipSessionCounts.compute(ip, (k, v) -> (v == null || v <= 1) ? null : v - 1);
+
+        // Use execute() — no isOpen() pre-check — so HALF_OPEN probing is not blocked.
+        // Fail-open: stale counters on Redis outage are acceptable; not a security issue.
+        final String finalIpClean = ip;
+        final String finalSessionIdClean = sessionId;
+        if (redisCircuitBreaker != null) {
+            redisCircuitBreaker.execute(() -> {
+                Long globalAfter = redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                if (globalAfter != null && globalAfter < 0) {
+                    redisTemplate.opsForValue().set(REDIS_GLOBAL_SESSION_KEY, "0");
+                }
+                metricsService.decrementWebrtcSessionsGlobal();
+                if (finalIpClean != null) {
+                    String ipKey = REDIS_IP_SESSION_KEY_PREFIX + finalIpClean;
+                    Long ipAfter = redisTemplate.opsForValue().decrement(ipKey);
+                    if (ipAfter != null && ipAfter <= 0) redisTemplate.delete(ipKey);
+                }
+                log.debug("WebRTC session disconnected: {}.", finalSessionIdClean);
+                return null;
+            }, null, "redis:webrtc:session-cleanup");  // Supplier<Void> form avoids ambiguity
+        } else {
+            try {
+                Long globalAfter = redisTemplate.opsForValue().decrement(REDIS_GLOBAL_SESSION_KEY);
+                if (globalAfter != null && globalAfter < 0) {
+                    redisTemplate.opsForValue().set(REDIS_GLOBAL_SESSION_KEY, "0");
+                }
+                metricsService.decrementWebrtcSessionsGlobal();
+                if (ip != null) {
+                    String ipKey = REDIS_IP_SESSION_KEY_PREFIX + ip;
+                    Long ipAfter = redisTemplate.opsForValue().decrement(ipKey);
+                    if (ipAfter != null && ipAfter <= 0) redisTemplate.delete(ipKey);
+                }
+                log.debug("WebRTC session disconnected: {}.", sessionId);
+            } catch (Exception e) {
+                log.warn("WEBRTC session cleanup: Redis unavailable for sessionId={}, counters may be stale", sessionId);
+                metricsService.getRedisFailuresTotal().increment();
+            }
         }
-        globalSessionCount.decrementAndGet();
-        log.debug("Session disconnected: {}. Global count: {}", sessionId, globalSessionCount.get());
     }
 
     @Transactional(readOnly = true)
@@ -424,15 +581,17 @@ public class WebRTCSignalingController {
         String rid = message.getRoomId();
         String signalingRoomId = rid;
         Long creatorId = null;
+        Stream unifiedStream = null;
 
         if (rid != null && !rid.isBlank()) {
             try {
                 UUID ridUuid = UUID.fromString(rid);
-                creatorId = streamRepository.findById(ridUuid)
-                        .map(stream -> stream.getCreator().getId())
-                        .orElseGet(() -> streamRepository.findByMediasoupRoomId(ridUuid)
-                                .map(stream -> stream.getCreator().getId())
-                                .orElse(null));
+                unifiedStream = streamRepository.findById(ridUuid)
+                        .orElseGet(() -> streamRepository.findByMediasoupRoomId(ridUuid).orElse(null));
+                
+                if (unifiedStream != null) {
+                    creatorId = unifiedStream.getCreator().getId();
+                }
             } catch (IllegalArgumentException e) {
                 log.error("Invalid roomId UUID: {}", rid);
             }
@@ -440,28 +599,25 @@ public class WebRTCSignalingController {
 
         // Fallback for creator self-identification
         if (creatorId == null && currentUserId != null) {
-            if (userService.getById(currentUserId).getRole() == com.joinlivora.backend.user.Role.CREATOR) {
+            User currentUser = userService.getById(currentUserId);
+            if (currentUser != null && currentUser.getRole() == com.joinlivora.backend.user.Role.CREATOR) {
                 creatorId = currentUserId;
-            }
-        }
-
-        // Prefer canonical roomId
-        if (creatorId != null) {
-            java.util.List<Stream> activeStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorId);
-            if (!activeStreams.isEmpty()) {
-                UUID newRidUuid = activeStreams.get(0).getMediasoupRoomId();
-                if (newRidUuid != null) {
-                    rid = newRidUuid.toString();
+                
+                // Try to find the stream for this creator
+                java.util.List<Stream> streams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorId);
+                if (!streams.isEmpty()) {
+                    unifiedStream = streams.get(0);
                 }
             }
         }
 
-        // Identify active session
-        Optional<LivestreamSession> sessionOpt = Optional.empty();
-        if (creatorId != null) {
-            sessionOpt = livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(creatorId, LivestreamStatus.LIVE);
+        // Prefer canonical roomId
+        if (unifiedStream != null) {
+            UUID mediasoupRoomId = unifiedStream.getMediasoupRoomId();
+            if (mediasoupRoomId != null) {
+                rid = mediasoupRoomId.toString();
+            }
         }
-        LivestreamSession session = sessionOpt.orElse(null);
 
         // Access validation
         boolean isMediasoup = type != null && (
@@ -479,17 +635,17 @@ public class WebRTCSignalingController {
         boolean isGetRouterCaps = "GET_ROUTER_CAPABILITIES".equalsIgnoreCase(type);
 
         if (isMediasoup || isLegacyWebrtc) {
-            // GET_ROUTER_CAPABILITIES is exempted from the LIVE session requirement
-            // to resolve a race condition where the client requests capabilities 
-            // before the session is fully marked as LIVE in the database.
-            if (!isGetRouterCaps && (session == null || !session.isLive())) {
-                log.warn("WEBRTC-SIGNAL BLOCKED: No active LIVE session for type={}, creatorId={}, roomId={}", type, creatorId, rid);
+            boolean isLive = unifiedStream != null && unifiedStream.isLive();
+            log.info("WEBRTC_CONNECT: streamId={}, isLive={}", rid, isLive);
+
+            if (!isLive) {
+                log.warn("WEBRTC-SIGNAL BLOCKED: Stream is not LIVE for type={}, creatorId={}, roomId={}", type, creatorId, rid);
                 return null;
             }
 
             // Strengthen producer authorization: Only the creator can publish
             if ("PRODUCE".equalsIgnoreCase(type)) {
-                if (currentUserId == null || !currentUserId.equals(session.getCreator().getId())) {
+                if (currentUserId == null || !currentUserId.equals(unifiedStream.getCreator().getId())) {
                     log.warn("SECURITY AUDIT: Unauthorized PRODUCE attempt for roomId {} by user {}", rid, currentUserId);
                     throw new AccessDeniedException("Only the stream creator may publish media");
                 }
@@ -497,9 +653,9 @@ public class WebRTCSignalingController {
 
             // Check access for both authenticated and anonymous viewers
             // LivestreamAccessService.hasAccess handles the 'free stream' logic correctly
-            if (session != null && !livestreamAccessService.hasAccess(session.getId(), currentUserId)) {
-                log.warn("WEBRTC-SIGNAL BLOCKED: No access for viewer {} to session {} (type={})", 
-                        currentUserId != null ? currentUserId : "anonymous", session.getId(), type);
+            if (unifiedStream != null && !livestreamAccessService.hasAccess(unifiedStream.getId(), currentUserId)) {
+                log.warn("WEBRTC-SIGNAL BLOCKED: No access for viewer {} to stream {} (type={})", 
+                        currentUserId != null ? currentUserId : "anonymous", unifiedStream.getId(), type);
                 messagingTemplate.convertAndSendToUser(principalName, "/queue/errors",
                         SignalingMessage.error("PAID_ACCESS_REQUIRED", currentUserId, rid, message.getStreamId()));
                 return null;
@@ -512,7 +668,7 @@ public class WebRTCSignalingController {
                 .signalingRoomId(signalingRoomId)
                 .currentUserId(currentUserId)
                 .creatorId(creatorId)
-                .session(session)
+                .unifiedStream(unifiedStream)
                 .isMediasoup(isMediasoup)
                 .principalName(principalName)
                 .sessionId(headerAccessor.getSessionId())
@@ -578,7 +734,20 @@ public class WebRTCSignalingController {
                 responseData.put("success", true);
             });
         } else if ("CONSUME".equalsIgnoreCase(type)) {
-            asyncChain = mediasoupClient.consume(rid, (Map<String, Object>) message.getData()).thenAccept(consumerData -> {
+            // Batched consume: queue the request for 100ms drain instead of issuing
+            // one HTTP call per viewer. The drain scheduler processes all queued requests
+            // in parallel, reducing mediasoup HTTP round-trips under burst joins.
+            Map<String, Object> consumeData = (Map<String, Object>) message.getData();
+            CompletableFuture<Map<String, Object>> consumeFuture = new CompletableFuture<>();
+            PendingConsumeRequest pending = PendingConsumeRequest.builder()
+                    .roomId(rid)
+                    .consumeData(consumeData)
+                    .resultFuture(consumeFuture)
+                    .build();
+            joinQueue.computeIfAbsent(rid, k -> new CopyOnWriteArrayList<>()).add(pending);
+            log.debug("JoinBatch: queued CONSUME for room={}, queue size={}", rid,
+                    joinQueue.getOrDefault(rid, List.of()).size());
+            asyncChain = consumeFuture.thenAccept(consumerData -> {
                 if (consumerData != null) {
                     responseData.putAll(consumerData);
                 }
@@ -656,7 +825,12 @@ public class WebRTCSignalingController {
                     ip = (String) headerAccessor.getSessionAttributes().get("ip");
                     userAgent = (String) headerAccessor.getSessionAttributes().get("userAgent");
                 }
-                liveViewerCounterService.removeViewer(context.getSession().getId(), creatorId, currentUserId, sessionId, ip, userAgent);
+                java.util.UUID unifiedStreamId = context.getUnifiedStream() != null ? context.getUnifiedStream().getId() : null;
+                if (unifiedStreamId != null) {
+                    liveViewerCounterService.removeViewer(unifiedStreamId, creatorId, currentUserId, sessionId, ip, userAgent);
+                } else {
+                    liveViewerCounterService.removeViewer((UUID) null, creatorId, currentUserId, sessionId, ip, userAgent);
+                }
                 if (headerAccessor.getSessionAttributes() != null) {
                     headerAccessor.getSessionAttributes().remove("creatorUserId");
                 }
@@ -689,21 +863,30 @@ public class WebRTCSignalingController {
                         ip = (String) headerAccessor.getSessionAttributes().get("ip");
                         userAgent = (String) headerAccessor.getSessionAttributes().get("userAgent");
                     }
+                    java.util.UUID unifiedStreamId = context.getUnifiedStream() != null ? context.getUnifiedStream().getId() : null;
                     if (existingCreatorId != null) {
-                        liveViewerCounterService.removeViewer(context.getSession().getId(), existingCreatorId, currentUserId, sessionId, ip, userAgent);
+                        if (unifiedStreamId != null) {
+                            liveViewerCounterService.removeViewer(unifiedStreamId, existingCreatorId, currentUserId, sessionId, ip, userAgent);
+                        } else {
+                            liveViewerCounterService.removeViewer((UUID) null, existingCreatorId, currentUserId, sessionId, ip, userAgent);
+                        }
                     }
 
                     if (!creatorId.equals(currentUserId)) {
                         // Register session in the comprehensive registry for disconnect cleanup
                         sessionRegistryService.registerSession(sessionId, context.getPrincipalName(), currentUserId, creatorId, ip, userAgent);
-                        sessionRegistryService.markStreamJoined(sessionId, context.getSession().getId());
+                        sessionRegistryService.markStreamJoined(sessionId, null);
                         presenceTrackingService.markUserOnline(currentUserId);
 
-                        liveViewerCounterService.addViewer(context.getSession().getId(), creatorId, currentUserId, sessionId, ip, userAgent);
+                        if (unifiedStreamId != null) {
+                            liveViewerCounterService.addViewer(unifiedStreamId, creatorId, currentUserId, sessionId, ip, userAgent);
+                        } else {
+                            liveViewerCounterService.addViewer((UUID) null, creatorId, currentUserId, sessionId, ip, userAgent);
+                        }
                         if (headerAccessor.getSessionAttributes() != null) {
                             headerAccessor.getSessionAttributes().put("creatorUserId", creatorId);
                             headerAccessor.getSessionAttributes().put("userId", currentUserId);
-                            headerAccessor.getSessionAttributes().put("streamSessionId", context.getSession().getId());
+                            headerAccessor.getSessionAttributes().put("streamSessionId", unifiedStreamId != null ? unifiedStreamId.toString() : null);
                         }
                     }
                 }

@@ -23,13 +23,17 @@ spring:
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      connection-timeout: 30000
+      # Tightened for circuit-breaker compatibility: 3 s timeout so DB failures
+      # are detected quickly rather than blocking threads for 30 s each.
+      connection-timeout: 3000
       maximum-pool-size: 20
       minimum-idle: 5
       idle-timeout: 600000
       max-lifetime: 1800000
       auto-commit: false
       initialization-fail-timeout: 1 # Fail fast if DB unreachable
+      # Leak detection: warn if a connection is held for >10 s (slow query guard)
+      leak-detection-threshold: 10000
 
   jpa:
     open-in-view: false
@@ -46,9 +50,12 @@ spring:
 
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:redis}
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
+      # Chaos hardening: bound Redis failure detection to 2 s
+      timeout: 2000ms
+      connect-timeout: 1000ms
       repositories:
         enabled: true
 
@@ -95,11 +102,35 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,info,prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+  metrics:
+    tags:
+      application: livora-backend
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
   otlp:
     metrics:
       export:
         enabled: false
+
+hls:
+  # Root directory where the transcode-worker writes HLS output.
+  # Must match the streams_data volume mount inside the container (/var/www/hls).
+  directory: ${HLS_DIRECTORY:/var/www/hls}
+  # Directory where completed stream recordings are stored (VOD fallback).
+  recordings-directory: ${HLS_RECORDINGS_DIRECTORY:/var/www/recordings/hls}
+  token:
+    # HMAC secret used to sign and verify short-lived HLS access tokens.
+    # Defaults to the JWT secret so no extra env var is needed at first deploy.
+    # Set HLS_TOKEN_SECRET to an independent value in production for isolation.
+    secret: ${HLS_TOKEN_SECRET:${JWT_SECRET}}
+    # Token validity in seconds (default 5 minutes — covers one playlist poll cycle
+    # plus buffering time; clients should refresh before expiry).
+    ttl-seconds: ${HLS_TOKEN_TTL_SECONDS:300}
 
 security:
   jwt:
@@ -121,6 +152,12 @@ stripe:
 mediasoup:
   base-url: ${MEDIASOUP_BASE_URL:http://localhost:4000}
   auth-token: ${MEDIASOUP_AUTH_TOKEN:default_mediasoup_secret}
+  nodes: ${MEDIASOUP_NODES:}
+  heartbeat-interval: ${MEDIASOUP_HEARTBEAT_INTERVAL:5000}
+  failure-threshold-ms: ${MEDIASOUP_FAILURE_THRESHOLD_MS:10000}
+  max-viewers-per-stream: ${MEDIASOUP_MAX_VIEWERS_PER_STREAM:500}
+  autoscale-interval: ${MEDIASOUP_AUTOSCALE_INTERVAL:30000}
+  local-region: ${MEDIASOUP_LOCAL_REGION:eu}
   timeout:
     connect: 3000
     read: 5000
@@ -130,6 +167,13 @@ file:
 
 livora:
   base-url: ${BASE_URL:http://localhost:8080}
+  messaging:
+    redis-pubsub-enabled: ${REDIS_PUBSUB_ENABLED:false}
+  nginx:
+    rtmp:
+      host: ${NGINX_RTMP_HOST:nginx}
+      port: ${NGINX_RTMP_PORT:1935}
+      app: ${NGINX_RTMP_APP:live}
   tipping:
     min-tokens: 1
     max-per-minute: 5
@@ -288,3 +332,48 @@ livora:
       enabled: false
     swagger-ui:
       enabled: false
+
+  # ── Ultra-scale streaming config ──────────────────────────────────────────
+  streaming:
+    # Number of Redis shards per stream (power of 2). 16 shards support ~1M viewers.
+    shard-count: ${STREAM_SHARD_COUNT:16}
+
+  # ── Chat partitioning ─────────────────────────────────────────────────────
+  chat:
+    # Number of Redis Pub/Sub partitions per stream chat. 16 × 50k msg/s = 800k msg/s ceiling.
+    partition-count: ${CHAT_PARTITION_COUNT:16}
+    # Enable partitioned chat (off by default for gradual rollout)
+    partitioned-enabled: ${CHAT_PARTITIONED_ENABLED:false}
+
+  # ── CDN / HLS pre-warm ────────────────────────────────────────────────────
+  cdn:
+    base-url: ${CDN_BASE_URL:https://cdn.joinlivora.com}
+    prewarm-enabled: ${CDN_PREWARM_ENABLED:true}
+    prewarm-segments: ${CDN_PREWARM_SEGMENTS:3}
+
+  # ── Load shedding thresholds ──────────────────────────────────────────────
+  # Tier 0 (soft cap)    : warn in logs only
+  # Tier 1 (quality cap) : remove 720p from master playlist
+  # Tier 2 (webrtc cap)  : deny new WebRTC consumers (force HLS-only)
+  # Tier 3 (hard cap)    : reject all new viewer join attempts (503)
+  shedding:
+    enabled: ${SHEDDING_ENABLED:true}
+    soft-cap: ${SHEDDING_SOFT_CAP:50000}
+    quality-cap: ${SHEDDING_QUALITY_CAP:100000}
+    webrtc-cap: ${SHEDDING_WEBRTC_CAP:200000}
+    hard-cap: ${SHEDDING_HARD_CAP:500000}
+
+  # ── Redis Streams analytics ────────────────────────────────────────────────
+  analytics:
+    enabled: ${ANALYTICS_ENABLED:true}
+    viewer-stream-maxlen: ${ANALYTICS_VIEWER_MAXLEN:100000}
+    segment-stream-maxlen: ${ANALYTICS_SEGMENT_MAXLEN:500000}
+
+hls:
+  directory: ${HLS_DIRECTORY:/var/www/hls}
+  recordings-directory: ${HLS_RECORDINGS_DIRECTORY:/var/www/recordings}
+  token:
+    secret: ${HLS_TOKEN_SECRET:${JWT_SECRET}}
+    ttl-seconds: ${HLS_TOKEN_TTL_SECONDS:180}
+    # Set true to enable IP-bound anti-leech tokens (gradual rollout)
+    ip-binding-enabled: ${HLS_TOKEN_IP_BINDING:false}

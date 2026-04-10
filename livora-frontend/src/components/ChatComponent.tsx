@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useWs } from '@/ws/WsContext';
-import { webSocketService } from '@/websocket/webSocketService';
 import apiClient from '@/api/apiClient';
 import { useAuth } from '@/auth/useAuth';
 import TipBar from '@/components/live/TipBar';
@@ -40,7 +39,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   followerUserIds,
 }) => {
   const { user } = useAuth();
-  const { subscribe: wsSubscribe, connected } = useWs();
+  const { subscribe: wsSubscribe, send: wsSend, isConnected: wsIsConnected, connected } = useWs();
   const subscribedRef = useRef(false);
   const chatStatusSubRef = useRef<{ unsubscribe: () => void } | (() => void) | null>(null);
   const [roomId, setRoomId] = useState<number | null>(null);
@@ -140,7 +139,7 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
   }, [onGoalUpdate]);
 
   const sendMessage = useCallback((content: string) => {
-    if (!webSocketService.isConnected() || !content.trim()) return;
+    if (!wsIsConnected() || !content.trim()) return;
 
     const payload = {
         creatorUserId: creatorId,
@@ -149,8 +148,8 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
     };
 
     console.log('CHAT-V2: Sending message', payload);
-    webSocketService.send("/app/chat.send", payload);
-  }, [creatorId, streamRoomId]);
+    wsSend("/app/chat.send", payload);
+  }, [creatorId, streamRoomId, wsSend, wsIsConnected]);
 
   useEffect(() => {
     // Spinner timeout: max 2 seconds
@@ -205,15 +204,14 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
 
     // Clean up previous subscription if any
     if (chatStatusSubRef.current) {
-      if (typeof (chatStatusSubRef.current as any).unsubscribe === 'function') {
-        (chatStatusSubRef.current as any).unsubscribe();
-      } else if (typeof chatStatusSubRef.current === 'function') {
-        (chatStatusSubRef.current as any)();
+      if (typeof chatStatusSubRef.current === 'function') {
+        chatStatusSubRef.current();
       }
       chatStatusSubRef.current = null;
     }
 
-    const subscription = webSocketService.subscribe('/user/queue/chat-status', (msg) => {
+    let unsub = () => {};
+    const result = wsSubscribe('/user/queue/chat-status', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         if (data.chatRoomId === roomId) {
@@ -225,14 +223,13 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
         console.error('CHAT-V2: Failed to parse status update', e);
       }
     });
-    chatStatusSubRef.current = subscription;
+    if (typeof result === 'function') {
+      unsub = result;
+    }
+    chatStatusSubRef.current = unsub;
 
     return () => {
-      if (subscription && typeof (subscription as any).unsubscribe === "function") {
-        (subscription as any).unsubscribe();
-      } else if (typeof subscription === 'function') {
-        (subscription as any)();
-      }
+      unsub();
       chatStatusSubRef.current = null;
     };
   }, [roomId]);
@@ -272,16 +269,18 @@ const ChatComponent: React.FC<ChatComponentProps> = ({
 
     console.log("CHAT: subscribing to", `/exchange/amq.topic/chat.${creatorId}`, "connected:", connected);
 
-    const subscription = wsSubscribe(
+    let unsub = () => {};
+    const result = wsSubscribe(
       `/exchange/amq.topic/chat.${creatorId}`,
       handleIncomingMessage
     );
+    if (typeof result === 'function') {
+      unsub = result;
+    }
 
     return () => {
       subscribedRef.current = false;
-      if (subscription && typeof subscription.unsubscribe === "function") {
-        subscription.unsubscribe();
-      }
+      unsub();
     };
   }, [creatorId, connected]);
 

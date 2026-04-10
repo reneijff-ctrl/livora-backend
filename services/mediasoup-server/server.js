@@ -5,7 +5,7 @@ const { rateLimit } = require('express-rate-limit');
 const { initMediasoup, getWorkerStats } = require('./mediasoupService');
 const { createWebRtcTransport, connectTransport, getTransport, closeTransport, restartIce } = require('./transports');
 const { createConsumer, resumeConsumer } = require('./consumers');
-const { getRoom, getOrCreateRoom, getAllRooms, removeRoom, getRoomStats, getGlobalStats } = require('./rooms');
+const { getRoom, getOrCreateRoom, getAllRooms, removeRoom, getRoomStats, getGlobalStats, getAggregateBitrateStats, getViewerCounts } = require('./rooms');
 const { createProducer } = require('./producers');
 
 const app = express();
@@ -14,6 +14,186 @@ const INTERNAL_SECRET = process.env.MEDIASOUP_INTERNAL_SECRET;
 
 app.use(express.json());
 app.use(cors());
+
+let isDraining = false;
+
+// ── Health check endpoint (before auth middleware for Docker/LB health checks) ──
+app.get('/health', (req, res) => {
+  const globalStats = getGlobalStats();
+  const workerCount = require('./mediasoupService').getWorkerCount();
+  
+  res.json({
+    status: isDraining ? 'draining' : 'ok',
+    nodeId: process.env.MEDIASOUP_NODE_ID || 'default',
+    region: process.env.MEDIASOUP_REGION || 'unknown',
+    uptime: process.uptime(),
+    workers: workerCount,
+    rooms: globalStats.numRooms,
+    producers: globalStats.numProducers,
+    consumers: globalStats.numConsumers,
+    transports: globalStats.numTransports,
+    draining: isDraining,
+    timestamp: Date.now()
+  });
+});
+
+// ── Drain endpoint (for graceful shutdown / rolling deploys) ──
+
+app.post('/drain', (req, res) => {
+  // Require auth for drain endpoint
+  const authHeader = req.headers.authorization;
+  if (!INTERNAL_SECRET || authHeader !== `Bearer ${INTERNAL_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  isDraining = true;
+  const globalStats = getGlobalStats();
+  console.log(`Node ${process.env.MEDIASOUP_NODE_ID || 'default'} entering DRAIN mode. Active rooms: ${globalStats.numRooms}, consumers: ${globalStats.numConsumers}`);
+
+  res.json({
+    status: 'draining',
+    nodeId: process.env.MEDIASOUP_NODE_ID || 'default',
+    activeRooms: globalStats.numRooms,
+    activeConsumers: globalStats.numConsumers
+  });
+});
+
+app.post('/undrain', (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!INTERNAL_SECRET || authHeader !== `Bearer ${INTERNAL_SECRET}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  isDraining = false;
+  console.log(`Node ${process.env.MEDIASOUP_NODE_ID || 'default'} exiting DRAIN mode.`);
+  res.json({ status: 'active', nodeId: process.env.MEDIASOUP_NODE_ID || 'default' });
+});
+
+// ── Prometheus metrics endpoint (before auth middleware) ──
+app.get('/metrics', async (req, res) => {
+  const globalStats = getGlobalStats();
+  const workerCount = require('./mediasoupService').getWorkerCount();
+  const nodeId = process.env.MEDIASOUP_NODE_ID || 'default';
+
+  // Gather worker-level resource usage for CPU metrics
+  let workerLines = [];
+  try {
+    const workerStats = await getWorkerStats();
+    for (const w of workerStats) {
+      const cpuUser = (w.resourceUsage.ru_utime || 0) / 1000; // microseconds → milliseconds
+      const cpuSystem = (w.resourceUsage.ru_stime || 0) / 1000;
+      const memRss = w.resourceUsage.ru_maxrss || 0; // KB
+      workerLines.push(`mediasoup_worker_cpu_user_ms{node="${nodeId}",pid="${w.pid}"} ${cpuUser}`);
+      workerLines.push(`mediasoup_worker_cpu_system_ms{node="${nodeId}",pid="${w.pid}"} ${cpuSystem}`);
+      workerLines.push(`mediasoup_worker_memory_rss_kb{node="${nodeId}",pid="${w.pid}"} ${memRss}`);
+    }
+  } catch (_) { /* workers may be restarting */ }
+
+  // Gather bitrate stats (async — iterates producer/consumer stats)
+  let bitrateIn = 0;
+  let bitrateOut = 0;
+  let perRoomLines = [];
+  try {
+    const bitrateStats = await getAggregateBitrateStats();
+    bitrateIn = bitrateStats.totalBitrateIn;
+    bitrateOut = bitrateStats.totalBitrateOut;
+    for (const r of bitrateStats.perRoom) {
+      perRoomLines.push(`mediasoup_room_viewers{node="${nodeId}",room="${r.roomId}"} ${r.viewers}`);
+      perRoomLines.push(`mediasoup_room_bitrate_in_bps{node="${nodeId}",room="${r.roomId}"} ${r.bitrateIn}`);
+      perRoomLines.push(`mediasoup_room_bitrate_out_bps{node="${nodeId}",room="${r.roomId}"} ${r.bitrateOut}`);
+    }
+  } catch (_) { /* stats collection may fail during cleanup */ }
+
+  // Total viewers = total consumers (each consumer = one viewer track)
+  // Active streams = rooms with at least one producer
+  const viewerCounts = getViewerCounts();
+  const activeStreams = viewerCounts.filter(r => r.producers > 0).length;
+  const totalViewers = viewerCounts.reduce((sum, r) => sum + r.viewers, 0);
+
+  // Process-level memory
+  const memUsage = process.memoryUsage();
+
+  const region = process.env.MEDIASOUP_REGION || 'unknown';
+
+  const lines = [
+    // ── Node-level gauges (with region label for multi-region monitoring) ──
+    '# HELP mediasoup_workers_total Number of mediasoup workers',
+    '# TYPE mediasoup_workers_total gauge',
+    `mediasoup_workers_total{node="${nodeId}",region="${region}"} ${workerCount}`,
+
+    '# HELP mediasoup_active_streams Number of active streams (rooms with producers)',
+    '# TYPE mediasoup_active_streams gauge',
+    `mediasoup_active_streams{node="${nodeId}",region="${region}"} ${activeStreams}`,
+
+    '# HELP mediasoup_active_viewers Total number of active viewers (consumers)',
+    '# TYPE mediasoup_active_viewers gauge',
+    `mediasoup_active_viewers{node="${nodeId}",region="${region}"} ${totalViewers}`,
+
+    '# HELP mediasoup_rooms_total Number of active rooms',
+    '# TYPE mediasoup_rooms_total gauge',
+    `mediasoup_rooms_total{node="${nodeId}",region="${region}"} ${globalStats.numRooms}`,
+
+    '# HELP mediasoup_producers_total Number of active producers',
+    '# TYPE mediasoup_producers_total gauge',
+    `mediasoup_producers_total{node="${nodeId}",region="${region}"} ${globalStats.numProducers}`,
+
+    '# HELP mediasoup_consumers_total Number of active consumers',
+    '# TYPE mediasoup_consumers_total gauge',
+    `mediasoup_consumers_total{node="${nodeId}",region="${region}"} ${globalStats.numConsumers}`,
+
+    '# HELP mediasoup_transports_total Number of active transports',
+    '# TYPE mediasoup_transports_total gauge',
+    `mediasoup_transports_total{node="${nodeId}",region="${region}"} ${globalStats.numTransports}`,
+
+    // ── Bitrate ──
+    '# HELP mediasoup_bitrate_in_bps Total inbound bitrate (producers) in bits per second',
+    '# TYPE mediasoup_bitrate_in_bps gauge',
+    `mediasoup_bitrate_in_bps{node="${nodeId}",region="${region}"} ${bitrateIn}`,
+
+    '# HELP mediasoup_bitrate_out_bps Total outbound bitrate (consumers) in bits per second',
+    '# TYPE mediasoup_bitrate_out_bps gauge',
+    `mediasoup_bitrate_out_bps{node="${nodeId}",region="${region}"} ${bitrateOut}`,
+
+    // ── Node status ──
+    '# HELP mediasoup_draining Whether node is in drain mode (1=draining, 0=active)',
+    '# TYPE mediasoup_draining gauge',
+    `mediasoup_draining{node="${nodeId}",region="${region}"} ${isDraining ? 1 : 0}`,
+
+    '# HELP mediasoup_uptime_seconds Server uptime in seconds',
+    '# TYPE mediasoup_uptime_seconds gauge',
+    `mediasoup_uptime_seconds{node="${nodeId}",region="${region}"} ${Math.floor(process.uptime())}`,
+
+    // ── Process memory ──
+    '# HELP mediasoup_process_memory_rss_bytes Process resident set size in bytes',
+    '# TYPE mediasoup_process_memory_rss_bytes gauge',
+    `mediasoup_process_memory_rss_bytes{node="${nodeId}",region="${region}"} ${memUsage.rss}`,
+
+    '# HELP mediasoup_process_memory_heap_used_bytes Process heap used in bytes',
+    '# TYPE mediasoup_process_memory_heap_used_bytes gauge',
+    `mediasoup_process_memory_heap_used_bytes{node="${nodeId}",region="${region}"} ${memUsage.heapUsed}`,
+
+    // ── Worker-level CPU ──
+    '# HELP mediasoup_worker_cpu_user_ms Cumulative user CPU time per worker in milliseconds',
+    '# TYPE mediasoup_worker_cpu_user_ms counter',
+    '# HELP mediasoup_worker_cpu_system_ms Cumulative system CPU time per worker in milliseconds',
+    '# TYPE mediasoup_worker_cpu_system_ms counter',
+    '# HELP mediasoup_worker_memory_rss_kb Peak resident set size per worker in KB',
+    '# TYPE mediasoup_worker_memory_rss_kb gauge',
+    ...workerLines,
+
+    // ── Per-room metrics ──
+    '# HELP mediasoup_room_viewers Number of viewers per room',
+    '# TYPE mediasoup_room_viewers gauge',
+    '# HELP mediasoup_room_bitrate_in_bps Inbound bitrate per room in bps',
+    '# TYPE mediasoup_room_bitrate_in_bps gauge',
+    '# HELP mediasoup_room_bitrate_out_bps Outbound bitrate per room in bps',
+    '# TYPE mediasoup_room_bitrate_out_bps gauge',
+    ...perRoomLines,
+  ];
+
+  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.send(lines.join('\n') + '\n');
+});
 
 // Internal Authentication Middleware
 const authMiddleware = (req, res, next) => {
@@ -34,7 +214,7 @@ const authMiddleware = (req, res, next) => {
 app.use(authMiddleware);
 
 // Strict Allowlist Middleware
-const allowedPrefixes = ['/rooms', '/transports', '/connect', '/produce', '/consume'];
+const allowedPrefixes = ['/rooms', '/transports', '/connect', '/produce', '/consume', '/health', '/metrics', '/drain', '/undrain'];
 app.use((req, res, next) => {
   const isAllowed = allowedPrefixes.some(prefix => 
     req.path === prefix || req.path.startsWith(prefix + '/')
@@ -141,6 +321,14 @@ app.post('/connect', async (req, res) => {
 app.post('/consume', async (req, res) => {
   const { roomId, transportId, producerId, rtpCapabilities, appData } = req.body;
   try {
+    // Enforce max viewers per stream
+    const maxViewers = parseInt(process.env.MEDIASOUP_MAX_VIEWERS_PER_STREAM || '500');
+    const room = getRoom(roomId);
+    if (room && room.consumers.size >= maxViewers) {
+      console.warn(`Max viewers (${maxViewers}) reached for room ${roomId}, rejecting consumer`);
+      return res.status(429).json({ error: 'Stream viewer limit reached', maxViewers });
+    }
+
     const transport = getTransport(roomId, transportId);
     if (!transport) throw new Error('Transport not found');
     

@@ -75,6 +75,14 @@ public class PresenceServiceIdempotencyTest {
     private ValueOperations<String, Object> valueOperations;
     @Mock
     private org.springframework.data.redis.core.SetOperations<String, Object> setOperations;
+    @Mock
+    private com.joinlivora.backend.presence.service.RedisSessionRegistryService redisSessionRegistry;
+
+    @Mock
+    private com.joinlivora.backend.config.MetricsService metricsService;
+
+    @Mock
+    private io.micrometer.core.instrument.Counter metricsCounter;
 
     private PresenceService presenceService;
 
@@ -83,13 +91,52 @@ public class PresenceServiceIdempotencyTest {
         lenient().when(onlineStatusService.isAvailable()).thenReturn(true);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         lenient().when(redisTemplate.opsForSet()).thenReturn(setOperations);
+        // Make redisSessionRegistry mock stateful: store/retrieve session data
+        java.util.concurrent.ConcurrentHashMap<String, String> principalStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, Long> userIdStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, Long> creatorIdStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, java.util.Set<String>> subsStore = new java.util.concurrent.ConcurrentHashMap<>();
+        java.util.concurrent.ConcurrentHashMap<String, java.util.Set<Long>> streamsStore = new java.util.concurrent.ConcurrentHashMap<>();
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); String p = inv.getArgument(1); Long u = inv.getArgument(2); Long c = inv.getArgument(3); if (p != null) principalStore.put(sid, p); if (u != null) userIdStore.put(sid, u); if (c != null) creatorIdStore.put(sid, c); return null; }).when(redisSessionRegistry).registerSession(anyString(), any(), any(), any(), any(), any());
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); principalStore.remove(sid); userIdStore.remove(sid); creatorIdStore.remove(sid); subsStore.remove(sid); streamsStore.remove(sid); return null; }).when(redisSessionRegistry).unregisterSession(anyString());
+        lenient().doAnswer(inv -> { String sid = inv.getArgument(0); String dest = inv.getArgument(2); subsStore.computeIfAbsent(sid, k -> java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>())).add(dest); return true; }).when(redisSessionRegistry).addSubscription(anyString(), anyString(), anyString());
+        lenient().doAnswer(inv -> streamsStore.computeIfAbsent(inv.getArgument(0), k -> java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>())).add(inv.getArgument(1))).when(redisSessionRegistry).markStreamJoined(anyString(), any());
+        lenient().doAnswer(inv -> { java.util.Set<Long> s = streamsStore.get(inv.getArgument(0)); return s != null && s.remove(inv.getArgument(1)); }).when(redisSessionRegistry).markStreamLeft(anyString(), any());
+        lenient().when(redisSessionRegistry.getPrincipal(anyString())).thenAnswer(inv -> principalStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getUserId(anyString())).thenAnswer(inv -> userIdStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getCreatorId(anyString())).thenAnswer(inv -> creatorIdStore.get(inv.getArgument(0)));
+        lenient().when(redisSessionRegistry.getIp(anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getUserAgent(anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getSubscriptions(anyString())).thenAnswer(inv -> subsStore.getOrDefault(inv.getArgument(0), java.util.Collections.emptySet()));
+        lenient().when(redisSessionRegistry.isSubscribedTo(anyString(), anyString())).thenAnswer(inv -> { java.util.Set<String> s = subsStore.get(inv.getArgument(0)); return s != null && s.contains(inv.getArgument(1)); });
+        lenient().when(redisSessionRegistry.getJoinedStreams(anyString())).thenAnswer(inv -> streamsStore.getOrDefault(inv.getArgument(0), java.util.Collections.emptySet()));
+        lenient().when(redisSessionRegistry.getJoinTime(anyString(), anyString())).thenReturn(null);
+        lenient().when(redisSessionRegistry.getAllActiveSessions()).thenAnswer(inv -> new java.util.HashMap<>(principalStore));
+        lenient().when(redisSessionRegistry.getActiveSessionsCount()).thenAnswer(inv -> (long) principalStore.size());
         
+        lenient().when(metricsService.getRedisFailuresTotal()).thenReturn(metricsCounter);
+        com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCb =
+                new com.joinlivora.backend.resilience.RedisCircuitBreakerService(new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        com.joinlivora.backend.presence.service.SessionRegistryService sessionRegistry = new com.joinlivora.backend.presence.service.SessionRegistryService(redisSessionRegistry, metricsService, redisCb);
+        com.joinlivora.backend.presence.service.PresenceTrackingService presenceTracking = new com.joinlivora.backend.presence.service.PresenceTrackingService(redisTemplate, onlineStatusService);
+        com.joinlivora.backend.presence.service.ViewerCountService viewerCountService = new com.joinlivora.backend.presence.service.ViewerCountService(liveViewerCounterService);
+        com.joinlivora.backend.presence.service.PresenceEventOrchestrator eventOrchestrator = new com.joinlivora.backend.presence.service.PresenceEventOrchestrator(
+                messagingTemplate, analyticsEventPublisher, liveStreamAssistantBotService, chatRoomServiceV2,
+                PresenceService.createAlwaysAvailableBrokerListener(), null);
+
         presenceService = new PresenceService(
-                messagingTemplate, LiveStreamService, analyticsEventPublisher, userService,
-                onlineStatusService, creatorPresenceService, onlineCreatorRegistry,
-                creatorRepository, chatRoomRepositoryV2, chatRoomServiceV2,
-                creatorGoLiveService, liveViewerCounterService, liveStreamAssistantBotService,
-                redisTemplate, liveStreamService
+                sessionRegistry,
+                presenceTracking,
+                viewerCountService,
+                eventOrchestrator,
+                userService,
+                LiveStreamService,
+                liveStreamService,
+                null,  // creatorProfileService
+                onlineCreatorRegistry,
+                liveViewerCounterService,
+                null,  // creatorFollowRepository
+                null   // streamModeratorService
         );
     }
 
@@ -115,6 +162,7 @@ public class PresenceServiceIdempotencyTest {
         user.setRole(Role.CREATOR);
         when(userService.resolveUserFromSubject(principalId)).thenReturn(Optional.of(user));
         when(userService.getByEmail(email)).thenReturn(user);
+        when(userService.getById(userId)).thenReturn(user);
 
         Creator creator = new Creator();
         creator.setId(creatorId);
@@ -178,6 +226,7 @@ public class PresenceServiceIdempotencyTest {
         user.setEmail("user@test.com");
         user.setRole(Role.USER);
         when(userService.resolveUserFromSubject(principalId)).thenReturn(Optional.of(user));
+        when(userService.getById(userId)).thenReturn(user);
 
         presenceService.handleWebSocketConnectListener(new SessionConnectEvent(this, connectMsg, principal));
 

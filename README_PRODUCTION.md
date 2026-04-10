@@ -18,13 +18,14 @@ This guide covers the deployment of the Livora backend to a production VPS using
 
 ## Firewall Rules
 
-Ensure the following ports are open:
+Ensure the following ports are open on your VPS firewall (e.g., UFW, IPTable) AND your Cloud Provider's Security Group (Hetzner, AWS, etc.):
+
 - `80/tcp` (HTTP - redirected to HTTPS)
 - `443/tcp` (HTTPS)
 - `22/tcp` (SSH)
-- `40000-49999/udp` (Mediasoup WebRTC Media)
-- `40000-49999/tcp` (Mediasoup WebRTC Media Fallback)
-- `4000/tcp` (Mediasoup Signaling API - if not proxied)
+- `3478/udp` & `3478/tcp` (Coturn TURN/STUN)
+- `40000-40300/udp` (Mediasoup WebRTC Media)
+- `49152-49200/udp` (Coturn Relay Ports)
 
 ## Project Structure on VPS
 
@@ -55,10 +56,16 @@ DB_URL=jdbc:postgresql://postgres:5432/joinlivora
 # Security
 JWT_SECRET=your_long_random_jwt_secret_at_least_32_chars
 
-# Stripe (Live Keys)
-STRIPE_SECRET_KEY=sk_live_...
-STRIPE_WEBHOOK_SECRET=whsec_...
-STRIPE_PREMIUM_PLAN_ID=price_...
+# Mediasoup / WebRTC
+MEDIASOUP_ANNOUNCED_IP=your_public_vps_ip
+MEDIASOUP_AUTH_TOKEN=your_random_secret_here
+
+# TURN Server (Optional but HIGHLY recommended for Firefox/Mobile)
+# If left empty, docker-compose will use MEDIASOUP_ANNOUNCED_IP and default credentials.
+TURN_SERVER_URL=turn:your-domain.com:3478
+TURN_USERNAME=turnuser
+TURN_CREDENTIAL=your_turn_password
+TURN_EXTERNAL_IP=your_public_vps_ip
 
 # Nginx / SSL
 DOMAIN=api.joinlivora.com

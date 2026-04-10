@@ -40,7 +40,7 @@ public class ChatModerationService {
     private final ToxicityAnalyzer toxicityAnalyzer;
     private final SentimentAnalyzer sentimentAnalyzer;
     private final ModerationSettingsRepository settingsRepository;
-    private final com.joinlivora.backend.chat.ChatRoomRepository chatRoomRepository;
+    private final com.joinlivora.backend.chat.repository.ChatRoomRepository chatRoomRepository;
     private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
     private final com.joinlivora.backend.admin.service.AdminRealtimeEventService adminRealtimeEventService;
     private final com.joinlivora.backend.moderation.service.AIModerationEngineService aiModerationEngineService;
@@ -64,7 +64,7 @@ public class ChatModerationService {
             ToxicityAnalyzer toxicityAnalyzer,
             SentimentAnalyzer sentimentAnalyzer,
             ModerationSettingsRepository settingsRepository,
-            com.joinlivora.backend.chat.ChatRoomRepository chatRoomRepository,
+            @org.springframework.beans.factory.annotation.Qualifier("chatRoomRepositoryV2") com.joinlivora.backend.chat.repository.ChatRoomRepository chatRoomRepository,
             com.joinlivora.backend.streaming.StreamRepository streamRepository,
             com.joinlivora.backend.admin.service.AdminRealtimeEventService adminRealtimeEventService,
             com.joinlivora.backend.moderation.service.AIModerationEngineService aiModerationEngineService) {
@@ -444,10 +444,9 @@ public class ChatModerationService {
                                 .map(stream -> stream.getCreator().getId())
                                 .orElse(null));
             } else {
-                // Try as ChatRoom UUID
-                UUID chatRoomId = UUID.fromString(roomId);
-                return chatRoomRepository.findById(chatRoomId)
-                        .map(room -> room.getCreatedBy().getId())
+                // Try as ChatRoom name (V2)
+                return chatRoomRepository.findByName(roomId)
+                        .map(com.joinlivora.backend.chat.domain.ChatRoom::getCreatorId)
                         .orElse(null);
             }
         } catch (Exception e) {

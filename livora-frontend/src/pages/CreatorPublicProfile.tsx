@@ -11,7 +11,8 @@ import React, { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/auth/useAuth';
 import { useWallet } from '@/wallet/WalletContext';
-import { useWs, useTrackPresence } from '@/ws/WsContext';
+import { useWs } from '@/ws/WsContext';
+import { usePresence, useTrackPresence } from '@/ws/PresenceContext';
 import { useCreatorPublicProfile } from '@/hooks/useCreatorPublicProfile';
 import CreatorMediaTab from '@/components/creator/CreatorMediaTab';
 import SafeAvatar from '@/components/ui/SafeAvatar';
@@ -44,7 +45,7 @@ const CreatorPublicProfile: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { setBalance: updateWallet } = useWallet();
-  const { presenceMap } = useWs();
+  const { presenceMap } = usePresence();
 
   // Track this creator's presence for real-time live status updates
   const creatorUserId = creator?.profile?.userId;

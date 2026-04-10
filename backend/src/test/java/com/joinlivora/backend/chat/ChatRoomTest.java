@@ -1,5 +1,6 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
 import com.joinlivora.backend.monetization.PpvContent;
 import org.junit.jupiter.api.Test;
 
@@ -16,8 +17,7 @@ class ChatRoomTest {
                 .ppvContent(ppv)
                 .build();
 
-        assertTrue(room.isPpvRoom());
-        assertTrue(room.isRequiresPurchase());
+        assertNotNull(room.getPpvContent());
     }
 
     @Test
@@ -25,19 +25,17 @@ class ChatRoomTest {
         ChatRoom room = ChatRoom.builder()
                 .build();
 
-        assertFalse(room.isPpvRoom());
-        assertFalse(room.isRequiresPurchase());
+        assertNull(room.getPpvContent());
     }
 
     @Test
-    void testPpvProperties_WithPpvContentId_ShouldReturnTrue() {
-        UUID ppvId = UUID.randomUUID();
+    void testPpvProperties_WithPpvContentSet_ShouldReturnTrue() {
+        PpvContent ppv = PpvContent.builder().id(UUID.randomUUID()).build();
         ChatRoom room = new ChatRoom();
-        room.setPpvContentId(ppvId);
+        room.setPpvContent(ppv);
 
-        assertTrue(room.isPpvRoom());
-        assertTrue(room.isRequiresPurchase());
-        assertEquals(ppvId, room.getPpvContentId());
+        assertNotNull(room.getPpvContent());
+        assertEquals(ppv.getId(), room.getPpvContent().getId());
     }
 
     @Test
@@ -60,11 +58,3 @@ class ChatRoomTest {
         assertEquals(ChatMode.SUBSCRIBERS_ONLY, room.getChatMode());
     }
 }
-
-
-
-
-
-
-
-

@@ -17,7 +17,6 @@ import com.joinlivora.backend.livestream.websocket.SignalingMessage;
 import com.joinlivora.backend.monetization.PPVPurchaseValidationService;
 import com.joinlivora.backend.monetization.PpvService;
 import com.joinlivora.backend.livestream.service.LiveStreamService;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.Disabled;
@@ -100,9 +99,6 @@ class StreamIntegrationTest {
     private MeterRegistry meterRegistry;
 
     @Mock
-    private LivestreamSessionRepository livestreamSessionRepository;
-
-    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     @Mock
@@ -113,6 +109,9 @@ class StreamIntegrationTest {
 
     @Mock
     private com.joinlivora.backend.streaming.service.StreamAssistantBotService streamAssistantBotService;
+
+    @Mock
+    private com.joinlivora.backend.streaming.service.StreamCacheService streamCacheService;
 
     @InjectMocks
     private StreamService streamService;
@@ -161,6 +160,12 @@ class StreamIntegrationTest {
                 .viewerCount(0)
                 .build();
 
+        com.joinlivora.backend.resilience.DatabaseCircuitBreakerService dbCb =
+                new com.joinlivora.backend.resilience.DatabaseCircuitBreakerService(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCb =
+                new com.joinlivora.backend.resilience.RedisCircuitBreakerService(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         streamService = new StreamService(
                 userRepository,
                 liveStreamService,
@@ -176,7 +181,10 @@ class StreamIntegrationTest {
                 adminRealtimeEventService,
                 streamRepository,
                 fraudRiskScoreService,
-                streamAssistantBotService
+                streamAssistantBotService,
+                streamCacheService,
+                dbCb,
+                redisCb
         );
         
         // Use reflection to set the streamService in presenceService

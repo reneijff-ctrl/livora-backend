@@ -65,7 +65,7 @@ public class FeatureFlagService {
         }
     }
 
-    @Cacheable(value = "feature_flags", key = "#key")
+    @Cacheable(value = "feature_flags", key = "#key", unless = "#result == null")
     public FeatureFlag getFlag(String key) {
         return repository.findByKey(key).orElse(null);
     }

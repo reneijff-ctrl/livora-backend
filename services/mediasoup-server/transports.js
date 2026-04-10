@@ -83,24 +83,34 @@ const createWebRtcTransport = async (roomId, producing = false) => {
   // - TURN: required for production behind firewalls/symmetric NAT
   const iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
   ];
 
-  // Add TURN server if configured (required for production)
-  if (process.env.TURN_SERVER_URL) {
-    iceServers.push({
-      urls: process.env.TURN_SERVER_URL,       // e.g., "turn:turn.joinlivora.com:3478"
-      username: process.env.TURN_USERNAME,      // e.g., "livora"
-      credential: process.env.TURN_CREDENTIAL  // e.g., "secret-password"
-    });
-    // Also add TURNS (TLS) if available — works through restrictive firewalls
-    if (process.env.TURN_SERVER_TLS_URL) {
+  // Add TURN server if configured (REQUIRED for production reliability)
+  const turnUrl = process.env.TURN_SERVER_URL;
+  if (turnUrl && turnUrl.includes(':')) {
+    if (!process.env.TURN_USERNAME || !process.env.TURN_CREDENTIAL) {
+      console.warn("WEBRTC WARNING: TURN_SERVER_URL is set but TURN_USERNAME or TURN_CREDENTIAL is missing. Falling back to STUN only.");
+    } else {
       iceServers.push({
-        urls: process.env.TURN_SERVER_TLS_URL,  // e.g., "turns:turn.joinlivora.com:5349"
+        urls: process.env.TURN_SERVER_URL,
         username: process.env.TURN_USERNAME,
         credential: process.env.TURN_CREDENTIAL
       });
+      
+      if (process.env.TURN_SERVER_TLS_URL) {
+        iceServers.push({
+          urls: process.env.TURN_SERVER_TLS_URL,
+          username: process.env.TURN_USERNAME,
+          credential: process.env.TURN_CREDENTIAL
+        });
+      }
     }
+  } else {
+    console.warn("WEBRTC WARNING: No TURN_SERVER_URL configured. WebRTC may fail on mobile networks or restrictive firewalls.");
   }
 
   console.log("WEBRTC TRANSPORT OPTIONS:", {
@@ -109,7 +119,10 @@ const createWebRtcTransport = async (roomId, producing = false) => {
     enableUdp: true,
     enableTcp: true,
     iceCandidates: transport.iceCandidates,
-    iceServers: iceServers.map(s => ({ urls: s.urls })) // log URLs only, not credentials
+    iceServers: iceServers.map(s => ({ 
+      urls: s.urls,
+      hasAuth: !!(s.username && s.credential)
+    }))
   });
 
   return {

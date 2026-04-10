@@ -23,19 +23,24 @@ const PrivateShowSessionOverlay: React.FC<PrivateShowSessionOverlayProps> = ({
   const [active, setActive] = useState(true);
 
   useEffect(() => {
-    if (!connected) return;
+    let unsub = () => {};
 
-    const unsubscribe = subscribe('/user/queue/private-show-status', (message) => {
-      const data = JSON.parse(message.body);
-      if (data.type === 'PRIVATE_SHOW_ENDED') {
-        setActive(false);
-        showToast(`Private session ended: ${data.payload.reason || 'Unknown reason'}`, 'info');
-        onSessionEnded();
+    if (connected) {
+      const result = subscribe('/user/queue/private-show-status', (message) => {
+        const data = JSON.parse(message.body);
+        if (data.type === 'PRIVATE_SHOW_ENDED') {
+          setActive(false);
+          showToast(`Private session ended: ${data.payload.reason || 'Unknown reason'}`, 'info');
+          onSessionEnded();
+        }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
       }
-    });
+    }
 
     return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
+      unsub();
     };
   }, [connected, subscribe, onSessionEnded]);
 

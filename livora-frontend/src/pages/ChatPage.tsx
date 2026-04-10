@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useCreatorPublicProfile } from '@/hooks/useCreatorPublicProfile';
-import { webSocketService } from '@/websocket/webSocketService';
 import webRtcService, { SignalingMessage, SignalingType } from '@/websocket/webRtcService';
 import { Device, Transport, Consumer } from 'mediasoup-client';
 import apiClient from '@/api/apiClient';
 import { useAuth } from '@/auth/useAuth';
 import { useWs } from '@/ws/WsContext';
+import { usePresence } from '@/ws/PresenceContext';
 import { safeRender } from '@/utils/safeRender';
 
 interface Message {
@@ -23,7 +23,8 @@ const ChatPage: React.FC = () => {
   const { identifier } = useParams<{ identifier: string }>();
   const { creator, loading: profileLoading } = useCreatorPublicProfile();
   const { user } = useAuth();
-  const { presenceMap } = useWs();
+  const { subscribe, send } = useWs();
+  const { presenceMap } = usePresence();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -72,7 +73,7 @@ const ChatPage: React.FC = () => {
     fetchData();
   }, [creator?.profile?.userId, navigate]);
 
-  // 2. Presence-driven availability updates (from global WsContext subscription)
+  // 2. Presence-driven availability updates (from global PresenceContext subscription)
   useEffect(() => {
     if (!creator?.profile?.userId) return;
     const creatorUserId = Number(creator.profile.userId);
@@ -86,7 +87,7 @@ const ChatPage: React.FC = () => {
   useEffect(() => {
     if (!roomId) return;
 
-    const chatSub = webSocketService.subscribe(`/exchange/amq.topic/chat.${roomId}`, (msg) => {
+    const chatSub = subscribe(`/exchange/amq.topic/chat.${roomId}`, (msg) => {
       try {
         const newMessage = JSON.parse(msg.body);
         // Support batched messages from server
@@ -101,9 +102,9 @@ const ChatPage: React.FC = () => {
     });
 
     return () => {
-      chatSub();
+      if (typeof chatSub === 'function') chatSub();
     };
-  }, [roomId]);
+  }, [roomId, subscribe]);
 
   // 4. Mediasoup for video player (only if LIVE)
   useEffect(() => {
@@ -239,7 +240,7 @@ const ChatPage: React.FC = () => {
   const handleSend = () => {
     if (!inputValue.trim() || !roomId || !user) return;
 
-    webSocketService.send('/app/v2/chat.send', {
+    send('/app/v2/chat.send', {
       roomId: roomId,
       senderId: user.id,
       senderRole: user.role,

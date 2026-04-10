@@ -1,5 +1,6 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.joinlivora.backend.chat.dto.ChatMessageDto;
 import com.joinlivora.backend.chat.dto.ModerateResult;
 import com.joinlivora.backend.chat.dto.ModerationSeverity;
@@ -50,9 +51,6 @@ class ChatMessageServiceTest {
     private ChatRoomRepository chatRoomRepository;
     @Mock
     private com.joinlivora.backend.chat.service.ChatRoomService chatRoomService;
-
-    @Mock
-    private com.joinlivora.backend.chat.repository.ChatRoomRepository chatRoomRepositoryV2;
     @Mock
     private com.joinlivora.backend.chat.repository.ChatMessageRepository chatMessageRepository;
     @Mock

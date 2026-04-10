@@ -7,7 +7,7 @@ import { showToast } from '../components/Toast';
  * Configured with withCredentials=true to support cookie-based authentication and CSRF.
  */
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8080/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   withCredentials: true,
   headers: {
     'Accept': 'application/json',

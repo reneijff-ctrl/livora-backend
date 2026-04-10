@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { webSocketService } from "../../websocket/webSocketService";
+import { useEffect, useState } from "react";
+import { useWs } from "../../ws/WsContext";
 import apiClient from "../../api/apiClient";
 import { safeRender } from "../../utils/safeRender";
 
@@ -15,8 +15,8 @@ interface StreamRisk {
 }
 
 export default function LiveStreamRiskMonitor() {
+    const { subscribe, connected } = useWs();
     const [streams, setStreams] = useState<StreamRisk[]>([]);
-    const subscriptions = useRef<Array<() => void>>([]);
 
     useEffect(() => {
         const fetchRisks = async () => {
@@ -36,39 +36,28 @@ export default function LiveStreamRiskMonitor() {
         fetchRisks();
         const pollInterval = setInterval(fetchRisks, 15000);
 
-        // WebSocket subscription for live updates
-        const handleUpdate = (message: any) => {
-            try {
-                const data = JSON.parse(message.body);
-                if (Array.isArray(data)) {
-                    setStreams(data);
+        let unsub = () => {};
+        if (connected) {
+            const result = subscribe("/exchange/amq.topic/admin.streams", (message: any) => {
+                try {
+                    const data = JSON.parse(message.body);
+                    if (Array.isArray(data)) {
+                        setStreams(data);
+                    }
+                } catch (err) {
+                    console.error("WS: Failed to parse stream risk update", err);
                 }
-            } catch (err) {
-                console.error("WS: Failed to parse stream risk update", err);
+            });
+            if (typeof result === 'function') {
+                unsub = result;
             }
-        };
-
-        const trySubscribe = () => {
-            if (webSocketService.isConnected()) {
-                const unsub = webSocketService.subscribe("/exchange/amq.topic/admin.streams", handleUpdate);
-                if (typeof unsub === 'function') {
-                    subscriptions.current.push(unsub);
-                }
-            }
-        };
-
-        trySubscribe();
-        const off = webSocketService.subscribeStateChange((connected) => {
-            if (connected) trySubscribe();
-        });
+        }
 
         return () => {
             clearInterval(pollInterval);
-            subscriptions.current.forEach(fn => fn());
-            subscriptions.current = [];
-            off();
+            unsub();
         };
-    }, []);
+    }, [subscribe, connected]);
 
     const riskColor = (risk: string) => {
         switch (risk) {

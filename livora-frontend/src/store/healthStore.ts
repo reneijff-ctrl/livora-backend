@@ -57,7 +57,7 @@ class HealthStore {
     this.isChecking = true;
     try {
       // Use shared apiClient for consistency
-      await apiClient.get('http://localhost:8080/actuator/health', {
+      await apiClient.get(`${import.meta.env.VITE_BACKEND_URL || ''}/actuator/health`, {
         timeout: 5000,
         headers: { 
           'X-Requested-With': 'XMLHttpRequest',

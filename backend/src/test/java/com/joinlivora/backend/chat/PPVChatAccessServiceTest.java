@@ -1,5 +1,7 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.joinlivora.backend.monetization.PpvContent;
 import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.user.User;

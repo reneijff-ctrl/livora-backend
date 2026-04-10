@@ -18,18 +18,23 @@ const PrivateShowCreatorHandler: React.FC<PrivateShowCreatorHandlerProps> = ({ o
   const [requests, setRequests] = useState<PrivateShowRequestPayload[]>([]);
 
   useEffect(() => {
-    if (!connected) return;
+    let unsub = () => {};
 
-    const unsubscribe = subscribe('/user/queue/private-show-requests', (message) => {
-      const data = JSON.parse(message.body);
-      if (data.type === 'PRIVATE_SHOW_REQUEST') {
-        setRequests((prev) => [...prev, data.payload]);
-        showToast(`New Private Show Request from ${data.payload.viewerEmail}`, 'info');
+    if (connected) {
+      const result = subscribe('/user/queue/private-show-requests', (message) => {
+        const data = JSON.parse(message.body);
+        if (data.type === 'PRIVATE_SHOW_REQUEST') {
+          setRequests((prev) => [...prev, data.payload]);
+          showToast(`New Private Show Request from ${data.payload.viewerEmail}`, 'info');
+        }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
       }
-    });
+    }
 
     return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
+      unsub();
     };
   }, [connected, subscribe]);
 

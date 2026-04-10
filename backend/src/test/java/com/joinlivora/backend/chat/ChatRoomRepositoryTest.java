@@ -1,5 +1,7 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.joinlivora.backend.monetization.PpvContent;
 import com.joinlivora.backend.testutil.TestUserFactory;
 import com.joinlivora.backend.user.Role;
@@ -28,18 +30,18 @@ class ChatRoomRepositoryTest {
     private TestEntityManager entityManager;
 
     @Test
-    void testFindAllByCreatedById() {
+    void testFindByCreatorId() {
         User creator = TestUserFactory.createCreator("creatorUserId@test.com");
         entityManager.persist(creator);
 
         ChatRoom room1 = ChatRoom.builder()
                 .name("Room 1")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isPrivate(false)
                 .build();
         ChatRoom room2 = ChatRoom.builder()
                 .name("Room 2")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isPrivate(false)
                 .build();
         
@@ -47,11 +49,9 @@ class ChatRoomRepositoryTest {
         entityManager.persist(room2);
         entityManager.flush();
 
-        List<ChatRoom> rooms = chatRoomRepository.findAllByCreatedBy_Id(creator.getId());
+        Optional<ChatRoom> found = chatRoomRepository.findByCreatorId(creator.getId());
         
-        assertEquals(2, rooms.size());
-        assertTrue(rooms.stream().anyMatch(r -> r.getName().equals("Room 1")));
-        assertTrue(rooms.stream().anyMatch(r -> r.getName().equals("Room 2")));
+        assertTrue(found.isPresent());
     }
 
     @Test
@@ -71,14 +71,14 @@ class ChatRoomRepositoryTest {
 
         ChatRoom room = ChatRoom.builder()
                 .name("PPV Room")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .ppvContent(ppv)
                 .isPrivate(true)
                 .build();
         entityManager.persist(room);
         entityManager.flush();
 
-        Optional<ChatRoom> found = chatRoomRepository.findByPpvContent_Id(ppv.getId());
+        Optional<ChatRoom> found = chatRoomRepository.findByPpvContentId(ppv.getId());
         
         assertTrue(found.isPresent());
         assertEquals("PPV Room", found.get().getName());
@@ -87,7 +87,7 @@ class ChatRoomRepositoryTest {
 
     @Test
     void testFindByPpvContentId_NotFound() {
-        Optional<ChatRoom> found = chatRoomRepository.findByPpvContent_Id(UUID.randomUUID());
+        Optional<ChatRoom> found = chatRoomRepository.findByPpvContentId(UUID.randomUUID());
         assertFalse(found.isPresent());
     }
 
@@ -98,7 +98,7 @@ class ChatRoomRepositoryTest {
 
         ChatRoom room = ChatRoom.builder()
                 .name("Subscriber Room")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isPrivate(true)
                 .chatMode(ChatMode.SUBSCRIBERS_ONLY)
                 .build();
@@ -118,7 +118,7 @@ class ChatRoomRepositoryTest {
 
         ChatRoom room = ChatRoom.builder()
                 .name("Default Mode Room")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isPrivate(false)
                 .build();
         
@@ -137,12 +137,12 @@ class ChatRoomRepositoryTest {
 
         ChatRoom liveRoom = ChatRoom.builder()
                 .name("Live Room")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isLive(true)
                 .build();
         ChatRoom offlineRoom = ChatRoom.builder()
                 .name("Offline Room")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .isLive(false)
                 .build();
 
@@ -157,32 +157,23 @@ class ChatRoomRepositoryTest {
     }
 
     @Test
-    void testFindById_UUID() {
+    void testFindById() {
         User creator = TestUserFactory.createCreator("creator6@test.com");
         entityManager.persist(creator);
 
         ChatRoom room = ChatRoom.builder()
-                .name("UUID Room")
-                .createdBy(creator)
+                .name("ID Room")
+                .creatorId(creator.getId())
                 .build();
         
         entityManager.persist(room);
         entityManager.flush();
         
-        UUID id = room.getId();
+        Long id = room.getId();
         assertNotNull(id);
 
         Optional<ChatRoom> found = chatRoomRepository.findById(id);
         assertTrue(found.isPresent());
-        assertEquals("UUID Room", found.get().getName());
+        assertEquals("ID Room", found.get().getName());
     }
 }
-
-
-
-
-
-
-
-
-

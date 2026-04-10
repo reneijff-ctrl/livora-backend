@@ -29,6 +29,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import com.joinlivora.backend.security.UserPrincipal;
+import com.joinlivora.backend.streaming.StreamCacheDTO;
 import java.util.List;
 
 @Disabled("Legacy streaming architecture")
@@ -64,7 +65,7 @@ class LiveStreamControllerTest {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        Stream activeV2 = new Stream();
+        StreamCacheDTO activeV2 = StreamCacheDTO.builder().build();
         when(liveStreamServiceV2.getActiveStream(any())).thenReturn(activeV2);
 
         User creator = new User();
@@ -265,7 +266,7 @@ class LiveStreamControllerTest {
         when(streamRepository.findById(liveStreamId)).thenReturn(Optional.of(liveStream));
         when(userService.getByEmail("viewer@test.com")).thenReturn(user);
         when(liveStreamService.validateViewerAccess(liveStream, user)).thenReturn(true);
-        when(liveStreamServiceV2.getActiveStream(2L)).thenReturn(new Stream());
+        when(liveStreamServiceV2.getActiveStream(2L)).thenReturn(StreamCacheDTO.builder().build());
 
         mockMvc.perform(get("/api/stream/" + liveStreamId + "/hls")
                         .principal(() -> "viewer@test.com"))

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import { useWallet } from '../hooks/useWallet';
-import webSocketService from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import { showToast } from './Toast';
 import chatModerationService from '../api/chatModerationService';
 import apiClient from '../api/apiClient';
@@ -51,6 +51,7 @@ interface LiveChatProps {
  */
 const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerMessage = 0 }) => {
   const { user } = useAuth();
+  const { subscribe, send } = useWs();
   const navigate = useNavigate();
   const { refreshBalance, hasSufficientBalance } = useWallet();
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
@@ -78,7 +79,8 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
       setIsModerator(modIds.includes(Number(user.id)));
     }).catch(() => {});
     // Subscribe to personal moderator status updates
-    const unsub = webSocketService.subscribe('/user/queue/moderation', (msg) => {
+    let unsub = () => {};
+    const result = subscribe('/user/queue/moderation', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         if (data.type === 'MODERATOR_STATUS' && data.payload?.creatorId === Number(userId)) {
@@ -86,8 +88,11 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
         }
       } catch {}
     });
+    if (typeof result === 'function') {
+      unsub = result;
+    }
     return () => { unsub(); };
-  }, [user?.id, userId]);
+  }, [user?.id, userId, subscribe]);
 
   useEffect(() => {
     // Inject animation keyframes
@@ -224,13 +229,13 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
       }
     };
 
-    const unsubscribe = webSocketService.subscribe(topic, handleLiveChatMessage);
+    const unsubscribe = subscribe(topic, handleLiveChatMessage);
 
     // Clean up subscription on unmount or streamId change
     return () => {
-      unsubscribe();
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [streamId, user]);
+  }, [streamId, user, subscribe]);
 
   useEffect(() => {
     if (!streamId) return;
@@ -269,7 +274,7 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
     const isPaidMessage = isPaid && !hasModPower;
 
     // Send message to the backend mapping
-    webSocketService.send("/app/chat.send", {
+    send("/app/chat.send", {
       creatorUserId: userId,
       content: input,
       type: "CHAT",

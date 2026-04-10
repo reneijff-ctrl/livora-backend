@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { webSocketService } from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 import { AdminRealtimeEventDTO } from '../../types';
 import { safeRender } from '@/utils/safeRender';
 
@@ -12,49 +12,55 @@ interface ModerationEvent {
 }
 
 const AdminModerationEventsFeed: React.FC = () => {
+  const { subscribe, connected } = useWs();
   const [events, setEvents] = useState<ModerationEvent[]>([]);
 
   useEffect(() => {
-    const unsub = webSocketService.subscribeToAdminEvents((event: AdminRealtimeEventDTO) => {
-      // Filter only relevant moderation events
-      const relevantTypes = [
-        'USER_MUTED', 
-        'USER_SHADOW_MUTED', 
-        'STREAM_STOPPED', 
-        'FRAUD_SIGNAL_DETECTED',
-        'REPORT_FILED',
-        'VIEWER_SPIKE_DETECTED',
-        'CHAT_SPAM_DETECTED'
-      ];
-      
-      const type = event.eventType || event.type;
-      if (!relevantTypes.includes(type)) return;
+    if (!connected) return;
 
-      const newEvent: ModerationEvent = {
-        id: `mod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        type: type,
-        message: event.message,
-        timestamp: event.timestamp,
-        severity: event.severity
-      };
+    const unsub = subscribe('/exchange/amq.topic/admin.events', (msg) => {
+      try {
+        const event = JSON.parse(msg.body) as AdminRealtimeEventDTO;
+        const relevantTypes = [
+          'USER_MUTED', 
+          'USER_SHADOW_MUTED', 
+          'STREAM_STOPPED', 
+          'FRAUD_SIGNAL_DETECTED',
+          'REPORT_FILED',
+          'VIEWER_SPIKE_DETECTED',
+          'CHAT_SPAM_DETECTED'
+        ];
+        
+        const type = event.eventType || event.type;
+        if (!relevantTypes.includes(type)) return;
 
-      setEvents(prev => {
-        // Avoid duplicate events (matching by message and timestamp)
-        const isDuplicate = prev.some(e => 
-          e.message === newEvent.message && 
-          new Date(e.timestamp).getTime() === new Date(newEvent.timestamp).getTime()
-        );
-        
-        if (isDuplicate) return prev;
-        
-        return [newEvent, ...prev].slice(0, 20);
-      });
+        const newEvent: ModerationEvent = {
+          id: `mod-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          type: type,
+          message: event.message,
+          timestamp: event.timestamp,
+          severity: event.severity
+        };
+
+        setEvents(prev => {
+          const isDuplicate = prev.some(e => 
+            e.message === newEvent.message && 
+            new Date(e.timestamp).getTime() === new Date(newEvent.timestamp).getTime()
+          );
+          
+          if (isDuplicate) return prev;
+          
+          return [newEvent, ...prev].slice(0, 20);
+        });
+      } catch (e) {
+        console.error('Failed to parse admin event', e);
+      }
     });
 
     return () => {
-      if (unsub) unsub();
+      if (typeof unsub === 'function') unsub();
     };
-  }, []);
+  }, [subscribe, connected]);
 
   const getEventStyle = (event: ModerationEvent) => {
     switch (event.severity) {

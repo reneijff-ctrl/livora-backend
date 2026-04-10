@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
-import { webSocketService } from '../websocket/webSocketService';
 import webRtcService, { SignalingType, SignalingMessage } from '../websocket/webRtcService';
 import { SIMULCAST_ENCODINGS, VIDEO_CONSTRAINTS } from '@/constants/webrtc';
 import { Device, Transport, Producer, Consumer } from 'mediasoup-client';
@@ -22,7 +21,7 @@ import privateShowService, { PrivateSession, PrivateSessionStatus } from '../api
 const LiveStreaming: React.FC = () => {
   const navigate = useNavigate();
   const { user, hasPremiumAccess, tokenBalance, refreshTokenBalance } = useAuth();
-  const { subscribe, connected } = useWs();
+  const { subscribe, send, connected } = useWs();
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [isWatching] = useState(false);
   const [currentRoom, setCurrentRoom] = useState<StreamRoom | null>(null);
@@ -35,6 +34,9 @@ const LiveStreaming: React.FC = () => {
   const [isStartingSession, setIsStartingSession] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
   const [chatHeight, setChatHeight] = useState(420);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
   
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -67,7 +69,7 @@ const LiveStreaming: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
+      if (typeof unsubscribe === 'function') unsubscribe();
       webRtcService.leaveStream();
     };
   }, [subscribe, connected, loadInitialData]);
@@ -91,7 +93,7 @@ const LiveStreaming: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribeTips) unsubscribeTips.unsubscribe();
+      if (typeof unsubscribeTips === 'function') unsubscribeTips();
     };
   }, [currentRoom?.id, subscribe]);
 
@@ -110,7 +112,7 @@ const LiveStreaming: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribeViewers) unsubscribeViewers.unsubscribe();
+      if (typeof unsubscribeViewers === 'function') unsubscribeViewers();
     };
   }, [currentRoom?.id, subscribe]);
 
@@ -143,7 +145,7 @@ const LiveStreaming: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [connected, subscribe, user]);
 
@@ -186,6 +188,132 @@ const LiveStreaming: React.FC = () => {
     console.debug("STREAMING: Received signaling message (SFU mode):", signal.type);
   };
 
+  // Auto re-publish stream after node failure (creator side recovery)
+  const republishStream = useCallback(async () => {
+    if (!currentRoom || !localStreamRef.current || !user?.id) return;
+
+    reconnectAttemptsRef.current += 1;
+    const attempt = reconnectAttemptsRef.current;
+
+    if (attempt > maxReconnectAttempts) {
+      console.error('PRODUCER: Max republish attempts reached, giving up');
+      showToast('Stream connection lost. Please restart your broadcast.', 'error');
+      setIsReconnecting(false);
+      return;
+    }
+
+    console.log(`PRODUCER: Republishing stream (attempt ${attempt}/${maxReconnectAttempts})...`);
+    setIsReconnecting(true);
+
+    try {
+      // Backoff delay
+      const delay = attempt * 1000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      const roomIdStr = currentRoom.id;
+      const stream = localStreamRef.current;
+
+      // Clean up old transport
+      if (sendTransport.current && !sendTransport.current.closed) {
+        sendTransport.current.close();
+      }
+      sendTransport.current = null;
+      producers.current.clear();
+      webRtcService.cleanup();
+
+      // Re-connect signaling
+      webRtcService.setCurrentUserId(Number(user.id));
+      webRtcService.connect(roomIdStr, (signal) => {
+        handleSignalingData(signal, roomIdStr);
+      }, { subscribe, send });
+
+      // Re-create transport and produce
+      const routerRtpCapabilities = await webRtcService.sendRequest(SignalingType.GET_ROUTER_CAPABILITIES, roomIdStr);
+      const device = await webRtcService.initDevice(routerRtpCapabilities);
+
+      const transportData = await webRtcService.sendRequest(SignalingType.CREATE_TRANSPORT, roomIdStr, { direction: 'send' });
+      const transport = device.createSendTransport({
+        ...transportData,
+        iceTransportPolicy: (window as any).FORCE_TURN ? 'relay' : 'all'
+      });
+      sendTransport.current = transport;
+
+      transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
+        try {
+          await webRtcService.sendRequest(SignalingType.CONNECT_TRANSPORT, roomIdStr, { transportId: transport.id, dtlsParameters });
+          callback();
+        } catch (e: any) { errback(e); }
+      });
+
+      transport.on('produce', async ({ kind, rtpParameters, appData }, callback, errback) => {
+        try {
+          const { id } = await webRtcService.sendRequest(SignalingType.PRODUCE, roomIdStr, { transportId: transport.id, kind, rtpParameters, appData });
+          callback({ id });
+        } catch (e: any) { errback(e); }
+      });
+
+      const videoTrack = stream.getVideoTracks()[0];
+      const audioTrack = stream.getAudioTracks()[0];
+      if (videoTrack) {
+        const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+        
+        // [FIX-FIREFOX-02]: Single encoding for testing as per task requirements.
+        // Firefox sometimes has issues with multiple simulcast layers on connection start.
+        const encodings = [
+          { 
+            rid: "r0", 
+            maxBitrate: 2500000, 
+            scaleResolutionDownBy: 1.0 
+          }
+        ];
+
+        producers.current.set('video', await transport.produce({
+          track: videoTrack,
+          encodings,
+          codecOptions: { videoGoogleStartBitrate: 1000 }
+        }));
+      }
+      if (audioTrack) {
+        producers.current.set('audio', await transport.produce({ track: audioTrack }));
+      }
+
+      reconnectAttemptsRef.current = 0;
+      setIsReconnecting(false);
+      console.log('PRODUCER: Stream republished successfully after node failure');
+      showToast('Stream recovered automatically', 'success');
+    } catch (err) {
+      console.error('PRODUCER: Failed to republish stream', err);
+      // Retry after delay
+      setTimeout(() => republishStream(), 2000);
+    }
+  }, [currentRoom, user?.id, subscribe, send]);
+
+  // Listen for STREAM_RESTART_REQUIRED (creator-side: auto re-publish)
+  useEffect(() => {
+    if (!connected || !isBroadcasting || !currentRoom) return;
+    let unsub = () => {};
+
+    const result = subscribe('/exchange/amq.topic/streams.status', (msg) => {
+      try {
+        const event = JSON.parse(msg.body);
+        if (event.type === 'STREAM_RESTART_REQUIRED') {
+          const affectedStreamId = event.streamId;
+          if (affectedStreamId === currentRoom.id || affectedStreamId === currentRoom.roomId) {
+            console.log('PRODUCER: Node failure detected, initiating auto re-publish...');
+            republishStream();
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing stream status event', e);
+      }
+    });
+    if (typeof result === 'function') {
+      unsub = result;
+    }
+
+    return () => { unsub(); };
+  }, [connected, subscribe, isBroadcasting, currentRoom, republishStream]);
+
   const startBroadcast = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -211,9 +339,9 @@ const LiveStreaming: React.FC = () => {
         
         // Mediasoup Publish Flow
         webRtcService.setCurrentUserId(Number(user.id));
-        await webRtcService.connect(roomIdStr, (signal) => {
+        webRtcService.connect(roomIdStr, (signal) => {
           handleSignalingData(signal, roomIdStr);
-        });
+        }, { subscribe, send });
 
         const routerRtpCapabilities = await webRtcService.sendRequest(SignalingType.GET_ROUTER_CAPABILITIES, roomIdStr);
         const device = await webRtcService.initDevice(routerRtpCapabilities);
@@ -298,11 +426,16 @@ const LiveStreaming: React.FC = () => {
           // Firefox does not support scalabilityMode in RTCRtpEncodingParameters;
           // guard with a browser-safe copy that strips any residual SVC fields.
           const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
-          const encodings = isFirefox
-            ? SIMULCAST_ENCODINGS.map(({ rid, maxBitrate, scaleResolutionDownBy, maxFramerate }) => ({
-                rid, maxBitrate, scaleResolutionDownBy, ...(maxFramerate ? { maxFramerate } : {})
-              }))
-            : SIMULCAST_ENCODINGS;
+          
+          // [FIX-FIREFOX-02]: Single encoding for testing as per task requirements.
+          // Firefox sometimes has issues with multiple simulcast layers on connection start.
+          const encodings = [
+            { 
+              rid: "r0", 
+              maxBitrate: 2500000, 
+              scaleResolutionDownBy: 1.0 
+            }
+          ];
 
           producers.current.set('video', await transport.produce({ 
             track: videoTrack,

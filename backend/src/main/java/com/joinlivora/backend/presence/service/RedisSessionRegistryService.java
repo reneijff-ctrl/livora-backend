@@ -1,6 +1,7 @@
 package com.joinlivora.backend.presence.service;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -25,24 +26,39 @@ import java.util.stream.Collectors;
  *   ws:session:{sessionId}:streams      SET   → streamSessionId strings
  *   ws:user:{userId}:sessions           SET   → sessionId strings (reverse index)
  *   ws:sessions:active                  SET   → all active sessionId strings (replaces KEYS scan)
+ *   ws:sessions:pod:{podId}              SET   → sessions registered on this pod (per-pod set)
+ *   ws:sessions:count                    STRING → global session count (INCR/DECR)
  *
- * All session keys share the same TTL (5 minutes), refreshed every heartbeat (30s).
+ * All session keys share the same TTL (24 hours), refreshed every heartbeat (30s).
  * Reverse indexes are cleaned on unregister + periodic reconciliation.
  * Active session tracking uses an explicit SET instead of KEYS to avoid O(N) blocking.
+ * Per-pod sets allow partition-level session listing without scanning the global set.
+ * Global count uses INCR/DECR for O(1) session count reads without SCARD on large sets.
  */
 @Service
 @Slf4j
 public class RedisSessionRegistryService {
 
-    private static final Duration SESSION_TTL = Duration.ofMinutes(5);
+    private static final Duration SESSION_TTL = Duration.ofHours(24);
     private static final String SESSION_PREFIX = "ws:session:";
     private static final String USER_SESSIONS_PREFIX = "ws:user:";
-    private static final String ACTIVE_SESSIONS_SET = "ws:sessions:active";
+    private static final String ACTIVE_SESSIONS_SET    = "ws:sessions:active";
+    private static final String GLOBAL_SESSION_COUNT   = "ws:sessions:count";
+    private static final String POD_SESSIONS_PREFIX    = "ws:sessions:pod:";
 
     private final StringRedisTemplate redis;
 
+    /** Unique identifier for this pod instance — defaults to a random UUID if not configured. */
+    @Value("${POD_ID:#{T(java.util.UUID).randomUUID().toString()}}")
+    private String podId;
+
     public RedisSessionRegistryService(StringRedisTemplate redis) {
         this.redis = redis;
+    }
+
+    /** Returns the Redis key for this pod's per-pod session set. */
+    public String podSessionsKey() {
+        return POD_SESSIONS_PREFIX + podId;
     }
 
     // ── Registration ──────────────────────────────────────────────────────
@@ -62,8 +78,12 @@ public class RedisSessionRegistryService {
         redis.opsForHash().putAll(key, fields);
         redis.expire(key, SESSION_TTL);
 
-        // Track in active sessions set
+        // Track in global active sessions set (cluster-wide)
         redis.opsForSet().add(ACTIVE_SESSIONS_SET, sessionId);
+        // Track in per-pod sessions set (pod-local, expires with session TTL)
+        redis.opsForSet().add(podSessionsKey(), sessionId);
+        // Increment global count for O(1) session count reads
+        redis.opsForValue().increment(GLOBAL_SESSION_COUNT);
 
         // Reverse index: userId → sessions
         if (userId != null) {
@@ -89,8 +109,18 @@ public class RedisSessionRegistryService {
         );
         redis.delete(keysToDelete);
 
-        // Remove from active sessions set
+        // Remove from global active sessions set and per-pod sessions set
         redis.opsForSet().remove(ACTIVE_SESSIONS_SET, sessionId);
+        redis.opsForSet().remove(podSessionsKey(), sessionId);
+        // Decrement global count (floor at 0)
+        try {
+            Long current = redis.opsForValue().increment(GLOBAL_SESSION_COUNT, -1);
+            if (current != null && current < 0) {
+                redis.opsForValue().set(GLOBAL_SESSION_COUNT, "0");
+            }
+        } catch (Exception e) {
+            log.debug("Failed to decrement global session count: {}", e.getMessage());
+        }
 
         // Clean reverse index
         if (userIdStr != null) {
@@ -230,12 +260,37 @@ public class RedisSessionRegistryService {
     }
 
     /**
-     * Returns the count of active sessions using SCARD on the active sessions SET.
-     * O(1) operation — no KEYS scan required.
+     * Returns the count of active sessions using the global count key (O(1) INCR/DECR).
+     * Falls back to SCARD on the active sessions SET if the count key is missing.
      */
     public long getActiveSessionsCount() {
+        try {
+            String countStr = redis.opsForValue().get(GLOBAL_SESSION_COUNT);
+            if (countStr != null) {
+                return Math.max(0, Long.parseLong(countStr));
+            }
+        } catch (Exception e) {
+            log.debug("Failed to read global session count from Redis, falling back to SCARD");
+        }
+        // Fallback: SCARD on the active sessions set
         Long size = redis.opsForSet().size(ACTIVE_SESSIONS_SET);
         return size != null ? size : 0;
+    }
+
+    /**
+     * Returns the sessionIds registered on this pod only (O(SCARD) on the per-pod set).
+     * Much cheaper than SMEMBERS on the global set under high session counts.
+     */
+    public Set<String> getPodSessionIds() {
+        Set<String> members = redis.opsForSet().members(podSessionsKey());
+        return members != null ? members : Collections.emptySet();
+    }
+
+    /**
+     * Returns the global session count (INCR/DECR backed) — O(1).
+     */
+    public long getGlobalSessionCount() {
+        return getActiveSessionsCount();
     }
 
     // ── TTL Management ────────────────────────────────────────────────────

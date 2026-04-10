@@ -1,5 +1,7 @@
 package com.joinlivora.backend.chat;
 
+import com.joinlivora.backend.chat.domain.ChatRoom;
+import com.joinlivora.backend.chat.repository.ChatRoomRepository;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.chat.dto.ChatErrorCode;
 import com.joinlivora.backend.exception.ChatAccessException;
@@ -86,9 +88,9 @@ class ChatModeAuthorizationTest {
         otherCreator.setRole(Role.CREATOR);
 
         room = ChatRoom.builder()
-                .id(java.util.UUID.randomUUID())
+                .id(1L)
                 .name("liveStream-123")
-                .createdBy(creator)
+                .creatorId(creator.getId())
                 .chatMode(ChatMode.PUBLIC)
                 .isPrivate(false)
                 .build();

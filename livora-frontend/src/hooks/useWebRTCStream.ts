@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import webRtcService, { SignalingMessage, SignalingType } from '@/websocket/webRtcService';
-import { webSocketService } from '@/websocket/webSocketService';
+import { useWs } from '@/ws/WsContext';
 import type { Transport, Consumer } from 'mediasoup-client/lib/types';
 
 interface UseWebRTCStreamProps {
@@ -17,6 +17,7 @@ interface UseWebRTCStreamProps {
   setError: (error: string | null) => void;
   setLoading: (loading: boolean) => void;
   setNeedsInteraction: (needs: boolean) => void;
+  setReconnecting?: (reconnecting: boolean) => void;
 }
 
 export function useWebRTCStream({
@@ -32,19 +33,26 @@ export function useWebRTCStream({
   setAvailability,
   setError,
   setLoading,
-  setNeedsInteraction
+  setNeedsInteraction,
+  setReconnecting
 }: UseWebRTCStreamProps) {
+  const { subscribe, send, isConnected, connected } = useWs();
   const instanceId = useRef(Math.random().toString(36).substring(2, 9)).current;
   const remoteStreamRef = useRef<MediaStream>(new MediaStream());
   const recvTransport = useRef<Transport | null>(null);
   const consumers = useRef<Map<string, Consumer>>(new Map());
   const hasInitializedRef = useRef(false);
+  const prevConnectedRef = useRef(false);
   const joinedCreatorRef = useRef<number | null>(null);
   const joiningRef = useRef(false);
   const consumedProducersRef = useRef(new Set<string>());
   const deferredProducersRef = useRef<{ id: string, kind: string }[]>([]);
   const signalingUnsubRef = useRef<(() => void) | null>(null);
   const errorsUnsubRef = useRef<(() => void) | null>(null);
+  const streamRestartUnsubRef = useRef<(() => void) | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 5;
+  const [isRecovering, setIsRecovering] = useState(false);
   const activeSessionIdRef = useRef<string | null>(null);
   const prevHasAccessRef = useRef<boolean | null>(null);
   const userIdRef = useRef(user?.id);
@@ -55,9 +63,9 @@ export function useWebRTCStream({
   };
 
   const performWebRTCCleanup = () => {
-    if (webSocketService.isConnected() && joinedCreatorRef.current && userIdRef.current && room?.streamRoomId) {
+    if (isConnected() && joinedCreatorRef.current && userIdRef.current && room?.streamRoomId) {
       log(`[${instanceId}] WebRTC Cleanup: Sending LEAVE signal`);
-      webSocketService.send('/app/webrtc.signal', {
+      send('/app/webrtc.signal', {
         type: SignalingType.LEAVE,
         senderId: Number(userIdRef.current),
         roomId: room.streamRoomId,
@@ -181,13 +189,25 @@ export function useWebRTCStream({
       remoteStreamRef.current.addTrack(track);
 
       if (videoRef.current) {
-        if (videoRef.current.srcObject !== remoteStreamRef.current) {
+        // [FIX-FIREFOX-01]: Firefox sometimes fails to render new tracks in an existing MediaStream.
+        // We force-refresh the srcObject to ensure it detects the new track correctly.
+        const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
+        
+        if (isFirefox) {
+          // Re-assigning srcObject is a known workaround for Firefox rendering issues
+          videoRef.current.srcObject = null;
+          videoRef.current.srcObject = remoteStreamRef.current;
+        } else if (videoRef.current.srcObject !== remoteStreamRef.current) {
           videoRef.current.srcObject = remoteStreamRef.current;
         }
 
-        console.log("VIDEO ELEMENT:", videoRef.current);
-        console.log("VIDEO ELEMENT - autoplay:", videoRef.current.autoplay, "muted:", videoRef.current.muted, "playsInline:", videoRef.current.playsInline);
-        console.log("VIDEO TRACK ATTACHED:", track, "kind:", track.kind, "readyState:", track.readyState, "enabled:", track.enabled, "muted:", track.muted);
+        console.log(`[WATCH-HOOK] [${instanceId}] VIDEO ELEMENT STATE:`, {
+          autoplay: videoRef.current.autoplay,
+          muted: videoRef.current.muted,
+          readyState: videoRef.current.readyState,
+          videoWidth: videoRef.current.videoWidth,
+          videoHeight: videoRef.current.videoHeight
+        });
         
         videoRef.current.playsInline = true;
         videoRef.current.autoplay = true;
@@ -196,6 +216,7 @@ export function useWebRTCStream({
         track.onunmute = async () => {
           try {
             if (videoRef.current) {
+              console.log(`[WATCH-HOOK] [${instanceId}] Video track UNMUTED, calling play()`);
               await videoRef.current.play();
             }
           } catch (err: any) {
@@ -203,6 +224,14 @@ export function useWebRTCStream({
             setNeedsInteraction(true);
           }
         };
+
+        // If the track is already unmuted, ensure we call play()
+        if (track.enabled && !track.muted) {
+          videoRef.current.play().catch(err => {
+            log(`[${instanceId}] Initial play failed:`, err.message);
+            setNeedsInteraction(true);
+          });
+        }
       }
 
       await webRtcService.sendRequest(SignalingType.RESUME_CONSUMER, room.streamRoomId, { consumerId });
@@ -282,12 +311,26 @@ export function useWebRTCStream({
       if (!active) return;
 
       console.log("RECV TRANSPORT CONFIG:", JSON.stringify(transportData, null, 2));
-      const transport = device.createRecvTransport(transportData);
+      const transport = device.createRecvTransport({
+        ...transportData,
+        iceTransportPolicy: (window as any).FORCE_TURN ? 'relay' : 'all'
+      });
       if (!active) {
         transport.close();
         return;
       }
       recvTransport.current = transport;
+
+      // Debug: log ICE candidates to verify STUN/TURN connectivity
+      // @ts-ignore — mediasoup exposes handler internally on the underlying PC
+      const pc = transport.handler?._pc as RTCPeerConnection | undefined;
+      if (pc) {
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.debug("ICE candidate:", event.candidate.type, event.candidate.protocol, event.candidate.address);
+          }
+        };
+      }
 
       transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
         try {
@@ -382,15 +425,11 @@ export function useWebRTCStream({
   };
 
   const initSignalingAndJoin = async (active: boolean) => {
-    if (!room?.streamRoomId) return;
+    if (!room?.streamRoomId || !connected) return;
     
     try {
-      if (!webSocketService.isConnected()) {
-        await webSocketService.waitForConnection();
-        if (!active) return;
-      }
-
-      const errorsUnsub = webSocketService.subscribe('/user/queue/errors', (msg) => {
+      let errorsUnsub = () => {};
+      const errorsResult = subscribe('/user/queue/errors', (msg) => {
         try {
           const signal: SignalingMessage = JSON.parse(msg.body);
           if (signal.type === 'ERROR') {
@@ -410,15 +449,18 @@ export function useWebRTCStream({
           }
         } catch (e) { log("Error parsing error message", e); }
       });
+      if (typeof errorsResult === 'function') {
+        errorsUnsub = errorsResult;
+      }
 
       webRtcService.setCurrentUserId(Number(user?.id));
       
-      await webRtcService.connect(room.streamRoomId, (signal) => {
+      webRtcService.connect(room.streamRoomId, (signal) => {
         if (signal.type === SignalingType.NEW_PRODUCER || signal.type === 'NEW_PRODUCER') {
           if (!signal.data?.producerId) return;
           consumeProducer(signal.data, false, 'NEW_PRODUCER_signal', active);
         }
-      });
+      }, { subscribe, send });
 
       if (!active) return;
 
@@ -490,7 +532,87 @@ export function useWebRTCStream({
         performWebRTCCleanup();
       }
     };
-  }, [availability, creatorId, hasAccess, error, room, streamId, user?.id]);
+  }, [availability, creatorId, hasAccess, error, room, streamId, user?.id, connected]);
+
+  // Handle STREAM_RESTART_REQUIRED events from backend (node failure recovery)
+  const handleStreamRestart = useCallback((streamIdToRestart: string, reason: string) => {
+    if (streamIdToRestart !== streamId && streamIdToRestart !== room?.streamRoomId) return;
+
+    reconnectAttemptsRef.current += 1;
+    const attempt = reconnectAttemptsRef.current;
+
+    if (attempt > maxReconnectAttempts) {
+      log(`[${instanceId}] Max reconnect attempts (${maxReconnectAttempts}) reached, giving up`);
+      setError('Stream connection lost. Please refresh the page.');
+      setIsRecovering(false);
+      if (setReconnecting) setReconnecting(false);
+      return;
+    }
+
+    log(`[${instanceId}] STREAM_RESTART_REQUIRED received (attempt ${attempt}/${maxReconnectAttempts}): ${reason}`);
+    setIsRecovering(true);
+    if (setReconnecting) setReconnecting(true);
+
+    // Clean up existing WebRTC state
+    performWebRTCCleanup();
+    hasInitializedRef.current = false;
+    consumedProducersRef.current.clear();
+
+    // Backoff delay: 1s, 2s, 3s, 4s, 5s
+    const delay = attempt * 1000;
+    log(`[${instanceId}] Reconnecting in ${delay}ms...`);
+    setTimeout(() => {
+      setIsRecovering(false);
+      if (setReconnecting) setReconnecting(false);
+      // The main useEffect will pick up hasInitializedRef.current = false and re-init
+    }, delay);
+  }, [streamId, room?.streamRoomId, instanceId, setError, setReconnecting]);
+
+  // Subscribe to stream status events for STREAM_RESTART_REQUIRED
+  useEffect(() => {
+    let unsub = () => {};
+
+    if (connected && streamId) {
+      const result = subscribe('/exchange/amq.topic/streams.status', (msg) => {
+        try {
+          const event = JSON.parse(msg.body);
+          if (event.type === 'STREAM_RESTART_REQUIRED') {
+            handleStreamRestart(event.streamId, event.reason || 'Node failure');
+          }
+        } catch (e) {
+          log('Error parsing stream status event', e);
+        }
+      });
+      if (typeof result === 'function') {
+        unsub = result;
+      }
+    }
+
+    return () => {
+      unsub();
+    };
+  }, [connected, subscribe, streamId, handleStreamRestart]);
+
+  // Reset reconnect attempts on successful stream initialization
+  useEffect(() => {
+    if (hasInitializedRef.current && recvTransport.current) {
+      if (reconnectAttemptsRef.current > 0) {
+        log(`[${instanceId}] Stream recovered successfully after ${reconnectAttemptsRef.current} attempt(s)`);
+      }
+      reconnectAttemptsRef.current = 0;
+    }
+  }, [hasInitializedRef.current, recvTransport.current]);
+
+  // Detect WebSocket reconnection and reset WebRTC state to force re-initialization
+  useEffect(() => {
+    if (prevConnectedRef.current === false && connected === true && hasInitializedRef.current) {
+      log(`[${instanceId}] WS RECONNECTED → resetting WebRTC for re-initialization`);
+      hasInitializedRef.current = false;
+      consumedProducersRef.current.clear();
+      performWebRTCCleanup();
+    }
+    prevConnectedRef.current = connected;
+  }, [connected]);
 
   useEffect(() => {
     return () => {
@@ -504,6 +626,7 @@ export function useWebRTCStream({
     recvTransport,
     consumers,
     remoteStreamRef,
-    performWebRTCCleanup
+    performWebRTCCleanup,
+    isRecovering
   };
 }

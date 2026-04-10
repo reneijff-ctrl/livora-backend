@@ -11,12 +11,12 @@ import com.joinlivora.backend.streaming.StreamRoom;
 import com.joinlivora.backend.streaming.Stream;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.streaming.service.StreamAssistantBotService;
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
-import com.joinlivora.backend.livestream.domain.LivestreamStatus;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
-import com.joinlivora.backend.livestream.event.StreamStartedEvent;
+import com.joinlivora.backend.livestream.event.StreamStartedEventV2;
 import org.springframework.context.ApplicationEventPublisher;
 import com.joinlivora.backend.streaming.dto.GoLiveRequest;
+import com.joinlivora.backend.streaming.StreamCacheDTO;
+import com.joinlivora.backend.streaming.service.StreamCacheService;
+import com.joinlivora.backend.streaming.transcode.TranscodeJobPublisher;
 import com.joinlivora.backend.websocket.RealtimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +29,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,12 +55,13 @@ public class CreatorGoLiveService {
     private final ChatRoomService chatRoomServiceV2;
     private final CreatorRepository creatorRepository;
     private final StreamRepository streamRepository;
-    private final LivestreamSessionRepository livestreamSessionRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final SimpMessagingTemplate messagingTemplate;
     private final com.joinlivora.backend.streaming.service.LiveViewerCounterService liveViewerCounterService;
     private final AdminRealtimeEventService adminRealtimeEventService;
     private final StreamAssistantBotService streamAssistantBotService;
+    private final TranscodeJobPublisher transcodeJobPublisher;
+    private final StreamCacheService streamCacheService;
 
     /**
      * Mark a creator as online across subsystems without starting a live session.
@@ -103,7 +103,6 @@ public class CreatorGoLiveService {
         Long creatorUserId = creator.getUser().getId();
 
         // 1. Guard: Prevent duplicate active streams or cleanup stale state
-        boolean sessionExists = livestreamSessionRepository.existsByCreator_IdAndStatus(creatorUserId, LivestreamStatus.LIVE);
         List<Stream> liveStreams = streamRepository.findAllByCreatorIdAndIsLiveTrueOrderByStartedAtDesc(creatorUserId);
         boolean streamExists = !liveStreams.isEmpty();
 
@@ -121,36 +120,13 @@ public class CreatorGoLiveService {
 
         Stream newestStream = streamExists ? liveStreams.get(0) : null;
 
-        if (sessionExists && streamExists) {
+        if (streamExists) {
             log.info("STREAM_IDEMPOTENT: Active unified stream already exists for creator {}, returning rooms.", creatorId);
             if (newestStream.getMediasoupRoomId() == null) {
                 newestStream.setMediasoupRoomId(java.util.UUID.randomUUID());
                 streamRepository.save(newestStream);
             }
             return chatRoomServiceV2.activateWaitingRooms(creatorId);
-        }
-
-        if (sessionExists || streamExists) {
-            log.warn("Creator {} attempted to start a stream but state is inconsistent (Session: {}, Stream: {}).", 
-                    creatorId, sessionExists, streamExists);
-            
-            if (sessionExists) {
-                log.info("STREAM_STALE_CLEANUP: Ending stale legacy LivestreamSession for creator {}", creatorId);
-                livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(creatorUserId, LivestreamStatus.LIVE)
-                        .ifPresent(session -> {
-                            session.end();
-                            livestreamSessionRepository.save(session);
-                            liveViewerCounterService.resetViewerCount(session.getId(), creatorUserId);
-                            log.info("STREAM_STALE_CLEANUP: Stale session {} ended.", session.getId());
-                        });
-            }
-            
-            if (streamExists) {
-                log.info("STREAM_STALE_CLEANUP: Found active unified stream but no LIVE session for creator {}. Resetting stale stream.", creatorId);
-                newestStream.setLive(false);
-                newestStream.setEndedAt(Instant.now());
-                streamRepository.save(newestStream);
-            }
         }
 
         // 2. Ensure LiveStream exists to have a persistent streamKey
@@ -176,18 +152,7 @@ public class CreatorGoLiveService {
         // Unified go-live flow creates the Stream entity which contains all necessary metadata
         String thumbnailPath = "/thumbnails/" + streamKey + ".jpg";
         
-        // 4. Create new LivestreamSession
-        LivestreamSession newSession = LivestreamSession.builder()
-                .creator(creator.getUser())
-                .status(LivestreamStatus.LIVE)
-                .isPaid(isPaid)
-                .admissionPrice(admissionPrice)
-                .startedAt(LocalDateTime.now())
-                .streamKey(streamKey)
-                .build();
-        livestreamSessionRepository.save(newSession);
-        
-        // 4.5. Create unified Stream entity
+        // 4. Create unified Stream entity
         Stream unifiedStream = Stream.builder()
                 .creator(creator.getUser())
                 .title(request != null ? request.getTitle() : "My Stream")
@@ -204,22 +169,49 @@ public class CreatorGoLiveService {
                 .streamCategory(request != null ? request.getStreamCategory() : null)
                 .thumbnailUrl(thumbnailPath)
                 .build();
-        streamRepository.save(unifiedStream);
+        streamRepository.saveAndFlush(unifiedStream);
+        log.info("STREAM_LIVE: streamId={}, creatorId={}", unifiedStream.getId(), creatorId);
         log.info("STREAM_IDENTITY_CREATED: creatorId={}, streamId={}", creatorId, unifiedStream.getId());
+        // Initialize UUID-based active stream pointer in Redis so viewer counter uses the new key format
+        liveViewerCounterService.setActiveStreamUuid(creatorUserId, unifiedStream.getId());
 
-        // 5. Publish Event
-        eventPublisher.publishEvent(new StreamStartedEvent(this, newSession));
+        // 5. Publish V2 event (UUID-based only — legacy StreamStartedEvent removed)
+        log.info("Publishing StreamStartedEventV2 for streamId={} creatorUserId={}", unifiedStream.getId(), creatorUserId);
+        eventPublisher.publishEvent(new StreamStartedEventV2(this,
+                unifiedStream.getId(),
+                creatorUserId,
+                unifiedStream.isPaid(),
+                unifiedStream.getAdmissionPrice(),
+                unifiedStream.getStartedAt()));
+
+        // 6. Populate streams:live Redis ZSET cache (non-fatal)
+        try {
+            StreamCacheDTO cacheDto = StreamCacheDTO.builder()
+                    .id(unifiedStream.getId())
+                    .creatorUserId(creatorUserId)
+                    .title(unifiedStream.getTitle())
+                    .isLive(true)
+                    .startedAt(unifiedStream.getStartedAt())
+                    .streamKey(unifiedStream.getStreamKey())
+                    .thumbnailUrl(unifiedStream.getThumbnailUrl())
+                    .mediasoupRoomId(unifiedStream.getMediasoupRoomId())
+                    .admissionPrice(unifiedStream.getAdmissionPrice())
+                    .build();
+            streamCacheService.addStream(cacheDto, unifiedStream.getStartedAt());
+        } catch (Exception e) {
+            log.warn("StreamCache: failed to cache stream {} — explore page will fall back to DB: {}",
+                    unifiedStream.getId(), e.getMessage());
+        }
+
+        // 7. Enqueue GPU transcode job (non-fatal — WebRTC stream runs regardless)
+        transcodeJobPublisher.publishStartJob(unifiedStream.getId(), creatorUserId, streamKey);
 
         // 1) Presence ONLINE
         markOnline(creatorId);
 
         // 2) Start or resume LiveStream if not already LIVE
-        try {
-            // Simplified: call the service directly in the same transaction to ensure visibility
-            liveStreamService.startLiveStream(creatorUserId);
-        } catch (Exception e) {
-            log.error("LIVESTREAM: Error starting/resuming stream for creator {}: {}", creatorId, e.getMessage());
-        }
+        // Simplified: call the service directly in the same transaction to ensure visibility
+        liveStreamService.startLiveStream(creatorUserId);
 
         // 3) Activate WAITING/PAUSED chat rooms
         List<ChatRoom> activatedRooms = java.util.Collections.emptyList();

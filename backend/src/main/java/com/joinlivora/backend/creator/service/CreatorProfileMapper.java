@@ -30,7 +30,6 @@ public class CreatorProfileMapper {
 
     private final CreatorRepository creatorRepository;
     private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
-    private final com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
     private final com.joinlivora.backend.creator.repository.CreatorPostRepository creatorPostRepository;
     private final UserRepository userRepository;
     private final CreatorFollowService followService;
@@ -49,15 +48,7 @@ public class CreatorProfileMapper {
     }
 
     boolean isCreatorLive(CreatorProfile profile) {
-        boolean isLive = !streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(profile.getUser()).isEmpty();
-        if (!isLive) {
-            log.warn("STREAM_METADATA_FALLBACK: Unified Stream not found for creator {}, checking legacy sessions", profile.getUser().getId());
-            return livestreamSessionRepository.existsByCreator_IdAndStatus(
-                profile.getUser().getId(),
-                com.joinlivora.backend.livestream.domain.LivestreamStatus.LIVE
-            );
-        }
-        return true;
+        return !streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(profile.getUser()).isEmpty();
     }
 
     private com.joinlivora.backend.monetization.TipGoal getStructuredActiveGoal(Long userId, boolean isLive) {
@@ -198,7 +189,7 @@ public class CreatorProfileMapper {
             followedByCurrentUser = followService.isFollowing(currentUser, user);
         }
 
-        long streamCount = livestreamSessionRepository.countByCreator_Id(user.getId());
+        long streamCount = streamRepository.countByCreatorId(user.getId());
         double rating = 4.8; // Mock rating for now
 
         java.util.List<com.joinlivora.backend.streaming.Stream> liveStreams = streamRepository.findAllByCreatorAndIsLiveTrueOrderByStartedAtDesc(user);
@@ -262,7 +253,7 @@ public class CreatorProfileMapper {
 
         long followers = followService.getFollowerCount(user);
         long postCount = creatorPostRepository.countByCreator(user);
-        long streamCount = livestreamSessionRepository.countByCreator_Id(user.getId());
+        long streamCount = streamRepository.countByCreatorId(user.getId());
         double rating = 4.8; // Mock rating for now
         boolean isOnline = isCreatorOnline(profile);
         boolean isLive = isCreatorLive(profile);

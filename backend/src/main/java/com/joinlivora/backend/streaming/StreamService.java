@@ -3,17 +3,19 @@ package com.joinlivora.backend.streaming;
 import com.joinlivora.backend.chat.service.ChatRoomService;
 import com.joinlivora.backend.creator.verification.VerificationStatus;
 import com.joinlivora.backend.creator.verification.CreatorVerificationRepository;
+import com.joinlivora.backend.resilience.DatabaseCircuitBreakerService;
+import com.joinlivora.backend.resilience.RedisCircuitBreakerService;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.analytics.AnalyticsEventType;
-import com.joinlivora.backend.livestream.event.StreamEndedEvent;
-import com.joinlivora.backend.livestream.event.StreamStartedEvent;
+import com.joinlivora.backend.livestream.event.StreamEndedEventV2;
+import com.joinlivora.backend.livestream.event.StreamStartedEventV2;
 import com.joinlivora.backend.streaming.dto.GoLiveRequest;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
+import com.joinlivora.backend.streaming.service.StreamCacheService;
 import com.joinlivora.backend.fraud.service.FraudRiskScoreService;
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
 import com.joinlivora.backend.streaming.service.StreamAssistantBotService;
 import com.joinlivora.backend.websocket.ChatMessage;
 import com.joinlivora.backend.websocket.RealtimeMessage;
@@ -48,6 +50,9 @@ public class StreamService {
     private final StreamRepository streamRepository;
     private final FraudRiskScoreService fraudRiskScoreService;
     private final StreamAssistantBotService streamAssistantBotService;
+    private final StreamCacheService streamCacheService;
+    private final DatabaseCircuitBreakerService dbCircuitBreaker;
+    private final RedisCircuitBreakerService redisCircuitBreaker;
 
     public StreamService(
             com.joinlivora.backend.user.UserRepository userRepository,
@@ -64,7 +69,10 @@ public class StreamService {
             AdminRealtimeEventService adminRealtimeEventService,
             StreamRepository streamRepository,
             @org.springframework.context.annotation.Lazy FraudRiskScoreService fraudRiskScoreService,
-            StreamAssistantBotService streamAssistantBotService) {
+            StreamAssistantBotService streamAssistantBotService,
+            StreamCacheService streamCacheService,
+            DatabaseCircuitBreakerService dbCircuitBreaker,
+            RedisCircuitBreakerService redisCircuitBreaker) {
         this.userRepository = userRepository;
         this.liveStreamService = liveStreamService;
         this.chatRoomService = chatRoomService;
@@ -80,27 +88,94 @@ public class StreamService {
         this.streamRepository = streamRepository;
         this.fraudRiskScoreService = fraudRiskScoreService;
         this.streamAssistantBotService = streamAssistantBotService;
+        this.streamCacheService = streamCacheService;
+        this.dbCircuitBreaker = dbCircuitBreaker;
+        this.redisCircuitBreaker = redisCircuitBreaker;
+    }
+
+    public boolean isStreamLive(UUID streamId) {
+        return dbCircuitBreaker.execute(
+                () -> streamRepository.findById(streamId).map(Stream::isLive).orElse(false),
+                false,
+                "isStreamLive");
     }
 
     public List<StreamRoom> getLiveStreams() {
-        List<Stream> activeStreams = streamRepository.findActiveStreamsWithUser();
+        // Cache-first: try streams:live ZSET in Redis
+        List<UUID> cachedIds = streamCacheService.getLiveStreamIds(50);
+        if (!cachedIds.isEmpty()) {
+            log.debug("StreamCache: explore page served from Redis ZSET ({} streams)", cachedIds.size());
+            List<StreamRoom> rooms = new ArrayList<>();
+            for (UUID streamId : cachedIds) {
+                // Try per-stream data cache first, fall back to DB
+                StreamCacheDTO cached = streamCacheService.getStreamData(streamId);
+                if (cached != null) {
+                    rooms.add(mapCacheDtoToStreamRoom(cached));
+                } else {
+                    @SuppressWarnings("unchecked")
+                    java.util.Optional<Stream> s = (java.util.Optional<Stream>) dbCircuitBreaker.execute(
+                            () -> streamRepository.findByIdWithCreator(streamId),
+                            java.util.Optional.empty(),
+                            "findStreamByIdForExplore");
+                    s.map(this::mapToStreamRoom).ifPresent(rooms::add);
+                }
+            }
+            return rooms;
+        }
+        // Cache miss — fall back to DB
+        log.debug("StreamCache: explore page MISS — querying DB");
+        List<Stream> activeStreams = dbCircuitBreaker.execute(
+                streamRepository::findActiveStreamsWithUser,
+                java.util.Collections.emptyList(),
+                "findActiveStreams");
         return activeStreams.stream()
                 .map(this::mapToStreamRoom)
                 .collect(Collectors.toList());
     }
 
+    private StreamRoom mapCacheDtoToStreamRoom(StreamCacheDTO dto) {
+        long viewerCount = liveViewerCounterService.getViewerCount(dto.getCreatorUserId());
+        return StreamRoom.builder()
+                .id(dto.getId())
+                .isLive(dto.isLive())
+                .streamTitle(dto.getTitle())
+                .isPaid(dto.getAdmissionPrice() != null && dto.getAdmissionPrice().compareTo(java.math.BigDecimal.ZERO) > 0)
+                .admissionPrice(dto.getAdmissionPrice())
+                .thumbnailUrl(dto.getThumbnailUrl())
+                .viewerCount((int) viewerCount)
+                .startedAt(dto.getStartedAt())
+                .build();
+    }
+
     public StreamRoom getRoom(UUID id) {
-        return streamRepository.findByIdWithCreator(id)
+        @SuppressWarnings("unchecked")
+        java.util.Optional<Stream> streamOpt = (java.util.Optional<Stream>) dbCircuitBreaker.execute(
+                () -> streamRepository.findByIdWithCreator(id),
+                java.util.Optional.empty(),
+                "getRoom");
+        return streamOpt
                 .map(this::mapToStreamRoom)
                 .orElseThrow(() -> new RuntimeException("Stream not found: " + id));
     }
 
     public java.util.Optional<StreamRoom> findByCreatorEmail(String email) {
-        return userRepository.findByEmail(email).map(this::getCreatorRoom);
+        @SuppressWarnings("unchecked")
+        java.util.Optional<com.joinlivora.backend.user.User> userOpt =
+                (java.util.Optional<com.joinlivora.backend.user.User>) dbCircuitBreaker.execute(
+                        () -> userRepository.findByEmail(email),
+                        java.util.Optional.empty(),
+                        "findUserByEmail");
+        return userOpt.map(this::getCreatorRoom);
     }
 
     public java.util.Optional<StreamRoom> findByCreatorId(Long id) {
-        return userRepository.findById(id).map(this::getCreatorRoom);
+        @SuppressWarnings("unchecked")
+        java.util.Optional<com.joinlivora.backend.user.User> userOpt =
+                (java.util.Optional<com.joinlivora.backend.user.User>) dbCircuitBreaker.execute(
+                        () -> userRepository.findById(id),
+                        java.util.Optional.empty(),
+                        "findUserById");
+        return userOpt.map(this::getCreatorRoom);
     }
 
     public StreamRoom getCreatorRoom(User creator) {
@@ -244,6 +319,8 @@ public class StreamService {
             stream.setEndedAt(Instant.now());
             streamRepository.save(stream);
             log.info("STREAM: Updated unified Stream entity {} to isLive=false", stream.getId());
+            // Clean up UUID-based Redis viewer keys (new format)
+            liveViewerCounterService.resetViewerCountByStreamId(stream.getId(), userId);
         }
         
         // Also stop the core LiveStream (which handles notifications, chat deletion, and Redis cleanup)
@@ -306,53 +383,44 @@ public class StreamService {
     }
 
     @EventListener
-    public void handleStreamStarted(StreamStartedEvent event) {
-        log.info("STREAM: Notifying admin of started stream: {}", event.getSession().getId());
-        LivestreamSession session = event.getSession();
-        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
-        int fraudRiskScore = session.getCreator() != null ? fraudRiskScoreService.getLatestScore(session.getCreator().getId()) : 0;
-        adminRealtimeEventService.broadcastStreamStarted(session, viewerCount, fraudRiskScore);
+    public void handleStreamStartedV2(StreamStartedEventV2 event) {
+        log.info("Handling StreamStartedEventV2 for stream {} creator {}", event.getStreamId(), event.getCreatorUserId());
+        Long creatorUserId = event.getCreatorUserId();
+        int viewerCount = (int) liveViewerCounterService.getViewerCount(creatorUserId);
+        int fraudRiskScore = fraudRiskScoreService.getLatestScore(creatorUserId);
+        adminRealtimeEventService.broadcastStreamStarted(event, viewerCount, fraudRiskScore);
 
         // Broadcast public stream status for homepage real-time updates
-        broadcastPublicStreamStatus(session, true, viewerCount);
+        broadcastPublicStreamStatusV2(creatorUserId, event.getStreamId(), true, viewerCount);
     }
 
     @EventListener
-    public void handleStreamEnded(StreamEndedEvent event) {
-        log.info("STREAM: Notifying admin of stopped stream: {} reason: {}", event.getSession().getId(), event.getReason());
-        LivestreamSession session = event.getSession();
-        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
-        adminRealtimeEventService.broadcastStreamStopped(session, viewerCount, event.getReason(), event.getStreamId());
+    public void handleStreamEndedV2(StreamEndedEventV2 event) {
+        log.info("Handling StreamEndedEventV2 for stream {} creator {} reason={}", event.getStreamId(), event.getCreatorUserId(), event.getReason());
+        Long creatorUserId = event.getCreatorUserId();
+        int viewerCount = (int) liveViewerCounterService.getViewerCount(creatorUserId);
+        adminRealtimeEventService.broadcastStreamStopped(event, viewerCount);
 
         // Broadcast public stream status for homepage real-time updates
-        broadcastPublicStreamStatus(session, false, 0);
+        broadcastPublicStreamStatusV2(creatorUserId, event.getStreamId(), false, 0);
     }
 
-    private void broadcastPublicStreamStatus(LivestreamSession session, boolean isLive, int viewerCount) {
+    private void broadcastPublicStreamStatusV2(Long creatorUserId, java.util.UUID streamId, boolean isLive, int viewerCount) {
         try {
-            User creator = session.getCreator();
-            if (creator == null) return;
-
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("creatorUserId", creator.getId());
+            payload.put("creatorUserId", creatorUserId);
+            payload.put("streamId", streamId.toString());
             payload.put("isLive", isLive);
             payload.put("viewerCount", viewerCount);
-            payload.put("displayName", creator.getDisplayName());
 
             String eventType = isLive ? "STREAM_STARTED" : "STREAM_ENDED";
             RealtimeMessage message = RealtimeMessage.of(eventType, payload);
             messagingTemplate.convertAndSend("/exchange/amq.topic/streams.status", message);
 
-            log.debug("STREAM: Public status broadcast: {} for creator {}", eventType, creator.getId());
+            log.debug("STREAM: Public status V2 broadcast: {} for creator {}", eventType, creatorUserId);
         } catch (Exception e) {
-            log.error("STREAM: Failed to broadcast public stream status: {}", e.getMessage());
+            log.error("STREAM: Failed to broadcast public stream status V2: {}", e.getMessage());
         }
     }
 
-    public void notifyStreamStarted(LivestreamSession session) {
-        log.info("STREAM: Notifying admin of started stream: {}", session.getId());
-        int viewerCount = session.getCreator() != null ? (int) liveViewerCounterService.getViewerCount(session.getCreator().getId()) : 0;
-        int fraudRiskScore = session.getCreator() != null ? fraudRiskScoreService.getLatestScore(session.getCreator().getId()) : 0;
-        adminRealtimeEventService.broadcastStreamStarted(session, viewerCount, fraudRiskScore);
-    }
 }

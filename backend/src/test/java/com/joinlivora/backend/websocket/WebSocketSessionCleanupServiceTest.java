@@ -22,6 +22,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -74,13 +75,14 @@ class WebSocketSessionCleanupServiceTest {
 
     @Test
     void handleSessionDisconnect_fullCleanup_mediasoupTransportsAndViewerCount() {
+        UUID streamId = UUID.randomUUID();
         Set<String> transports = new HashSet<>(Set.of("transport-1", "transport-2"));
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("mediasoupTransports", transports);
         attrs.put("mediasoupRoomId", "room-abc");
         attrs.put("creatorUserId", 10L);
         attrs.put("userId", 5L);
-        attrs.put("streamSessionId", 100L);
+        attrs.put("streamSessionId", streamId.toString()); // UUID string (V2 path)
         attrs.put("ip", "127.0.0.1");
         attrs.put("userAgent", "TestAgent");
         attrs.put("corrId", "corr-1");
@@ -98,15 +100,15 @@ class WebSocketSessionCleanupServiceTest {
         verify(mediasoupClient).closeTransport("room-abc", "transport-1");
         verify(mediasoupClient).closeTransport("room-abc", "transport-2");
 
-        // Verify viewer count decrement
-        verify(liveViewerCounterService).removeViewer(100L, 10L, 5L, SESSION_ID, "127.0.0.1", "TestAgent");
+        // Verify viewer count decrement using UUID-based path
+        verify(liveViewerCounterService).removeViewer(streamId, 10L, 5L, SESSION_ID, "127.0.0.1", "TestAgent");
     }
 
     @Test
     void handleSessionDisconnect_onceOnlyGuard_secondCallSkipsCleanup() {
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("creatorUserId", 10L);
-        attrs.put("streamSessionId", 100L);
+        attrs.put("streamSessionId", UUID.randomUUID().toString());
 
         SessionDisconnectEvent event = createDisconnectEvent(attrs);
 
@@ -151,11 +153,13 @@ class WebSocketSessionCleanupServiceTest {
 
     @Test
     void handleSessionDisconnect_livestreamPresenceCleanup_viaSessionRegistry() {
+        // With V2 migration, legacy Long-based joined streams are no longer decremented.
+        // Presence cleanup (markUserOffline + unregisterSession) still runs.
         Map<String, Object> attrs = new HashMap<>();
 
         Long userId = 42L;
         Long creatorId = 7L;
-        Set<Long> joinedStreams = Set.of(200L, 300L);
+        Set<Long> joinedStreams = Set.of(200L, 300L);  // legacy Long IDs — no longer acted upon
 
         when(sessionRegistryService.getUserId(SESSION_ID)).thenReturn(userId);
         when(sessionRegistryService.getCreatorId(SESSION_ID)).thenReturn(creatorId);
@@ -166,11 +170,10 @@ class WebSocketSessionCleanupServiceTest {
         SessionDisconnectEvent event = createDisconnectEvent(attrs);
         cleanupService.handleSessionDisconnect(event);
 
-        // Verify viewer count decremented for each joined stream
-        verify(viewerCountService).decrementViewerCount(200L, creatorId, userId, SESSION_ID, "10.0.0.1", "Agent");
-        verify(viewerCountService).decrementViewerCount(300L, creatorId, userId, SESSION_ID, "10.0.0.1", "Agent");
+        // Legacy Long IDs in joinedStreams are ignored after V2 migration — no decrementViewerCount calls
+        verifyNoInteractions(viewerCountService);
 
-        // Verify presence cleanup
+        // Presence cleanup still runs
         verify(presenceTrackingService).markUserOffline(userId);
         verify(sessionRegistryService).unregisterSession(SESSION_ID);
     }
@@ -214,13 +217,12 @@ class WebSocketSessionCleanupServiceTest {
         Map<String, Object> attrs = new HashMap<>();
 
         when(sessionRegistryService.getJoinedStreams(SESSION_ID)).thenReturn(Collections.emptySet());
-        // getUserId returns null by default (no user associated)
 
         SessionDisconnectEvent event = createDisconnectEvent(attrs);
         cleanupService.handleSessionDisconnect(event);
 
         // Viewer count should NOT be decremented (no joined streams)
-        verify(viewerCountService, never()).decrementViewerCount(anyLong(), anyLong(), anyLong(), anyString(), anyString(), anyString());
+        verifyNoInteractions(viewerCountService);
 
         // Session should ALWAYS be unregistered to prevent memory leaks
         verify(sessionRegistryService).unregisterSession(SESSION_ID);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { safeRender } from "@/utils/safeRender";
-import { webSocketService } from "@/websocket/webSocketService";
+import { useWs } from "@/ws/WsContext";
 import { normalizeLiveEvent } from "@/components/live/LiveEventsController";
 import apiClient from "@/api/apiClient";
 
@@ -22,6 +22,7 @@ interface GoalLadderProps {
 }
 
 function GoalLadder({ creatorId, availability }: GoalLadderProps) {
+  const { subscribe, connected } = useWs();
   const [goal, setGoal] = useState<GoalData | null>(null);
   const [goalCompletedFlash, setGoalCompletedFlash] = useState(false);
   const mountedRef = useRef(true);
@@ -77,7 +78,7 @@ function GoalLadder({ creatorId, availability }: GoalLadderProps) {
   useEffect(() => {
     if (!creatorId || availability !== "LIVE") return;
 
-    const unsub = webSocketService.subscribe(
+    const unsub = subscribe(
       `/exchange/amq.topic/goals.${creatorId}`,
       (msg) => {
         try {
@@ -123,7 +124,7 @@ function GoalLadder({ creatorId, availability }: GoalLadderProps) {
     return () => {
       if (typeof unsub === "function") unsub();
     };
-  }, [creatorId, availability]);
+  }, [creatorId, availability, subscribe, connected]);
 
   const handleClose = useCallback(() => {
     setGoal(null);

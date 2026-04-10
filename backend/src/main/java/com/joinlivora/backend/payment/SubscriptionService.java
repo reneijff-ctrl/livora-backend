@@ -57,7 +57,7 @@ public class SubscriptionService {
         );
     }
 
-    @Cacheable(value = "subscriptions", key = "#user.email")
+    @Cacheable(value = "subscriptions", key = "#user.email", unless = "#result == null")
     public SubscriptionResponse getSubscriptionForUser(User user) {
         return subscriptionRepository.findFirstByUserOrderByCreatedAtDesc(user)
                 .map(sub -> SubscriptionResponse.builder()

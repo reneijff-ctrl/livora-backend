@@ -4,7 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.joinlivora.backend.chat.dto.ChatMessageDto;
+import com.joinlivora.backend.config.MetricsService;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
+import io.micrometer.core.instrument.Counter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,7 +17,6 @@ import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 import java.time.Duration;
@@ -28,6 +29,7 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class RedisChatBatchServiceTest {
@@ -50,6 +52,15 @@ class RedisChatBatchServiceTest {
     @Mock
     private ValueOperations<String, String> valueOps;
 
+    @Mock
+    private MetricsService metricsService;
+
+    @Mock
+    private Counter mockCounter;
+
+    @Mock
+    private RedisPubSubChatService pubSubChatService;
+
     private ObjectMapper objectMapper;
     private RedisChatBatchService service;
 
@@ -62,8 +73,19 @@ class RedisChatBatchServiceTest {
         lenient().when(redisTemplate.opsForSet()).thenReturn(setOps);
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
 
+        lenient().when(metricsService.getChatMessagesSent()).thenReturn(mockCounter);
+        lenient().when(metricsService.getChatMessagesRetried()).thenReturn(mockCounter);
+        lenient().when(metricsService.getChatMessagesFailed()).thenReturn(mockCounter);
+
+        lenient().when(metricsService.getChatMessagesPubSubSent()).thenReturn(mockCounter);
+        lenient().when(metricsService.getChatMessagesPubSubReceived()).thenReturn(mockCounter);
+
+        com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCb =
+                new com.joinlivora.backend.resilience.RedisCircuitBreakerService(
+                        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         service = new RedisChatBatchService(
-                redisTemplate, messagingTemplate, liveViewerCounterService, objectMapper);
+                redisTemplate, messagingTemplate, liveViewerCounterService, objectMapper, metricsService,
+                pubSubChatService, redisCb);
     }
 
     // --- enqueueMessage tests ---
@@ -168,14 +190,15 @@ class RedisChatBatchServiceTest {
         when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
         when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(List.of(json));
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of(json));
 
         service.flushBatches();
 
         ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
         verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat.1"), captor.capture());
         assertThat(captor.getValue().getContent()).isEqualTo("Hello");
+        // Delete-on-success: trim the 1 processed message
+        verify(listOps).trim("chat:batch:1", 1, -1);
     }
 
     @Test
@@ -191,8 +214,7 @@ class RedisChatBatchServiceTest {
         when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
         when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(List.of(json1, json2, json3));
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of(json1, json2, json3));
 
         service.flushBatches();
 
@@ -202,6 +224,8 @@ class RedisChatBatchServiceTest {
         Map<String, Object> batch = captor.getValue();
         assertThat(batch.get("type")).isEqualTo("CHAT_BATCH");
         assertThat((List<?>) batch.get("messages")).hasSize(3);
+        // Delete-on-success: trim the 3 processed messages
+        verify(listOps).trim("chat:batch:1", 3, -1);
     }
 
     @Test
@@ -213,7 +237,7 @@ class RedisChatBatchServiceTest {
         service.flushBatches();
 
         verifyNoInteractions(messagingTemplate);
-        verify(redisTemplate, never()).execute(any(RedisScript.class), anyList());
+        verify(listOps, never()).range(anyString(), anyLong(), anyLong());
     }
 
     @Test
@@ -221,12 +245,13 @@ class RedisChatBatchServiceTest {
         when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
         when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(Collections.emptyList());
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(Collections.emptyList());
 
         service.flushBatches();
 
         verifyNoInteractions(messagingTemplate);
+        // Nothing to trim when empty
+        verify(listOps, never()).trim(anyString(), anyLong(), anyLong());
     }
 
     @Test
@@ -241,15 +266,15 @@ class RedisChatBatchServiceTest {
                 .thenReturn(true);
         when(valueOps.setIfAbsent(eq("chat:batch:lock:2"), eq("1"), any(Duration.class)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(List.of(json1));
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:2"))))
-                .thenReturn(List.of(json2));
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of(json1));
+        when(listOps.range("chat:batch:2", 0, -1)).thenReturn(List.of(json2));
 
         service.flushBatches();
 
         verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat.1"), any(ChatMessageDto.class));
         verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat.2"), any(ChatMessageDto.class));
+        verify(listOps).trim("chat:batch:1", 1, -1);
+        verify(listOps).trim("chat:batch:2", 1, -1);
     }
 
     @Test
@@ -280,8 +305,7 @@ class RedisChatBatchServiceTest {
         when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
         when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(List.of("{invalid json}", validJson));
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of("{invalid json}", validJson));
 
         service.flushBatches();
 
@@ -289,6 +313,8 @@ class RedisChatBatchServiceTest {
         ArgumentCaptor<ChatMessageDto> captor = ArgumentCaptor.forClass(ChatMessageDto.class);
         verify(messagingTemplate).convertAndSend(eq("/exchange/amq.topic/chat.1"), captor.capture());
         assertThat(captor.getValue().getContent()).isEqualTo("Valid");
+        // Delete-on-success: trim the 2 peeked items (1 bad + 1 good)
+        verify(listOps).trim("chat:batch:1", 2, -1);
     }
 
     @Test
@@ -296,12 +322,39 @@ class RedisChatBatchServiceTest {
         when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
         when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
                 .thenReturn(true);
-        when(redisTemplate.execute(any(RedisScript.class), eq(List.of("chat:batch:1"))))
-                .thenReturn(List.of("{bad1}", "{bad2}"));
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of("{bad1}", "{bad2}"));
 
         service.flushBatches();
 
         verifyNoInteractions(messagingTemplate);
+        // Corrupted messages trimmed to avoid infinite retry loop
+        verify(listOps).trim("chat:batch:1", 2, -1);
+    }
+
+    @Test
+    void flushBatches_BrokerFailure_ShouldNotTrim_MessagesStayForRetry() throws JsonProcessingException {
+        ChatMessageDto msg = buildMessage("Important");
+        String json = objectMapper.writeValueAsString(msg);
+
+        when(setOps.members("chat:batch:active")).thenReturn(Set.of("1"));
+        when(valueOps.setIfAbsent("chat:batch:lock:1", "1", Duration.ofMillis(200)))
+                .thenReturn(true);
+        when(listOps.range("chat:batch:1", 0, -1)).thenReturn(List.of(json));
+
+        // Simulate RabbitMQ failure
+        doThrow(new RuntimeException("Broker unavailable"))
+                .when(messagingTemplate).convertAndSend(anyString(), any(ChatMessageDto.class));
+
+        // Simulate Redis Pub/Sub also failing (both paths fail → no trim)
+        // When both transports fail, sendViaRedisPubSubOnly re-throws, causing the outer
+        // catch to log + return without trimming — messages stay in Redis for the next cycle.
+        doThrow(new RuntimeException("PubSub unavailable"))
+                .when(pubSubChatService).publish(anyLong(), any(ChatMessageDto.class));
+
+        service.flushBatches();
+
+        // Messages must NOT be trimmed — they stay in Redis for the next retry cycle
+        verify(listOps, never()).trim(anyString(), anyLong(), anyLong());
     }
 
     // --- clearBuffer tests ---

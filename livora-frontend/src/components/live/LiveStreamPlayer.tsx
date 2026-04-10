@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useWebRTCStream } from '@/hooks/useWebRTCStream';
 import Watermark from '@/components/Watermark';
 
@@ -54,7 +54,9 @@ const LiveStreamPlayer: React.FC<LiveStreamPlayerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  useWebRTCStream({
+  const [reconnecting, setReconnecting] = useState(false);
+
+  const { isRecovering } = useWebRTCStream({
     creatorId,
     streamId,
     user,
@@ -67,8 +69,11 @@ const LiveStreamPlayer: React.FC<LiveStreamPlayerProps> = ({
     setAvailability,
     setError,
     setLoading,
-    setNeedsInteraction
+    setNeedsInteraction,
+    setReconnecting
   });
+
+  const showReconnecting = reconnecting || isRecovering;
 
   return (
     <div className="flex-1 flex items-center justify-center min-w-0 bg-[#050505] overflow-hidden shadow-[inset_0_0_100px_rgba(0,0,0,0.8)]">
@@ -96,6 +101,15 @@ const LiveStreamPlayer: React.FC<LiveStreamPlayerProps> = ({
           <div className="absolute top-20 left-1/2 -translate-x-1/2 bg-red-600/90 text-white px-4 py-2 rounded-full text-xs font-bold z-[100] backdrop-blur-sm shadow-lg flex items-center gap-2">
             <span>⚠️</span> {error}
             <button onClick={() => setError(null)} className="ml-2 hover:bg-black/20 rounded-full p-1 leading-none">×</button>
+          </div>
+        )}
+
+        {/* Reconnecting Overlay */}
+        {showReconnecting && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-40 backdrop-blur-sm">
+            <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin mb-4" />
+            <p className="text-white font-bold text-lg">Reconnecting to stream...</p>
+            <p className="text-zinc-400 text-sm mt-2">Please wait, recovering automatically</p>
           </div>
         )}
 

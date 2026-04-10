@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/useAuth';
-import { webSocketService } from '@/websocket/webSocketService';
+import { useWs } from '@/ws/WsContext';
 import webRtcService, { SignalingMessage, SignalingType } from '@/websocket/webRtcService';
 import { SIMULCAST_ENCODINGS, VIDEO_CONSTRAINTS } from '@/constants/webrtc';
 import { Producer, Transport } from 'mediasoup-client';
@@ -34,6 +34,7 @@ interface TipGoal {
 
 const CreatorLiveDashboard: React.FC = () => {
   const { user } = useAuth();
+  const { subscribe, send, connected } = useWs();
   const navigate = useNavigate();
   
   const [isLive, setIsLive] = useState(false);
@@ -256,14 +257,14 @@ const CreatorLiveDashboard: React.FC = () => {
   }, []);
 
   // 2. Subscribe to dedicated viewer count topic
-  // NOTE: creators.presence is subscribed globally via WsContext — do not subscribe here.
+  // NOTE: creators.presence is subscribed globally via PresenceProvider — do not subscribe here.
   useEffect(() => {
     if (!user?.id) return;
 
     let isMounted = true;
 
     // Dedicated Viewer Count Subscription
-    const viewerCountUnsub = webSocketService.subscribe(`/exchange/amq.topic/viewers.${user.id}`, (msg) => {
+    const viewerCountUnsub = subscribe(`/exchange/amq.topic/viewers.${user.id}`, (msg) => {
       try {
         const data = JSON.parse(msg.body);
         const payload = data.payload || data;
@@ -277,21 +278,21 @@ const CreatorLiveDashboard: React.FC = () => {
     });
 
     if (!isMounted) {
-      viewerCountUnsub();
+      if (typeof viewerCountUnsub === 'function') viewerCountUnsub();
     } else {
-      viewerCountUnsubRef.current = viewerCountUnsub;
+      viewerCountUnsubRef.current = typeof viewerCountUnsub === 'function' ? viewerCountUnsub : null;
     }
 
     return () => {
       console.log("CREATOR-DASH: Cleaning up viewer count and signaling subscriptions");
       isMounted = false;
-      if (viewerCountUnsubRef.current) {
+      if (typeof viewerCountUnsubRef.current === 'function') {
         viewerCountUnsubRef.current();
         viewerCountUnsubRef.current = null;
       }
       webRtcService.leaveStream();
     };
-  }, [user?.id]);
+  }, [user?.id, subscribe, connected]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -300,7 +301,7 @@ const CreatorLiveDashboard: React.FC = () => {
 
     const initPinSubscription = async () => {
       try {
-        const unsub = webSocketService.subscribe(`/exchange/amq.topic/chat.${user.id}`, (msg) => {
+        const unsub = subscribe(`/exchange/amq.topic/chat.${user.id}`, (msg) => {
           const data = JSON.parse(msg.body);
           if (data.type === 'PIN_MESSAGE') {
             setPinnedMessage(data.payload);
@@ -335,10 +336,10 @@ const CreatorLiveDashboard: React.FC = () => {
         });
 
         if (!isMounted) {
-          unsub();
+          if (typeof unsub === 'function') unsub();
           return;
         }
-        pinUnsubRef.current = unsub;
+        pinUnsubRef.current = typeof unsub === 'function' ? unsub : null;
 
         // Initial fetch
         apiClient.get(`/stream/creator/${user.id}/pinned`).then(r => {
@@ -358,7 +359,7 @@ const CreatorLiveDashboard: React.FC = () => {
         pinUnsubRef.current = null;
       }
     };
-  }, [user?.id]);
+  }, [user?.id, subscribe, connected]);
 
   // Subscribe to tip events to accumulate session earnings
   useEffect(() => {
@@ -366,7 +367,7 @@ const CreatorLiveDashboard: React.FC = () => {
 
     let isMounted = true;
     // Private creator tip queue
-    const tipUnsub = webSocketService.subscribe('/user/queue/tips', (msg) => {
+    const tipUnsub = subscribe('/user/queue/tips', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         const amount = (data && (data.amount ?? data.tokenAmount ?? data.payload?.amount));
@@ -379,25 +380,25 @@ const CreatorLiveDashboard: React.FC = () => {
     });
 
     if (!isMounted) {
-      tipUnsub();
+      if (typeof tipUnsub === 'function') tipUnsub();
     } else {
-      tipUnsubRef.current = tipUnsub;
+      tipUnsubRef.current = typeof tipUnsub === 'function' ? tipUnsub : null;
     }
 
     return () => {
       isMounted = false;
-      if (tipUnsubRef.current) {
+      if (typeof tipUnsubRef.current === 'function') {
         tipUnsubRef.current();
         tipUnsubRef.current = null;
       }
     };
-  }, [user?.id]);
+  }, [user?.id, subscribe, connected]);
 
   // Private session: WS subscription for status events
   useEffect(() => {
     if (!user?.id) return;
 
-    const unsub = webSocketService.subscribe('/user/queue/private-show-status', (message) => {
+    const unsub = subscribe('/user/queue/private-show-status', (message) => {
       try {
         const data = JSON.parse(message.body);
         if (data.type === 'PRIVATE_SHOW_ACCEPTED') {
@@ -428,8 +429,8 @@ const CreatorLiveDashboard: React.FC = () => {
       }
     });
 
-    return () => { if (unsub) unsub(); };
-  }, [user?.id]);
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [user?.id, subscribe, connected]);
 
   // Private session: recover active session on refresh
   useEffect(() => {
@@ -529,7 +530,7 @@ const CreatorLiveDashboard: React.FC = () => {
 
     loadSessions();
 
-    const pmEventUnsub = webSocketService.subscribe('/user/queue/pm-events', (msg) => {
+    const pmEventUnsub = subscribe('/user/queue/pm-events', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         if (data.type === 'PM_SESSION_STARTED') {
@@ -564,7 +565,7 @@ const CreatorLiveDashboard: React.FC = () => {
       }
     });
 
-    const pmMsgUnsub = webSocketService.subscribe('/user/queue/pm-messages', (msg) => {
+    const pmMsgUnsub = subscribe('/user/queue/pm-messages', (msg) => {
       try {
         const data: PmMessage = JSON.parse(msg.body);
         setPmMessages(prev => ({
@@ -582,23 +583,11 @@ const CreatorLiveDashboard: React.FC = () => {
       }
     });
 
-    // Handle WS reconnect: reload sessions + messages
-    const reconnectHandler = () => {
-      loadSessions();
-      const currentActive = activePmRef.current;
-      if (currentActive) {
-        getPmMessages(currentActive.roomId).then(msgs => {
-          setPmMessages(prev => ({ ...prev, [currentActive.roomId]: msgs }));
-        }).catch(() => {});
-      }
-    };
-    webSocketService.onReconnect?.(reconnectHandler);
-
     return () => {
-      pmEventUnsub();
-      pmMsgUnsub();
+      if (typeof pmEventUnsub === 'function') pmEventUnsub();
+      if (typeof pmMsgUnsub === 'function') pmMsgUnsub();
     };
-  }, [user?.id]);
+  }, [user?.id, subscribe, connected]);
 
   // PM: auto-scroll messages
   useEffect(() => {
@@ -794,7 +783,7 @@ const CreatorLiveDashboard: React.FC = () => {
     if (!activePm?.roomId || !pmInput.trim()) return;
     setPmSending(true);
     try {
-      sendPmMessage(activePm.roomId, pmInput.trim());
+      sendPmMessage(activePm.roomId, pmInput.trim(), send);
       setPmInput('');
     } catch (e) {
       console.error('Failed to send PM', e);
@@ -956,9 +945,9 @@ const CreatorLiveDashboard: React.FC = () => {
       
       // 2. Initialize signaling and webRtcService
       webRtcService.setCurrentUserId(Number(user.id));
-      await webRtcService.connect(streamRoomId, (signal) => {
+      webRtcService.connect(streamRoomId, (signal) => {
         handleSignalingData(signal, streamRoomId);
-      });
+      }, { subscribe, send });
 
       // 3. Mediasoup Publish Flow
       // a. Get Router Capabilities
@@ -974,7 +963,10 @@ const CreatorLiveDashboard: React.FC = () => {
 
       // d. Create Send Transport on client
       console.log("SEND TRANSPORT CONFIG:", JSON.stringify(transportData, null, 2));
-      const transport = device.createSendTransport(transportData);
+      const transport = device.createSendTransport({
+        ...transportData,
+        iceTransportPolicy: (window as any).FORCE_TURN ? 'relay' : 'all'
+      });
       sendTransport.current = transport;
 
       transport.on('connect', async ({ dtlsParameters }, callback, errback) => {
@@ -1075,11 +1067,16 @@ const CreatorLiveDashboard: React.FC = () => {
           // SIMULCAST_ENCODINGS already has it removed, but guard with a
           // browser-safe copy that strips any residual SVC fields.
           const isFirefox = navigator.userAgent.toLowerCase().includes("firefox");
-          const encodings = isFirefox
-            ? SIMULCAST_ENCODINGS.map(({ rid, maxBitrate, scaleResolutionDownBy, maxFramerate }) => ({
-                rid, maxBitrate, scaleResolutionDownBy, ...(maxFramerate ? { maxFramerate } : {})
-              }))
-            : SIMULCAST_ENCODINGS;
+          
+          // [FIX-FIREFOX-02]: Single encoding for testing as per task requirements.
+          // Firefox sometimes has issues with multiple simulcast layers on connection start.
+          const encodings = [
+            { 
+              rid: "r0", 
+              maxBitrate: 2500000, 
+              scaleResolutionDownBy: 1.0 
+            }
+          ];
 
           try {
             const videoProducer = await transport.produce({ 

@@ -8,20 +8,12 @@ const log = (msg: string, data?: any) => {
   console.log(`[WSCTX-${wsSessionId}] ${new Date().toISOString()} - ${msg}`, data || "");
 };
 
-interface PresenceUpdate {
-  creatorUserId: number;
-  online: boolean;
-  availability: string;
-  viewerCount: number;
-}
-
 interface WsContextType {
-  subscribe: (destination: string, callback: (message: IMessage) => void) => { unsubscribe: () => void } | null;
+  subscribe: (destination: string, callback: (message: IMessage) => void) => () => void;
+  send: (destination: string, body: string, headers?: Record<string, string>) => void;
+  isConnected: () => boolean;
   connected: boolean;
   disconnect: (reason: string) => void;
-  presenceMap: Record<number, PresenceUpdate>;
-  trackPresence: (userIds: number[]) => void;
-  untrackPresence: (userIds: number[]) => void;
 }
 
 const WsContext = createContext<WsContextType | undefined>(undefined);
@@ -29,33 +21,7 @@ const WsContext = createContext<WsContextType | undefined>(undefined);
 export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { token, isAuthenticated } = useAuth();
   const [connected, setConnected] = useState(webSocketService.isConnected());
-  const [presenceMap, setPresenceMap] = useState<Record<number, PresenceUpdate>>({});
   const instanceId = useRef(Math.random().toString(36).substring(2, 9)).current;
-
-  // Tracked creators for cleanup strategy
-  const trackingMap = useRef<Map<number, number>>(new Map());
-
-  // Batching logic for presence updates to prevent excessive re-renders
-  const pendingUpdates = useRef<Record<number, PresenceUpdate>>({});
-  const batchTimer = useRef<NodeJS.Timeout | null>(null);
-
-  const flushPresenceUpdates = useCallback(() => {
-    const updatesCount = Object.keys(pendingUpdates.current).length;
-    if (updatesCount === 0) {
-      batchTimer.current = null;
-      return;
-    }
-
-    log(`[${instanceId}] Flushing ${updatesCount} presence updates to state`);
-    const updatesToApply = { ...pendingUpdates.current };
-    pendingUpdates.current = {};
-    batchTimer.current = null;
-
-    setPresenceMap(prev => ({
-      ...prev,
-      ...updatesToApply
-    }));
-  }, [instanceId]);
 
   // Memoized handlers
   const handleConnect = useCallback(() => {
@@ -72,81 +38,49 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   }, [instanceId]);
 
   const subscribe = useCallback((destination: string, callback: (message: IMessage) => void) => {
+    if (!webSocketService.isConnected()) {
+      console.warn(`[WSCTX] subscribe called while disconnected for ${destination}`);
+      return () => {};
+    }
+
     log(`[${instanceId}] Subscribing to ${destination}`);
     const unsub = webSocketService.subscribe(destination, callback);
-    return { 
-      unsubscribe: () => {
-        log(`[${instanceId}] Unsubscribing from ${destination}`);
-        if (unsub) {
-          unsub();
-        }
-      } 
+
+    if (typeof unsub !== 'function') {
+      console.warn(`[WSCTX] subscribe did not return unsubscribe function for ${destination}`);
+      return () => {};
+    }
+
+    return () => {
+      log(`[${instanceId}] Unsubscribing from ${destination}`);
+      unsub();
     };
   }, [instanceId]);
 
-  const trackPresence = useCallback((userIds: number[]) => {
-    userIds.forEach(id => {
-      const count = trackingMap.current.get(id) || 0;
-      trackingMap.current.set(id, count + 1);
-    });
+  const send = useCallback((destination: string, body: string, headers?: Record<string, string>) => {
+    webSocketService.send(destination, body, headers);
   }, []);
 
-  const untrackPresence = useCallback((userIds: number[]) => {
-    userIds.forEach(id => {
-      const count = trackingMap.current.get(id) || 0;
-      if (count <= 1) {
-        trackingMap.current.delete(id);
-      } else {
-        trackingMap.current.set(id, count - 1);
-      }
-    });
+  const isConnected = useCallback(() => {
+    return webSocketService.isConnected();
   }, []);
-
-  // Periodic cleanup of presenceMap to prevent unbounded growth
-  useEffect(() => {
-    const cleanupInterval = setInterval(() => {
-      setPresenceMap(prev => {
-        const newMap = { ...prev };
-        let changed = false;
-        
-        Object.keys(newMap).forEach(key => {
-          const userId = parseInt(key, 10);
-          if (!trackingMap.current.has(userId)) {
-            delete newMap[userId];
-            changed = true;
-          }
-        });
-        
-        if (changed) {
-          log(`[${instanceId}] Cleaned up presenceMap. Removed non-tracked entries.`);
-          return newMap;
-        }
-        return prev;
-      });
-    }, 60000); // Clean up every minute
-
-    return () => clearInterval(cleanupInterval);
-  }, [instanceId]);
 
   // WebSocket connectivity management based on authentication state
   useEffect(() => {
     log(`[${instanceId}] WebSocket sync effect triggered. isAuthenticated: ${isAuthenticated}, token present: ${!!token}`);
-    // Token value intentionally not logged to prevent credential leakage
     
     const isCurrentlyConnected = webSocketService.isConnected();
     
-    // Connect ONLY when authenticated, token exists, and not already connected
     if (isAuthenticated === true && token && !isCurrentlyConnected) {
       log(`[${instanceId}] Condition met: Authenticated and disconnected. Calling handleConnect()`);
       handleConnect();
     } else if (!isAuthenticated || !token) {
-      // If we lose authentication, we should ensure we are disconnected
       if (isCurrentlyConnected) {
         log(`[${instanceId}] Condition met: Unauthenticated but connected. Calling handleDisconnect()`);
         handleDisconnect("Authentication lost");
       }
     }
-  }, [token]); // Dependency array strictly as requested: [authState.token]
+  }, [token, isAuthenticated, handleConnect, handleDisconnect, instanceId]);
 
   // Reactive connection state synchronization
   useEffect(() => {
@@ -162,57 +96,14 @@ export const WsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     };
   }, [instanceId]);
 
-  // IMPORTANT:
-  // creators.presence must only be subscribed here.
-  // Components must consume presence state from the presenceMap exposed via useWs().
-  // Do NOT add additional subscriptions to /exchange/amq.topic/creators.presence elsewhere.
-  useEffect(() => {
-    if (!connected) return;
-
-    log(`[${instanceId}] Subscribing to global presence updates`);
-    const presenceSub = subscribe('/exchange/amq.topic/creators.presence', (msg) => {
-      try {
-        const data = JSON.parse(msg.body);
-        const payload = data.payload || data;
-        
-        if (payload.creatorUserId) {
-          log(`[${instanceId}] Presence: Queuing update for creatorUserId=${payload.creatorUserId}`);
-          
-          pendingUpdates.current[payload.creatorUserId] = {
-            creatorUserId: payload.creatorUserId,
-            online: payload.online,
-            availability: payload.availability,
-            viewerCount: payload.viewerCount
-          };
-
-          if (!batchTimer.current) {
-            batchTimer.current = setTimeout(flushPresenceUpdates, 500);
-          }
-        }
-      } catch (e) {
-        log(`[${instanceId}] Global presence update parse error`, e);
-      }
-    });
-
-    return () => {
-      log(`[${instanceId}] Cleaning up global presence subscription`);
-      if (presenceSub) presenceSub.unsubscribe();
-      if (batchTimer.current) {
-        clearTimeout(batchTimer.current);
-        batchTimer.current = null;
-      }
-    };
-  }, [connected, subscribe, instanceId, flushPresenceUpdates]);
-
   // Memoized context value to prevent unnecessary re-renders of the tree
   const contextValue = useMemo(() => ({ 
     subscribe, 
+    send,
+    isConnected,
     connected, 
     disconnect: handleDisconnect,
-    presenceMap,
-    trackPresence,
-    untrackPresence,
-  }), [subscribe, connected, handleDisconnect, presenceMap, trackPresence, untrackPresence]);
+  }), [subscribe, send, isConnected, connected, handleDisconnect]);
 
   return (
     <WsContext.Provider value={contextValue}>
@@ -231,8 +122,6 @@ export const useWs = () => {
 
 /**
  * Hook to get a thumbnail cache buster value that updates every 30 seconds.
- * Only components that call this hook will re-render on the 30s interval,
- * instead of every useWs() consumer re-rendering via the context.
  */
 export const useThumbnailCacheBuster = (): number => {
   const [cacheBuster, setCacheBuster] = useState(Date.now());
@@ -245,19 +134,4 @@ export const useThumbnailCacheBuster = (): number => {
   }, []);
 
   return cacheBuster;
-};
-
-/**
- * Hook to track presence for a set of creators.
- * Ensuring they are kept in the presenceMap and not cleaned up.
- */
-export const useTrackPresence = (userIds: number[]) => {
-  const { trackPresence, untrackPresence } = useWs();
-  useEffect(() => {
-    if (userIds.length > 0) {
-      trackPresence(userIds);
-      return () => untrackPresence(userIds);
-    }
-    return undefined;
-  }, [userIds, trackPresence, untrackPresence]);
 };

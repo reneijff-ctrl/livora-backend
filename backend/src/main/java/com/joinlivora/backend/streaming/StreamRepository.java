@@ -35,7 +35,6 @@ public interface StreamRepository extends JpaRepository<Stream, UUID> {
     """)
     Optional<Stream> findByMediasoupRoomIdWithCreator(@Param("mediasoupRoomId") UUID mediasoupRoomId);
     
-    @Cacheable(value = "streams", key = "#streamId")
     @Query("""
         SELECT s
         FROM Stream s
@@ -97,5 +96,25 @@ public interface StreamRepository extends JpaRepository<Stream, UUID> {
     Optional<Stream> findByStreamKeyWithCreator(@Param("streamKey") String streamKey);
 
     long countByCreatorIdAndIsLiveTrue(Long creatorId);
+    long countByCreatorId(Long creatorId);
     long countByIsLiveTrue();
+
+    /**
+     * Groups streams by hour for the last N hours — replaces the legacy
+     * {@code LivestreamSessionRepository.countStreamsGroupedByHour} query.
+     * Returns {@code Object[2]} rows where [0] is a truncated-hour Instant and [1] is the count.
+     */
+    @Query(value = "SELECT date_trunc('hour', s.started_at), COUNT(s.id) FROM streams s " +
+            "WHERE s.started_at >= :since GROUP BY date_trunc('hour', s.started_at) ORDER BY 1",
+            nativeQuery = true)
+    java.util.List<Object[]> countStreamsGroupedByHour(@Param("since") java.time.Instant since);
+
+    /**
+     * Returns the most recent streams (with non-null startedAt) for the admin activity feed,
+     * replacing the legacy {@code LivestreamSessionRepository.findAllByStartedAtIsNotNull} query.
+     */
+    @Query("""
+        SELECT s FROM Stream s JOIN FETCH s.creator WHERE s.startedAt IS NOT NULL ORDER BY s.startedAt DESC
+    """)
+    Page<Stream> findAllByStartedAtIsNotNull(Pageable pageable);
 }

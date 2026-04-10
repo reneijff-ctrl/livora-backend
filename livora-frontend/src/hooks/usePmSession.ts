@@ -19,7 +19,8 @@ interface UsePmSessionResult {
 export const usePmSession = (
   userId: string | undefined,
   connected: boolean,
-  subscribe: ((dest: string, cb: (msg: any) => void) => { unsubscribe: () => void } | null) | null | undefined,
+  subscribe: ((dest: string, cb: (msg: any) => void) => (() => void)) | null | undefined,
+  wsSend?: (destination: string, body: any) => void,
 ): UsePmSessionResult => {
   const [pmSession, setPmSession] = useState<PmSession | null>(null);
   const [pmMessages, setPmMessages] = useState<PmMessage[]>([]);
@@ -48,7 +49,8 @@ export const usePmSession = (
 
     loadSession();
 
-    const pmEventUnsub = subscribe('/user/queue/pm-events', (msg) => {
+    let unsubEvents = () => {};
+    const eventsResult = subscribe('/user/queue/pm-events', (msg) => {
       try {
         const data = JSON.parse(msg.body);
         console.log('PM EVENT:', data);
@@ -76,8 +78,12 @@ export const usePmSession = (
         }
       } catch (e) {}
     });
+    if (typeof eventsResult === 'function') {
+      unsubEvents = eventsResult;
+    }
 
-    const pmMsgUnsub = subscribe('/user/queue/pm-messages', (msg) => {
+    let unsubMessages = () => {};
+    const messagesResult = subscribe('/user/queue/pm-messages', (msg) => {
       try {
         const data: PmMessage = JSON.parse(msg.body);
         if (!data.roomId) return;
@@ -87,17 +93,20 @@ export const usePmSession = (
         }
       } catch (e) {}
     });
+    if (typeof messagesResult === 'function') {
+      unsubMessages = messagesResult;
+    }
 
     return () => {
-      pmEventUnsub?.unsubscribe();
-      pmMsgUnsub?.unsubscribe();
+      unsubEvents();
+      unsubMessages();
     };
   }, [connected, userId, subscribe]);
 
   const handleSendPm = useCallback((content: string) => {
     if (!pmSession || !content.trim()) return;
-    sendPmMessage(pmSession.roomId, content.trim());
-  }, [pmSession]);
+    sendPmMessage(pmSession.roomId, content.trim(), wsSend);
+  }, [pmSession, wsSend]);
 
   const handlePmTabOpen = useCallback(() => {
     if (pmSession) {

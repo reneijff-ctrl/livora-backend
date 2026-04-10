@@ -11,7 +11,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 @Slf4j
@@ -22,9 +24,13 @@ public class LiveViewerCounterService {
     private final LivestreamAnalyticsService analyticsService;
     
     public static final String KEY_PREFIX = "stream:";
-    public static final String ACTIVE_SESSION_PREFIX = "livestream:active-session:";
+    /** New UUID-based active stream pointer: livestream:active-stream:{creatorId} → streamId (UUID) */
+    public static final String ACTIVE_STREAM_UUID_PREFIX = "livestream:active-stream:";
     
     private final Set<Long> pendingBroadcastCreators = ConcurrentHashMap.newKeySet();
+
+    // Metric: track UUID-based reads
+    private final AtomicLong metricUuidReads = new AtomicLong(0);
 
     public LiveViewerCounterService(
             StringRedisTemplate redisTemplate,
@@ -122,14 +128,21 @@ public class LiveViewerCounterService {
             "local totalCount = redis.call('SCARD', setKey); " +
             "return {removed, totalCount};", List.class);
 
-    public void addViewer(Long streamSessionId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
-        if (streamSessionId == null || creatorUserId == null || sessionId == null) return;
-        
-        // Ensure active session is set (idempotent)
-        setActiveSession(creatorUserId, streamSessionId);
+    // -------------------------------------------------------------------------
+    // UUID-based API (new — Stream as single source of truth)
+    // -------------------------------------------------------------------------
 
-        String key = KEY_PREFIX + streamSessionId + ":viewers";
-        String userMapKey = KEY_PREFIX + streamSessionId + ":userViewers";
+    /**
+     * Adds a viewer using Stream UUID as the Redis key namespace.
+     * Key pattern: stream:{streamId}:viewers, stream:{streamId}:userViewers
+     */
+    public void addViewer(UUID streamId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
+        if (streamId == null || creatorUserId == null || sessionId == null) return;
+
+        setActiveStreamUuid(creatorUserId, streamId);
+
+        String key = KEY_PREFIX + streamId + ":viewers";
+        String userMapKey = KEY_PREFIX + streamId + ":userViewers";
 
         String userIdStr = viewerUserId != null ? String.valueOf(viewerUserId) : "";
         String ipStr = ip != null ? ip : "";
@@ -138,23 +151,27 @@ public class LiveViewerCounterService {
         @SuppressWarnings("unchecked")
         List<Long> results = redisTemplate.execute(ADD_VIEWER_SCRIPT,
                 Arrays.asList(key, userMapKey),
-                sessionId, userIdStr, ipStr, "1800", String.valueOf(streamSessionId), deviceHash);
+                sessionId, userIdStr, ipStr, "1800", streamId.toString(), deviceHash);
 
         if (results != null && results.size() >= 2) {
             Long added = results.get(0);
             Long count = results.get(1);
             if (added != null && added > 0) {
-                log.info("VIEWER_JOIN: streamSessionId={}, creatorUserId={}, viewerUserId={}, sessionId={}", streamSessionId, creatorUserId, viewerUserId, sessionId);
+                log.info("VIEWER_JOIN: streamId={}, creatorUserId={}, viewerUserId={}, sessionId={}", streamId, creatorUserId, viewerUserId, sessionId);
+                log.info("VIEWER_COUNT_UPDATE: streamId={}, count={}", streamId, count);
                 analyticsService.onViewerIncrement(creatorUserId, count);
                 pendingBroadcastCreators.add(creatorUserId);
             }
         }
     }
 
-    public void removeViewer(Long streamSessionId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
-        if (streamSessionId == null || creatorUserId == null || sessionId == null) return;
-        String key = KEY_PREFIX + streamSessionId + ":viewers";
-        String userMapKey = KEY_PREFIX + streamSessionId + ":userViewers";
+    /**
+     * Removes a viewer using Stream UUID as the Redis key namespace.
+     */
+    public void removeViewer(UUID streamId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
+        if (streamId == null || creatorUserId == null || sessionId == null) return;
+        String key = KEY_PREFIX + streamId + ":viewers";
+        String userMapKey = KEY_PREFIX + streamId + ":userViewers";
 
         String userIdStr = viewerUserId != null ? String.valueOf(viewerUserId) : "";
         String ipStr = ip != null ? ip : "";
@@ -163,37 +180,42 @@ public class LiveViewerCounterService {
         @SuppressWarnings("unchecked")
         List<Long> results = redisTemplate.execute(REMOVE_VIEWER_SCRIPT,
                 Arrays.asList(key, userMapKey),
-                sessionId, userIdStr, ipStr, String.valueOf(streamSessionId), deviceHash);
+                sessionId, userIdStr, ipStr, streamId.toString(), deviceHash);
 
         if (results != null && results.size() >= 1) {
             Long removed = results.get(0);
             if (removed != null && removed > 0) {
-                log.info("VIEWER_LEAVE: streamSessionId={}, creatorUserId={}, viewerUserId={}, sessionId={}", streamSessionId, creatorUserId, viewerUserId, sessionId);
+                Long count = results.size() >= 2 ? results.get(1) : 0L;
+                log.info("VIEWER_LEAVE: streamId={}, creatorUserId={}, viewerUserId={}, sessionId={}", streamId, creatorUserId, viewerUserId, sessionId);
+                log.info("VIEWER_COUNT_UPDATE: streamId={}, count={}", streamId, count);
                 pendingBroadcastCreators.add(creatorUserId);
             }
         }
     }
 
-    public Long getActiveSessionId(Long creatorUserId) {
+    public UUID getActiveStreamUuid(Long creatorUserId) {
         if (creatorUserId == null) return null;
-        String id = redisTemplate.opsForValue().get(ACTIVE_SESSION_PREFIX + creatorUserId);
-        return id != null ? Long.valueOf(id) : null;
+        String id = redisTemplate.opsForValue().get(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
+        return id != null ? UUID.fromString(id) : null;
     }
 
-    public void setActiveSession(Long creatorUserId, Long streamSessionId) {
+    public void setActiveStreamUuid(Long creatorUserId, UUID streamId) {
         if (creatorUserId == null) return;
-        if (streamSessionId == null) {
-            redisTemplate.delete(ACTIVE_SESSION_PREFIX + creatorUserId);
+        if (streamId == null) {
+            redisTemplate.delete(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
         } else {
-            redisTemplate.opsForValue().set(ACTIVE_SESSION_PREFIX + creatorUserId, String.valueOf(streamSessionId), java.time.Duration.ofMinutes(30));
+            redisTemplate.opsForValue().set(ACTIVE_STREAM_UUID_PREFIX + creatorUserId, streamId.toString(), java.time.Duration.ofMinutes(30));
         }
     }
 
-    public void resetViewerCount(Long streamSessionId, Long creatorUserId) {
-        if (streamSessionId == null) return;
-        
-        // Safer deletion without blocking keys() - using SCAN instead for production stability
-        String pattern = KEY_PREFIX + streamSessionId + ":*";
+    /**
+     * Resets viewer count keys for a Stream UUID (new format).
+     * Also cleans up the UUID-based active stream pointer.
+     */
+    public void resetViewerCountByStreamId(UUID streamId, Long creatorUserId) {
+        if (streamId == null) return;
+
+        String pattern = KEY_PREFIX + streamId + ":*";
         try {
             redisTemplate.execute((org.springframework.data.redis.connection.RedisConnection connection) -> {
                 org.springframework.data.redis.core.ScanOptions options = org.springframework.data.redis.core.ScanOptions.scanOptions()
@@ -213,21 +235,20 @@ public class LiveViewerCounterService {
                         connection.del(keysToDelete.toArray(new byte[0][]));
                     }
                 } catch (Exception e) {
-                    log.error("Error during scan/delete for streamSessionId {}: {}", streamSessionId, e.getMessage());
+                    log.error("Error during scan/delete for streamId {}: {}", streamId, e.getMessage());
                 }
                 return null;
             });
         } catch (Exception e) {
-            log.error("Failed to safely clean up Redis keys for streamSessionId {}: {}", streamSessionId, e.getMessage());
+            log.error("Failed to safely clean up Redis keys for streamId {}: {}", streamId, e.getMessage());
         }
-        
+
         if (creatorUserId != null) {
-            redisTemplate.delete(ACTIVE_SESSION_PREFIX + creatorUserId);
-            analyticsService.resetStats(creatorUserId);
-            pendingBroadcastCreators.remove(creatorUserId);
+            redisTemplate.delete(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
         }
-        log.info("LIVESTREAM: Reset viewer count keys and stats for streamSessionId={}, creatorUserId={}", streamSessionId, creatorUserId);
+        log.info("LIVESTREAM: Reset viewer count keys for streamId={}, creatorUserId={}", streamId, creatorUserId);
     }
+
 
     @Scheduled(fixedRate = 3000)
     public void processThrottledBroadcasts() {
@@ -256,13 +277,17 @@ public class LiveViewerCounterService {
 
     public long getViewerCount(Long creatorUserId) {
         if (creatorUserId == null) return 0;
-        
-        String streamSessionId = redisTemplate.opsForValue().get(ACTIVE_SESSION_PREFIX + creatorUserId);
-        if (streamSessionId == null) return 0;
-        
-        String key = KEY_PREFIX + streamSessionId + ":viewers";
-        Long count = redisTemplate.opsForSet().size(key);
-        return count != null ? count : 0L;
+
+        String uuidStr = redisTemplate.opsForValue().get(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
+        if (uuidStr != null) {
+            String key = KEY_PREFIX + uuidStr + ":viewers";
+            Long count = redisTemplate.opsForSet().size(key);
+            if (count != null && count > 0) {
+                metricUuidReads.incrementAndGet();
+                return count;
+            }
+        }
+        return 0L;
     }
 
     public void recordViewerHistory(UUID streamId, long viewerCount) {
@@ -297,30 +322,36 @@ public class LiveViewerCounterService {
 
     public java.util.Set<String> getViewers(Long creatorUserId) {
         if (creatorUserId == null) return java.util.Collections.emptySet();
-        
-        String streamSessionId = redisTemplate.opsForValue().get(ACTIVE_SESSION_PREFIX + creatorUserId);
-        if (streamSessionId == null) return java.util.Collections.emptySet();
-        
-        String key = KEY_PREFIX + streamSessionId + ":viewers";
-        return redisTemplate.opsForSet().members(key);
+
+        String uuidStr = redisTemplate.opsForValue().get(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
+        if (uuidStr != null) {
+            String key = KEY_PREFIX + uuidStr + ":viewers";
+            Set<String> members = redisTemplate.opsForSet().members(key);
+            if (members != null && !members.isEmpty()) {
+                metricUuidReads.incrementAndGet();
+                return members;
+            }
+        }
+        return java.util.Collections.emptySet();
     }
 
     /**
      * Returns the set of authenticated user IDs currently viewing a creator's stream,
      * read directly from the Redis userViewers hash (userId -> wsSessionId mapping).
-     * Uses low-level RedisConnection to avoid StringRedisTemplate hash serializer issues.
      */
     public java.util.Set<Long> getAuthenticatedViewerUserIds(Long creatorUserId) {
         if (creatorUserId == null) return java.util.Collections.emptySet();
 
-        String streamSessionId = redisTemplate.opsForValue().get(ACTIVE_SESSION_PREFIX + creatorUserId);
-        if (streamSessionId == null) {
-            log.debug("VIEWER_LIST_DEBUG: No active session for creatorUserId={}", creatorUserId);
+        String uuidStr = redisTemplate.opsForValue().get(ACTIVE_STREAM_UUID_PREFIX + creatorUserId);
+        if (uuidStr == null) {
+            log.debug("VIEWER_LIST_DEBUG: No active stream UUID for creatorUserId={}", creatorUserId);
             return java.util.Collections.emptySet();
         }
+        String resolvedKey = KEY_PREFIX + uuidStr + ":userViewers";
+        metricUuidReads.incrementAndGet();
 
-        String userMapKey = KEY_PREFIX + streamSessionId + ":userViewers";
-        log.debug("VIEWER_LIST_DEBUG: Reading hash key={}", userMapKey);
+        String userMapKey = resolvedKey;
+        log.debug("VIEWER_LIST_DEBUG: Reading hash key={}", resolvedKey);
 
         // Use low-level connection to read HKEYS directly, avoiding potential
         // serializer mismatch when StringRedisTemplate reads Lua-written hash keys
@@ -341,6 +372,15 @@ public class LiveViewerCounterService {
 
         log.debug("VIEWER_LIST_DEBUG: Resolved userIds={} for creatorUserId={}", userIds, creatorUserId);
         return userIds;
+    }
+
+    /**
+     * Returns a snapshot of Redis key usage metrics for monitoring.
+     */
+    public Map<String, Long> getRedisKeyMetrics() {
+        return Map.of(
+                "uuidReads", metricUuidReads.get()
+        );
     }
 
     public void reconcileCount(Long creatorUserId, long groundTruthCount) {

@@ -147,12 +147,6 @@ public class TokenService {
         return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(key, userId.toString()));
     }
 
-    public void grantAccess(Long userId, Long creatorUserId) {
-        String key = ACCESS_KEY_PREFIX + creatorUserId;
-        redisTemplate.opsForSet().add(key, userId.toString());
-        redisTemplate.expire(key, ACCESS_TTL);
-    }
-
     /**
      * Atomically adds the user to the access set only if they are not already a member.
      * Returns true if the user was newly added (access granted), false if already present.

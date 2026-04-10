@@ -5,12 +5,12 @@ import SEO from '../components/SEO';
 import creatorService from '../api/creatorService';
 import { ICreator } from '../domain/creator/ICreator';
 import CreatorCard from '../components/creator/CreatorCard';
-import { useThumbnailCacheBuster } from '../ws/WsContext';
-import webSocketService from '../websocket/webSocketService';
+import { useWs, useThumbnailCacheBuster } from '../ws/WsContext';
 
 const Home = () => {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
+  const { subscribe } = useWs();
   const thumbnailCacheBuster = useThumbnailCacheBuster();
   const [creators, setCreators] = useState<ICreator[]>([]);
 
@@ -38,7 +38,7 @@ const Home = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const unsub = webSocketService.subscribe(
+    const unsub = subscribe(
       '/exchange/amq.topic/streams.status',
       (message) => {
         try {
@@ -60,19 +60,19 @@ const Home = () => {
       }
     );
 
-    return () => unsub();
-  }, [isAuthenticated]);
+    return () => { if (typeof unsub === 'function') unsub(); };
+  }, [isAuthenticated, subscribe]);
 
   // Subscribe to viewer count updates for displayed creators
   useEffect(() => {
     if (!isAuthenticated || creators.length === 0) return;
 
     // Clean up previous viewer count subscriptions
-    unsubscribesRef.current.forEach(fn => fn());
+    unsubscribesRef.current.forEach(fn => { if (typeof fn === 'function') fn(); });
     unsubscribesRef.current = [];
 
     const unsubs = creators.map(c =>
-      webSocketService.subscribe(
+      subscribe(
         `/exchange/amq.topic/viewers.${c.userId}`,
         (message) => {
           try {
@@ -97,10 +97,10 @@ const Home = () => {
     unsubscribesRef.current = unsubs;
 
     return () => {
-      unsubs.forEach(fn => fn());
+      unsubs.forEach(fn => { if (typeof fn === 'function') fn(); });
       unsubscribesRef.current = [];
     };
-  }, [isAuthenticated, creators.length]);
+  }, [isAuthenticated, creators.length, subscribe]);
 
   const displayedCreators = useMemo(() => {
     return creators.map(c => {

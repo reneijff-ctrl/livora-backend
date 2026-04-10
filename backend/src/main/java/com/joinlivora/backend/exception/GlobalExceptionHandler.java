@@ -82,7 +82,7 @@ public class GlobalExceptionHandler {
                     .ppvContentId(cae.getPpvContentId())
                     .requiredPrice(cae.getRequiredPrice());
             
-            if (request.getRequestURI().contains("/api/admin/dashboard/metrics") && !"prod".equals(activeProfile)) {
+            if (request.getRequestURI().equals("/api/admin/dashboard/metrics") && activeProfile != null && activeProfile.contains("dev")) {
                 StringWriter sw = new StringWriter();
                 PrintWriter pw = new PrintWriter(sw);
                 cae.printStackTrace(pw);
@@ -164,7 +164,7 @@ public class GlobalExceptionHandler {
                 .errorCode("USER_RESTRICTED_" + ex.getLevel())
                 .expiresAt(ex.getExpiresAt());
         
-        if (request.getRequestURI().contains("/api/admin/dashboard/metrics") && !"prod".equals(activeProfile)) {
+        if (request.getRequestURI().equals("/api/admin/dashboard/metrics") && activeProfile != null && activeProfile.contains("dev")) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);
@@ -316,7 +316,7 @@ public class GlobalExceptionHandler {
                 .requestId(MDC.get("requestId"))
                 .errorCode(errorCode);
 
-        if (ex != null && request.getRequestURI().contains("/api/admin/dashboard/metrics") && !"prod".equals(activeProfile)) {
+        if (ex != null && request.getRequestURI().equals("/api/admin/dashboard/metrics") && activeProfile != null && activeProfile.contains("dev")) {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             ex.printStackTrace(pw);

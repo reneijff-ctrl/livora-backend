@@ -162,8 +162,8 @@ const StreamPage: React.FC = () => {
     });
 
     return () => {
-      pmEventUnsub.unsubscribe();
-      pmMsgUnsub.unsubscribe();
+      if (typeof pmEventUnsub === 'function') pmEventUnsub();
+      if (typeof pmMsgUnsub === 'function') pmMsgUnsub();
     };
   }, [connected, user, subscribe]);
 
@@ -225,7 +225,7 @@ const StreamPage: React.FC = () => {
     // NOTE: creators.presence is subscribed globally via WsContext — do not subscribe here.
 
     return () => {
-      if (streamSub) streamSub.unsubscribe();
+      if (typeof streamSub === 'function') streamSub();
     };
   }, [room?.userId, subscribe]);
 
@@ -355,8 +355,8 @@ const StreamPage: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribeViewers) unsubscribeViewers.unsubscribe();
-      if (unsubscribeChat) unsubscribeChat.unsubscribe();
+      if (typeof unsubscribeViewers === 'function') unsubscribeViewers();
+      if (typeof unsubscribeChat === 'function') unsubscribeChat();
     };
   }, [roomId, subscribe, connected, room?.id]);
 
@@ -398,7 +398,7 @@ const StreamPage: React.FC = () => {
     });
 
     return () => {
-      if (unsubscribe) unsubscribe.unsubscribe();
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, [connected, subscribe, user, room?.userId]);
 

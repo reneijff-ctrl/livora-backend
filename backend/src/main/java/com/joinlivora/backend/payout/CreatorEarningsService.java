@@ -589,7 +589,7 @@ public class CreatorEarningsService {
         );
     }
 
-    @Cacheable(value = "creatorEarnings", key = "#creator.id")
+    @Cacheable(value = "creatorEarnings", key = "#creator.id", unless = "#result == null")
     @Transactional(readOnly = true)
     public CreatorEarningsDTO getAggregatedEarnings(User creator) {
         LegacyCreatorProfile profile = creatorProfileRepository.findByUser(creator).orElse(null);

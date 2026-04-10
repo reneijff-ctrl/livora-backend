@@ -9,19 +9,15 @@ import com.joinlivora.backend.fraud.FraudScoringService;
 import com.joinlivora.backend.fraud.model.FraudRiskLevel;
 import com.joinlivora.backend.fraud.model.FraudRiskResult;
 import com.joinlivora.backend.monetization.TipRepository;
-import io.github.bucket4j.Bandwidth;
-import io.github.bucket4j.Bucket;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Service for detecting and handling abusive behavior.
@@ -34,20 +30,27 @@ public class AbuseDetectionService {
     private final TipRepository tipRepository;
     private final AnalyticsEventRepository analyticsEventRepository;
 
+    private final StringRedisTemplate redisTemplate;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCircuitBreaker;
+
+    private static final String SOFTBLOCK_USER_PREFIX = "abuse:softblock:user:";
+    private static final String SOFTBLOCK_IP_PREFIX = "abuse:softblock:ip:";
+    private static final Duration SOFTBLOCK_DURATION = Duration.ofHours(1);
+
     public AbuseDetectionService(
             AbuseEventRepository abuseEventRepository,
             @org.springframework.context.annotation.Lazy FraudScoringService fraudRiskService,
             TipRepository tipRepository,
-            AnalyticsEventRepository analyticsEventRepository
+            AnalyticsEventRepository analyticsEventRepository,
+            StringRedisTemplate redisTemplate
     ) {
         this.abuseEventRepository = abuseEventRepository;
         this.fraudRiskService = fraudRiskService;
         this.tipRepository = tipRepository;
         this.analyticsEventRepository = analyticsEventRepository;
+        this.redisTemplate = redisTemplate;
     }
-
-    private final Map<UUID, Bucket> userSoftBlocks = new ConcurrentHashMap<>();
-    private final Map<String, Bucket> ipSoftBlocks = new ConcurrentHashMap<>();
 
     private static final int RAPID_TIPPING_LIMIT = 10;
     private static final int MESSAGE_SPAM_LIMIT = 30;
@@ -222,19 +225,42 @@ public class AbuseDetectionService {
         fraudRiskService.recordDecision(userId, null, null, result);
     }
 
+    /**
+     * Writes soft-block keys to Redis (FAIL-OPEN: if Redis is down, block is skipped and
+     * the circuit breaker probes recovery on the next call).
+     */
     private void applySoftBlock(UUID userId, String ipAddress) {
         log.info("Applying soft block for creator {} and IP {}", userId, maskIp(ipAddress));
-
+        // Uses execute() — no isOpen() pre-check so HALF_OPEN probe is not blocked.
+        // Fail-open: if Redis is unavailable, the soft-block is skipped gracefully.
         if (userId != null) {
-            Bucket bucket = createRestrictiveBucket();
-            bucket.tryConsume(1); // Consume initial token to trigger rate limit
-            userSoftBlocks.put(userId, bucket);
+            final String userKey = SOFTBLOCK_USER_PREFIX + userId;
+            boolean ok = (redisCircuitBreaker != null)
+                    ? Boolean.TRUE.equals(redisCircuitBreaker.execute(
+                            () -> { redisTemplate.opsForValue().set(userKey, "1", SOFTBLOCK_DURATION); return Boolean.TRUE; },
+                            Boolean.FALSE,
+                            "redis:abuse:softblock-user"))
+                    : execute(() -> redisTemplate.opsForValue().set(userKey, "1", SOFTBLOCK_DURATION));
+            if (ok) log.debug("Redis soft-block set for user key={}", userKey);
+            else log.warn("ABUSE REDIS ERROR: Redis circuit OPEN — soft block skipped for user={}", userId);
         }
         if (ipAddress != null) {
-            Bucket bucket = createRestrictiveBucket();
-            bucket.tryConsume(1); // Consume initial token to trigger rate limit
-            ipSoftBlocks.put(ipAddress, bucket);
+            final String ipKey = SOFTBLOCK_IP_PREFIX + ipAddress;
+            boolean ok = (redisCircuitBreaker != null)
+                    ? Boolean.TRUE.equals(redisCircuitBreaker.execute(
+                            () -> { redisTemplate.opsForValue().set(ipKey, "1", SOFTBLOCK_DURATION); return Boolean.TRUE; },
+                            Boolean.FALSE,
+                            "redis:abuse:softblock-ip"))
+                    : execute(() -> redisTemplate.opsForValue().set(ipKey, "1", SOFTBLOCK_DURATION));
+            if (ok) log.debug("Redis soft-block set for IP key={}", ipKey);
+            else log.warn("ABUSE REDIS ERROR: Redis circuit OPEN — soft block skipped for ip={}", maskIp(ipAddress));
         }
+    }
+
+    /** Thin helper so lambda captures don't need to handle checked exceptions. */
+    private boolean execute(Runnable r) {
+        try { r.run(); return true; }
+        catch (Exception e) { log.warn("ABUSE REDIS ERROR: {}", e.getMessage()); return false; }
     }
 
     private long requireLegacyUserId(UUID userId) {
@@ -254,33 +280,41 @@ public class AbuseDetectionService {
         return ip.replaceAll("(\\d+)\\.(\\d+)\\..*", "$1.$2.***.***");
     }
 
-    private Bucket createRestrictiveBucket() {
-        // Soft block: 1 request per hour
-        return Bucket.builder()
-                .addLimit(Bandwidth.builder()
-                        .capacity(1)
-                        .refillIntervally(1, Duration.ofHours(1))
-                        .build())
-                .build();
-    }
-
     /**
      * Checks if a creator or IP is currently soft-blocked.
      *
-     * @param userId    The ID of the creator
-     * @param ipAddress The IP address
-     * @return true if soft-blocked, false otherwise
+     * <p><strong>SECURITY — FAIL-CLOSED:</strong> if Redis is unavailable, this method returns
+     * {@code true} (assume blocked). Granting access without being able to verify a soft-block
+     * would allow abuse patterns to bypass detection. This is intentionally conservative.
+     * The circuit breaker still attempts a HALF_OPEN probe via {@code execute()}, so as soon as
+     * Redis recovers, normal operation resumes automatically.</p>
+     *
+     * @param userId    The UUID of the user to check
+     * @param ipAddress The IP address to check
+     * @return true if soft-blocked or if Redis is unavailable (fail-CLOSED)
      */
     public boolean isSoftBlocked(UUID userId, String ipAddress) {
         if (userId != null) {
-            Bucket userBucket = userSoftBlocks.get(userId);
-            if (userBucket != null && userBucket.getAvailableTokens() <= 0) {
+            final String userKey = SOFTBLOCK_USER_PREFIX + userId;
+            Boolean blocked = (redisCircuitBreaker != null)
+                    ? redisCircuitBreaker.execute(
+                            () -> redisTemplate.hasKey(userKey),
+                            Boolean.TRUE,  // FAIL-CLOSED: assume blocked if Redis is down
+                            "redis:abuse:is-softblocked-user")
+                    : redisTemplate.hasKey(userKey);
+            if (Boolean.TRUE.equals(blocked)) {
                 return true;
             }
         }
         if (ipAddress != null) {
-            Bucket ipBucket = ipSoftBlocks.get(ipAddress);
-            if (ipBucket != null && ipBucket.getAvailableTokens() <= 0) {
+            final String ipKey = SOFTBLOCK_IP_PREFIX + ipAddress;
+            Boolean blocked = (redisCircuitBreaker != null)
+                    ? redisCircuitBreaker.execute(
+                            () -> redisTemplate.hasKey(ipKey),
+                            Boolean.TRUE,  // FAIL-CLOSED: assume blocked if Redis is down
+                            "redis:abuse:is-softblocked-ip")
+                    : redisTemplate.hasKey(ipKey);
+            if (Boolean.TRUE.equals(blocked)) {
                 return true;
             }
         }

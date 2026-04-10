@@ -54,8 +54,6 @@ class CreatorProfileServiceTest {
     @Mock
     private com.joinlivora.backend.streaming.StreamRepository streamRepository;
     @Mock
-    private com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
-    @Mock
     private com.joinlivora.backend.payout.CreatorEarningRepository earningRepository;
     @Mock
     private com.joinlivora.backend.payout.PayoutCreatorEarningsRepository payoutCreatorEarningsRepository;

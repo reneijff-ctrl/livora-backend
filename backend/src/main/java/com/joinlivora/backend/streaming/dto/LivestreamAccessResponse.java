@@ -17,6 +17,6 @@ public class LivestreamAccessResponse {
     private boolean isLive;
     private long viewerCount;
     private java.math.BigDecimal admissionPrice;
-    private Long sessionId;
+    private java.util.UUID streamId;
     private java.util.UUID streamRoomId;
 }

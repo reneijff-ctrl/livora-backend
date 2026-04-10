@@ -1,5 +1,6 @@
 package com.joinlivora.backend.websocket;
 
+import com.joinlivora.backend.config.MetricsService;
 import com.joinlivora.backend.security.websocket.JwtWebSocketInterceptor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,14 +18,15 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
-import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.server.support.HttpSessionHandshakeInterceptor;
 import org.springframework.security.web.util.matcher.IpAddressMatcher;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -53,12 +55,26 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @org.springframework.beans.factory.annotation.Value("${livora.websocket.broker.password:guest}")
     private String brokerPassword;
 
-    private final Map<String, HandshakeRateLimitState> handshakeRateLimits = new ConcurrentHashMap<>();
-
     private List<IpAddressMatcher> proxyMatchers;
+
+    /**
+     * Atomic Lua script: INCR the key, then set EXPIRE only on the very first increment.
+     * This eliminates the race window between INCR and a separate EXPIRE call.
+     * Returns the post-increment count as a Long.
+     */
+    private static final RedisScript<Long> INCR_EXPIRE_SCRIPT = RedisScript.of(
+            "local v = redis.call('INCR', KEYS[1]) " +
+            "if v == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end " +
+            "return v",
+            Long.class
+    );
 
     private final WebSocketInterceptor webSocketInterceptor;
     private final JwtWebSocketInterceptor jwtWebSocketInterceptor;
+    private final StringRedisTemplate redisTemplate;
+    private final MetricsService metricsService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.joinlivora.backend.resilience.RedisCircuitBreakerService redisCircuitBreaker;
 
     @jakarta.annotation.PostConstruct
     public void initProxyMatchers() {
@@ -138,21 +154,32 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
                         if (ip != null) {
                             attributes.put("ip", ip);
-                            
-                            // Handshake rate limiting
-                            long now = System.currentTimeMillis();
-                            HandshakeRateLimitState state = handshakeRateLimits.compute(ip, (key, oldState) -> {
-                                if (oldState == null || now - oldState.windowStartTime > 60000) {
-                                    return new HandshakeRateLimitState(now);
-                                } else {
-                                    oldState.count++;
-                                    return oldState;
-                                }
-                            });
 
-                            if (state.count > maxHandshakePerMinute) {
-                                log.warn("HANDSHAKE RATE LIMIT VIOLATION: ip={}, count={}, limit={}", 
-                                        ip, state.count, maxHandshakePerMinute);
+                            // Handshake rate limiting — atomic Lua INCR+EXPIRE (cluster-safe, race-free).
+                            // Uses execute() so the circuit breaker can transition to HALF_OPEN and
+                            // probe Redis recovery — the old isOpen() pre-check blocked that probe.
+                            String rateLimitKey = "ws:handshake:rate:" + ip;
+                            final String finalIp = ip;
+                            Long count = (redisCircuitBreaker != null)
+                                    ? redisCircuitBreaker.execute(
+                                            () -> redisTemplate.execute(
+                                                    INCR_EXPIRE_SCRIPT,
+                                                    Collections.singletonList(rateLimitKey),
+                                                    "60"),
+                                            null,
+                                            "redis:ws:handshake-rate:" + finalIp)
+                                    : redisTemplate.execute(
+                                            INCR_EXPIRE_SCRIPT,
+                                            Collections.singletonList(rateLimitKey),
+                                            "60");
+                            if (count == null) {
+                                log.warn("WS HANDSHAKE RATE LIMIT: Redis unavailable for ip={}, failing open", ip);
+                                if (metricsService != null) metricsService.getRedisFailuresTotal().increment();
+                            }
+
+                            if (count != null && count > maxHandshakePerMinute) {
+                                log.warn("WS HANDSHAKE RATE LIMIT EXCEEDED: ip={}, count={}, limit={}",
+                                        ip, count, maxHandshakePerMinute);
                                 response.setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
                                 return false;
                             }
@@ -192,23 +219,6 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         scheduler.setThreadNamePrefix("ws-heartbeat-");
         scheduler.initialize();
         return scheduler;
-    }
-
-    @Scheduled(fixedRate = 600000) // Every 10 minutes
-    public void cleanupRateLimits() {
-        long now = System.currentTimeMillis();
-        handshakeRateLimits.entrySet().removeIf(entry -> now - entry.getValue().windowStartTime > 60000);
-        log.debug("Cleaned up handshake rate limits map. Current size: {}", handshakeRateLimits.size());
-    }
-
-    private static class HandshakeRateLimitState {
-        final long windowStartTime;
-        int count;
-
-        HandshakeRateLimitState(long windowStartTime) {
-            this.windowStartTime = windowStartTime;
-            this.count = 1;
-        }
     }
 
 }

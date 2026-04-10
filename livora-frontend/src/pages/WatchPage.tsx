@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useCreatorPublicProfile } from '@/hooks/useCreatorPublicProfile';
-import { webSocketService } from '@/websocket/webSocketService';
 import apiClient from '@/api/apiClient';
 import { safeRender } from '@/utils/safeRender';
 import { useAuth } from '@/auth/useAuth';
 import { useWs } from '@/ws/WsContext';
+import { usePresence } from '@/ws/PresenceContext';
 import Navbar from '@/components/Navbar';
 import AbuseReportModal from '@/components/AbuseReportModal';
 import TipModal from '@/components/TipModal';
@@ -39,7 +39,8 @@ const WatchPage: React.FC = () => {
   const { creator, loading: profileLoading } = useCreatorPublicProfile();
   const { user, refreshTokenBalance } = useAuth();
   const navigate = useNavigate();
-  const { presenceMap, subscribe, connected } = useWs();
+  const { subscribe, send, connected } = useWs();
+  const { presenceMap } = usePresence();
 
   // Stream state
   const [availability, setAvailability] = useState<"ONLINE" | "LIVE" | "OFFLINE" | null>(null);
@@ -71,6 +72,7 @@ const WatchPage: React.FC = () => {
     userId,
     connected,
     subscribe,
+    send,
   );
 
   const moderation = useRoomModeration(
@@ -129,7 +131,7 @@ const WatchPage: React.FC = () => {
     apiClient.get(`/livestream/${creatorUserId}/access`).then(res => { setRoom(res.data); setHasAccess(res.data.hasAccess); });
   }, [creatorUserId, user, availability]);
 
-  // Presence-driven availability updates
+  // Presence-driven availability updates (from global PresenceContext subscription)
   useEffect(() => {
     if (!creatorUserId) return;
     const presence = presenceMap[Number(creatorUserId)];
@@ -141,7 +143,7 @@ const WatchPage: React.FC = () => {
   // Viewer count WS subscription
   useEffect(() => {
     if (!creatorUserId) return;
-    const unsubViewers = webSocketService.subscribe(`/exchange/amq.topic/viewers.${creatorUserId}`, (msg) => {
+    const unsubViewers = subscribe(`/exchange/amq.topic/viewers.${creatorUserId}`, (msg) => {
       const payload = JSON.parse(msg.body).payload || JSON.parse(msg.body);
       if (payload.viewerCount !== undefined) setViewerCount(payload.viewerCount);
     });

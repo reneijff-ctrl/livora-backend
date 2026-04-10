@@ -46,13 +46,10 @@ import static org.mockito.Mockito.*;
 class ChatRoomServiceTest {
 
     @Mock
-    private com.joinlivora.backend.chat.repository.ChatRoomRepository chatRoomRepositoryV2;
+    private ChatRoomRepository chatRoomRepository;
 
     @Mock
     private CreatorProfileService creatorProfileService;
-
-    @Mock
-    private ChatRoomRepository chatRoomRepository; // V1 (legacy)
 
     @Mock
     private UserRepository userRepository;
@@ -90,6 +87,7 @@ class ChatRoomServiceTest {
     private Long creatorId;
     private String name;
     private User creator;
+    private com.joinlivora.backend.creator.model.Creator creatorEntity;
 
     @BeforeEach
     void setUp() {
@@ -97,9 +95,19 @@ class ChatRoomServiceTest {
         name = "test-room";
         creator = new User();
         creator.setId(creatorId);
+        creator.setRole(Role.CREATOR);
+
+        creatorEntity = com.joinlivora.backend.creator.model.Creator.builder()
+                .id(creatorId)
+                .user(creator)
+                .active(true)
+                .build();
         
         // Default lenient mock for live stream status
         lenient().when(liveStreamService.isStreamActive(anyLong())).thenReturn(false);
+        // Default lenient mock for creator lookup
+        lenient().when(creatorRepository.findByUser_Id(creatorId)).thenReturn(Optional.of(creatorEntity));
+        lenient().when(creatorRepository.findById(creatorId)).thenReturn(Optional.of(creatorEntity));
     }
 
     @Test
@@ -118,7 +126,7 @@ class ChatRoomServiceTest {
         // Online presence
         when(creatorPresenceService.getAvailability(creatorUserId)).thenReturn(CreatorAvailabilityStatus.ONLINE);
         
-        when(chatRoomRepositoryV2.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(new com.joinlivora.backend.chat.domain.ChatRoom()));
+        when(chatRoomRepository.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(new com.joinlivora.backend.chat.domain.ChatRoom()));
 
         assertDoesNotThrow(() -> chatRoomService.getOrCreateRoom(creatorUserId));
     }
@@ -140,9 +148,9 @@ class ChatRoomServiceTest {
         // 1. Existing ACTIVE room, creator goes OFFLINE
         com.joinlivora.backend.chat.domain.ChatRoom activeRoom = new com.joinlivora.backend.chat.domain.ChatRoom();
         activeRoom.setStatus(com.joinlivora.backend.chat.domain.ChatRoomStatus.ACTIVE);
-        when(chatRoomRepositoryV2.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(activeRoom));
+        when(chatRoomRepository.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(activeRoom));
         when(creatorPresenceService.getAvailability(creatorUserId)).thenReturn(CreatorAvailabilityStatus.OFFLINE);
-        when(chatRoomRepositoryV2.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(chatRoomRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         com.joinlivora.backend.chat.domain.ChatRoom result1 = chatRoomService.getOrCreateRoom(creatorUserId);
         assertEquals(com.joinlivora.backend.chat.domain.ChatRoomStatus.PAUSED, result1.getStatus());
@@ -150,7 +158,7 @@ class ChatRoomServiceTest {
         // 2. Existing WAITING room, creator goes ONLINE
         com.joinlivora.backend.chat.domain.ChatRoom waitingRoom = new com.joinlivora.backend.chat.domain.ChatRoom();
         waitingRoom.setStatus(com.joinlivora.backend.chat.domain.ChatRoomStatus.WAITING_FOR_CREATOR);
-        when(chatRoomRepositoryV2.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(waitingRoom));
+        when(chatRoomRepository.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.of(waitingRoom));
         when(creatorPresenceService.getAvailability(creatorUserId)).thenReturn(CreatorAvailabilityStatus.ONLINE);
 
         com.joinlivora.backend.chat.domain.ChatRoom result2 = chatRoomService.getOrCreateRoom(creatorUserId);
@@ -198,8 +206,8 @@ class ChatRoomServiceTest {
         when(creatorPresenceService.getAvailability(creatorUserId)).thenReturn(CreatorAvailabilityStatus.OFFLINE);
 
         // Simulate not existing then creating
-        when(chatRoomRepositoryV2.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.empty());
-        when(chatRoomRepositoryV2.save(any(com.joinlivora.backend.chat.domain.ChatRoom.class)))
+        when(chatRoomRepository.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.empty());
+        when(chatRoomRepository.save(any(com.joinlivora.backend.chat.domain.ChatRoom.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         com.joinlivora.backend.chat.domain.ChatRoom result = chatRoomService.getOrCreateRoom(creatorUserId);
@@ -234,8 +242,8 @@ class ChatRoomServiceTest {
         when(creatorPresenceService.getAvailability(creatorUserId)).thenReturn(CreatorAvailabilityStatus.OFFLINE);
 
         // No existing room by creator, will create
-        when(chatRoomRepositoryV2.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.empty());
-        when(chatRoomRepositoryV2.save(any(com.joinlivora.backend.chat.domain.ChatRoom.class)))
+        when(chatRoomRepository.findMainRoom(internalCreatorId, "private-session-")).thenReturn(Optional.empty());
+        when(chatRoomRepository.save(any(com.joinlivora.backend.chat.domain.ChatRoom.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         com.joinlivora.backend.chat.domain.ChatRoom created = chatRoomService.getOrCreateRoom(creatorUserId);
@@ -248,7 +256,6 @@ class ChatRoomServiceTest {
     @Test
     void createPublicRoom_ShouldCreateSuccessfully() {
         when(chatRoomRepository.findByName(name)).thenReturn(Optional.empty());
-        when(userRepository.findById(creatorId)).thenReturn(Optional.of(creator));
         when(chatRoomRepository.save(any(ChatRoom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ChatRoom result = chatRoomService.createPublicRoom(name, creatorId);
@@ -263,7 +270,6 @@ class ChatRoomServiceTest {
     @Test
     void createPrivateRoom_ShouldCreateSuccessfully() {
         when(chatRoomRepository.findByName(name)).thenReturn(Optional.empty());
-        when(userRepository.findById(creatorId)).thenReturn(Optional.of(creator));
         when(chatRoomRepository.save(any(ChatRoom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ChatRoom result = chatRoomService.createPrivateRoom(name, creatorId);
@@ -287,7 +293,6 @@ class ChatRoomServiceTest {
     void createPrivateRoom_WithExistingPpvRoom_ShouldThrowException() {
         UUID ppvId = UUID.randomUUID();
         when(chatRoomRepository.findByName(name)).thenReturn(Optional.empty());
-        when(userRepository.findById(creatorId)).thenReturn(Optional.of(creator));
         when(chatRoomRepository.findByPpvContentId(ppvId)).thenReturn(Optional.of(new ChatRoom()));
 
         assertThrows(PpvRoomAlreadyExistsException.class, () -> chatRoomService.createPrivateRoom(name, creatorId, ppvId));
@@ -299,7 +304,6 @@ class ChatRoomServiceTest {
         UUID liveStreamRoomId = UUID.randomUUID();
         String expectedName = "stream-" + liveStreamRoomId;
         when(chatRoomRepository.findByName(expectedName)).thenReturn(Optional.empty());
-        when(userRepository.findById(creatorId)).thenReturn(Optional.of(creator));
         when(chatRoomRepository.save(any(ChatRoom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         ChatRoom result = chatRoomService.createLiveStreamRoom(liveStreamRoomId, creatorId, true, null, true, 10L);
@@ -321,7 +325,6 @@ class ChatRoomServiceTest {
         String expectedName = "stream-" + liveStreamRoomId;
 
         when(chatRoomRepository.findByName(expectedName)).thenReturn(Optional.empty());
-        when(userRepository.findById(creatorId)).thenReturn(Optional.of(creator));
         when(ppvService.getPpvContent(ppvId)).thenReturn(content);
         when(chatRoomRepository.save(any(ChatRoom.class))).thenAnswer(invocation -> invocation.getArgument(0));
 

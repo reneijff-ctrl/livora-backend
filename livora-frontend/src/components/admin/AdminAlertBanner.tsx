@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AdminRealtimeEventDTO } from '../../types';
-import { webSocketService } from '../../websocket/webSocketService';
+import { useWs } from '../../ws/WsContext';
 import { safeRender } from '../../utils/safeRender';
 
 interface Alert extends AdminRealtimeEventDTO {
@@ -37,36 +37,43 @@ const ZapIcon = () => (
 );
 
 const AdminAlertBanner: React.FC = React.memo(() => {
+  const { subscribe, connected } = useWs();
   const [alerts, setAlerts] = useState<Alert[]>([]);
 
   useEffect(() => {
-    const unsub = webSocketService.subscribeToAdminEvents((event) => {
-      let displayType = event.type;
-      let displayMessage = event.message;
+    if (!connected) return;
 
-      // Special alert logic
-      if (event.type === 'PAYMENT_COMPLETED' && event.metadata?.amount > 500) {
-        displayType = 'LARGE_PAYMENT';
-        displayMessage = `💰 WHALE ALERT: ${event.message}`;
-      } else if (event.type === 'STREAM_STARTED' && event.metadata?.viewerCount > 100) {
-        displayType = 'HIGH_TRAFFIC';
-        displayMessage = `🔥 HIGH TRAFFIC: ${event.message}`;
+    const unsub = subscribe('/exchange/amq.topic/admin.events', (msg) => {
+      try {
+        const event = JSON.parse(msg.body) as AdminRealtimeEventDTO;
+        let displayType = event.type;
+        let displayMessage = event.message;
+
+        if (event.type === 'PAYMENT_COMPLETED' && event.metadata?.amount > 500) {
+          displayType = 'LARGE_PAYMENT';
+          displayMessage = `💰 WHALE ALERT: ${event.message}`;
+        } else if (event.type === 'STREAM_STARTED' && event.metadata?.viewerCount > 100) {
+          displayType = 'HIGH_TRAFFIC';
+          displayMessage = `🔥 HIGH TRAFFIC: ${event.message}`;
+        }
+
+        const id = Math.random().toString(36).substr(2, 9);
+        const newAlert: Alert = { ...event, id, displayType, message: displayMessage };
+        
+        setAlerts(prev => [newAlert, ...prev].slice(0, 5));
+
+        setTimeout(() => {
+          setAlerts(prev => prev.filter(a => a.id !== id));
+        }, 5000);
+      } catch (e) {
+        console.error('Failed to parse admin event', e);
       }
-
-      const id = Math.random().toString(36).substr(2, 9);
-      const newAlert: Alert = { ...event, id, displayType, message: displayMessage };
-      
-      setAlerts(prev => [newAlert, ...prev].slice(0, 5));
-
-      setTimeout(() => {
-        setAlerts(prev => prev.filter(a => a.id !== id));
-      }, 5000);
     });
 
     return () => {
-      if (unsub) unsub();
+      if (typeof unsub === 'function') unsub();
     };
-  }, []);
+  }, [subscribe, connected]);
 
   const getAlertStyle = (type: string) => {
     switch (type) {

@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Service for managing stream viewer counts.
@@ -19,17 +20,22 @@ public class ViewerCountService {
 
     private final LiveViewerCounterService liveViewerCounterService;
 
-    public void incrementViewerCount(Long streamSessionId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
+    // -------------------------------------------------------------------------
+    // UUID-based API (new — Stream as single source of truth)
+    // -------------------------------------------------------------------------
+
+    public void incrementViewerCount(UUID streamId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
         if (liveViewerCounterService != null) {
-            liveViewerCounterService.addViewer(streamSessionId, creatorUserId, viewerUserId, sessionId, ip, userAgent);
+            liveViewerCounterService.addViewer(streamId, creatorUserId, viewerUserId, sessionId, ip, userAgent);
         }
     }
 
-    public void decrementViewerCount(Long streamSessionId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
+    public void decrementViewerCount(UUID streamId, Long creatorUserId, Long viewerUserId, String sessionId, String ip, String userAgent) {
         if (liveViewerCounterService != null) {
-            liveViewerCounterService.removeViewer(streamSessionId, creatorUserId, viewerUserId, sessionId, ip, userAgent);
+            liveViewerCounterService.removeViewer(streamId, creatorUserId, viewerUserId, sessionId, ip, userAgent);
         }
     }
+
 
     public long getViewerCount(Long creatorUserId) {
         return liveViewerCounterService != null ? liveViewerCounterService.getViewerCount(creatorUserId) : 0;

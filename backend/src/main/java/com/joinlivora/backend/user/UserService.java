@@ -84,7 +84,7 @@ public class UserService {
     // =========================
     // SUPPORT
     // =========================
-    @Cacheable(value = "users", key = "#email")
+    // @Cacheable(value = "users", key = "#email", unless = "#result == null")
     public User getByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));

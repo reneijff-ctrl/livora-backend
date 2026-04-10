@@ -2,7 +2,8 @@ package com.joinlivora.backend.admin.service;
 
 import com.joinlivora.backend.admin.dto.AdminActivityEventDTO;
 import com.joinlivora.backend.creator.repository.CreatorApplicationRepository;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
+import com.joinlivora.backend.streaming.Stream;
+import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.payment.PaymentRepository;
 import com.joinlivora.backend.report.repository.ReportRepository;
 import com.joinlivora.backend.user.UserRepository;
@@ -26,10 +27,10 @@ public class AdminActivityService {
     private final UserRepository userRepository;
     private final CreatorApplicationRepository creatorApplicationRepository;
     private final ReportRepository reportRepository;
-    private final LivestreamSessionRepository livestreamSessionRepository;
+    private final StreamRepository streamRepository;
     private final PaymentRepository paymentRepository;
 
-    @Cacheable("adminActivity")
+    @Cacheable(value = "adminActivity", unless = "#result == null")
     public List<AdminActivityEventDTO> getRecentActivity() {
         try {
             List<AdminActivityEventDTO> events = new ArrayList<>();
@@ -82,17 +83,16 @@ public class AdminActivityService {
             }
 
             // 4. Streams started
-            if (livestreamSessionRepository != null) {
-                livestreamSessionRepository.findAllByStartedAtIsNotNull(PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "startedAt")))
-                        .forEach(session -> {
-                            if (session != null) {
-                                String username = (session.getCreator() != null && session.getCreator().getUsername() != null) ? session.getCreator().getUsername() : "Unknown";
+            if (streamRepository != null) {
+                streamRepository.findAllByStartedAtIsNotNull(PageRequest.of(0, 20, Sort.by(Sort.Direction.DESC, "startedAt")))
+                        .forEach(stream -> {
+                            if (stream != null) {
+                                String username = (stream.getCreator() != null && stream.getCreator().getUsername() != null) ? stream.getCreator().getUsername() : "Unknown";
                                 events.add(AdminActivityEventDTO.builder()
-                                        .id("STREAM-" + session.getId())
+                                        .id("STREAM-" + stream.getId())
                                         .type("STREAM_STARTED")
                                         .description("Stream started by: " + username)
-                                        .timestamp(session.getStartedAt() != null ? 
-                                                session.getStartedAt().atZone(ZoneId.systemDefault()).toInstant() : Instant.now())
+                                        .timestamp(stream.getStartedAt() != null ? stream.getStartedAt() : Instant.now())
                                         .build());
                             }
                         });

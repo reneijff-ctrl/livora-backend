@@ -37,8 +37,8 @@ public class CreatorFollowController {
 
         if (isNewFollow) {
             try {
-                Long activeSession = liveViewerCounterService.getActiveSessionId(creatorId);
-                if (activeSession != null) {
+                java.util.UUID activeStreamId = liveViewerCounterService.getActiveStreamUuid(creatorId);
+                if (activeStreamId != null) {
                     String displayName = follower.getDisplayName() != null ? follower.getDisplayName() : follower.getUsername();
                     streamAssistantBotService.onNewFollow(creatorId, displayName);
                 }

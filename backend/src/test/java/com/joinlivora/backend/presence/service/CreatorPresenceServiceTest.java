@@ -2,9 +2,7 @@ package com.joinlivora.backend.presence.service;
 
 import com.joinlivora.backend.presence.entity.CreatorPresence;
 import com.joinlivora.backend.presence.repository.CreatorPresenceRepository;
-import com.joinlivora.backend.livestream.repository.LivestreamSessionRepository;
-import com.joinlivora.backend.livestream.domain.LivestreamStatus;
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
+import com.joinlivora.backend.streaming.StreamRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,7 +35,7 @@ class CreatorPresenceServiceTest {
     private OnlineCreatorRegistry onlineCreatorRegistry;
 
     @Mock
-    private LivestreamSessionRepository livestreamSessionRepository;
+    private StreamRepository streamRepository;
 
     @Mock
     private com.joinlivora.backend.creator.repository.CreatorRepository creatorRepository;
@@ -60,7 +58,7 @@ class CreatorPresenceServiceTest {
         creator.getUser().setId(userId);
         
         when(creatorRepository.findById(creatorId)).thenReturn(Optional.of(creator));
-        when(livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(userId, LivestreamStatus.LIVE)).thenReturn(Optional.empty());
+        when(streamRepository.countByCreatorIdAndIsLiveTrue(userId)).thenReturn(0L);
         when(onlineCreatorRegistry.isOnline(creatorId)).thenReturn(true);
 
         assertTrue(creatorPresenceService.isOnline(creatorId));
@@ -75,7 +73,7 @@ class CreatorPresenceServiceTest {
         creator.getUser().setId(userId);
         
         when(creatorRepository.findById(creatorId)).thenReturn(Optional.of(creator));
-        when(livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(userId, LivestreamStatus.LIVE)).thenReturn(Optional.empty());
+        when(streamRepository.countByCreatorIdAndIsLiveTrue(userId)).thenReturn(0L);
         when(onlineCreatorRegistry.isOnline(creatorId)).thenReturn(false);
 
         assertFalse(creatorPresenceService.isOnline(creatorId));
@@ -97,8 +95,7 @@ class CreatorPresenceServiceTest {
         creator.getUser().setId(userId);
         
         when(creatorRepository.findById(creatorId)).thenReturn(Optional.of(creator));
-        when(livestreamSessionRepository.findTopByCreator_IdAndStatusOrderByStartedAtDesc(userId, LivestreamStatus.LIVE))
-                .thenReturn(Optional.of(new LivestreamSession()));
+        when(streamRepository.countByCreatorIdAndIsLiveTrue(userId)).thenReturn(1L);
 
         assertTrue(creatorPresenceService.isOnline(creatorId));
     }
@@ -119,7 +116,6 @@ class CreatorPresenceServiceTest {
     void markOffline_shouldSaveToRepoAndRedis() {
         when(repository.findByCreatorId(creatorId)).thenReturn(Optional.empty());
         when(redisTemplate.getConnectionFactory()).thenReturn(mock(org.springframework.data.redis.connection.RedisConnectionFactory.class));
-        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
         creatorPresenceService.markOffline(creatorId);
 

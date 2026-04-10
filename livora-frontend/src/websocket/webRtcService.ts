@@ -1,5 +1,4 @@
 import { Device, Transport, Producer, Consumer } from 'mediasoup-client';
-import webSocketService from '../websocket/webSocketService';
 import { IMessage } from '@stomp/stompjs';
 
 export enum SignalingType {
@@ -46,6 +45,10 @@ class WebRtcService {
   private currentUserId: number | null = null;
   private currentRoomId: string | null = null;
   private pendingRequests: Map<string, { resolve: Function, reject: Function, timeout: any }> = new Map();
+
+  // Injected WebSocket functions from WsContext
+  private wsSend: ((destination: string, body: string, headers?: Record<string, string>) => void) | null = null;
+  private wsSubscribe: ((destination: string, callback: (message: IMessage) => void) => () => void) | null = null;
 
   /**
    * Send a request and wait for a response.
@@ -128,12 +131,23 @@ class WebRtcService {
    * Subscribes to two destinations:
    * 1. /user/queue/webrtc — for personal request-response signaling (requestId correlation)
    * 2. /exchange/amq.topic/webrtc.room.{roomId} — for broadcast events (NEW_PRODUCER, etc.)
+   *
+   * @param deps.subscribe - subscribe function injected from WsContext
+   * @param deps.send - send function injected from WsContext
    */
-  async connect(roomId: string, onSignal: (msg: SignalingMessage) => void) {
-    webSocketService.connect();
-    await webSocketService.waitForConnection();
+  connect(
+    roomId: string,
+    onSignal: (msg: SignalingMessage) => void,
+    deps: {
+      subscribe: (destination: string, callback: (message: IMessage) => void) => () => void;
+      send: (destination: string, body: string, headers?: Record<string, string>) => void;
+    }
+  ) {
+    // Store injected WS functions for use by sendSignal/sendRequest
+    this.wsSubscribe = deps.subscribe;
+    this.wsSend = deps.send;
 
-    if (this.webrtcUnsub) {
+    if (typeof this.webrtcUnsub === 'function') {
       this.webrtcUnsub();
       this.webrtcUnsub = null;
     }
@@ -141,7 +155,7 @@ class WebRtcService {
     this.currentRoomId = roomId;
 
     // Subscribe to personal queue for request-response signaling
-    const personalUnsub = webSocketService.subscribe('/user/queue/webrtc', (msg: IMessage) => {
+    const personalUnsub = deps.subscribe('/user/queue/webrtc', (msg: IMessage) => {
       try {
         const signal = JSON.parse(msg.body);
         if (!this.handleIncomingSignal(signal)) {
@@ -154,7 +168,7 @@ class WebRtcService {
 
     // Subscribe to room topic for broadcast events (NEW_PRODUCER, STREAM_STOP, etc.)
     const roomTopic = `/exchange/amq.topic/webrtc.room.${roomId}`;
-    const roomUnsub = webSocketService.subscribe(roomTopic, (msg: IMessage) => {
+    const roomUnsub = deps.subscribe(roomTopic, (msg: IMessage) => {
       try {
         const signal = JSON.parse(msg.body);
         if (!this.handleIncomingSignal(signal)) {
@@ -166,8 +180,8 @@ class WebRtcService {
     });
 
     this.webrtcUnsub = () => {
-      personalUnsub();
-      roomUnsub();
+      if (typeof personalUnsub === 'function') personalUnsub();
+      if (typeof roomUnsub === 'function') roomUnsub();
     };
   }
 
@@ -175,11 +189,15 @@ class WebRtcService {
    * Send a signaling message to the server for relay.
    */
   sendSignal(message: SignalingMessage) {
-    webSocketService.send('/app/webrtc.signal', message);
+    if (!this.wsSend) {
+      console.error('WS: Cannot send signal — WebSocket send function not injected. Call connect() first.');
+      return;
+    }
+    this.wsSend('/app/webrtc.signal', message as any);
   }
 
   leaveStream() {
-    if (this.webrtcUnsub) {
+    if (typeof this.webrtcUnsub === 'function') {
       this.webrtcUnsub();
       this.webrtcUnsub = null;
     }

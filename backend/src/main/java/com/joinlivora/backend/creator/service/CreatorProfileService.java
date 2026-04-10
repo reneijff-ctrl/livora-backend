@@ -25,6 +25,7 @@ import com.joinlivora.backend.security.UserPrincipal;
 import com.joinlivora.backend.service.StoreResult;
 import com.joinlivora.backend.util.UrlUtils;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.core.env.Environment;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -53,7 +54,6 @@ public class CreatorProfileService {
     private final UserRepository userRepository;
     private final CreatorFollowService followService;
     private final com.joinlivora.backend.streaming.StreamRepository streamRepository;
-    private final com.joinlivora.backend.livestream.repository.LivestreamSessionRepository livestreamSessionRepository;
     private final com.joinlivora.backend.payout.CreatorEarningRepository earningRepository;
     private final com.joinlivora.backend.payout.PayoutCreatorEarningsRepository payoutCreatorEarningsRepository;
     private final CreatorMonetizationService creatorMonetizationService;
@@ -606,6 +606,10 @@ public class CreatorProfileService {
     }
 
     @Transactional
+    @CacheEvict(
+        value = {"creatorExplore", "creatorSearch", "creatorHomepage"},
+        allEntries = true
+    )
     public CreatorProfileDTO updateProfile(Long userId, UpdateCreatorProfileRequest request) {
         ensureOwnership(userId, "You can only edit your own profile");
         log.info("DEBUG: Starting creator profile update for authenticated user creator: {}. Incoming displayName: {}", userId, request.getDisplayName());
@@ -696,6 +700,10 @@ public class CreatorProfileService {
     }
 
     @Transactional
+    @CacheEvict(
+        value = {"creatorExplore", "creatorSearch", "creatorHomepage"},
+        allEntries = true
+    )
     public CreatorProfileDTO completeOnboarding(Long userId) {
         CreatorProfile profile = creatorProfileRepository.findByUserId(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Creator profile not found for user ID: " + userId));

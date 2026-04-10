@@ -7,10 +7,12 @@ import com.joinlivora.backend.fraud.model.FraudRiskLevel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
+import java.time.Duration;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -32,7 +34,12 @@ class AbuseDetectionServiceTest {
     @Mock
     private com.joinlivora.backend.analytics.AnalyticsEventRepository analyticsEventRepository;
 
-    @InjectMocks
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private ValueOperations<String, String> valueOps;
+
     private AbuseDetectionService abuseDetectionService;
 
     private UUID userId;
@@ -42,6 +49,10 @@ class AbuseDetectionServiceTest {
     void setUp() {
         userId = new UUID(0L, 12345L);
         ipAddress = "192.168.1.1";
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        lenient().when(redisTemplate.hasKey(anyString())).thenReturn(Boolean.FALSE);
+        abuseDetectionService = new AbuseDetectionService(
+                abuseEventRepository, fraudRiskService, tipRepository, analyticsEventRepository, redisTemplate);
     }
 
     @Test
@@ -56,6 +67,9 @@ class AbuseDetectionServiceTest {
         // Given
         when(abuseEventRepository.countByUserIdAndEventTypeAndCreatedAtAfter(eq(userId), eq(AbuseEventType.RAPID_TIPPING), any()))
                 .thenReturn(10L); // Limit is 10
+        // Simulate Redis keys being set after applySoftBlock
+        lenient().when(redisTemplate.hasKey("abuse:softblock:user:" + userId)).thenReturn(Boolean.TRUE);
+        lenient().when(redisTemplate.hasKey("abuse:softblock:ip:" + ipAddress)).thenReturn(Boolean.TRUE);
 
         // When
         abuseDetectionService.trackEvent(userId, ipAddress, AbuseEventType.RAPID_TIPPING, "Rapid tipping detected");
@@ -65,7 +79,8 @@ class AbuseDetectionServiceTest {
                 result.level() == FraudRiskLevel.HIGH && 
                 result.reasons().get(0).contains("RAPID_TIPPING")
         ));
-        
+        verify(valueOps).set(eq("abuse:softblock:user:" + userId), eq("1"), eq(Duration.ofHours(1)));
+        verify(valueOps).set(eq("abuse:softblock:ip:" + ipAddress), eq("1"), eq(Duration.ofHours(1)));
         assertTrue(abuseDetectionService.isSoftBlocked(userId, ipAddress));
     }
 
@@ -88,6 +103,8 @@ class AbuseDetectionServiceTest {
         // Given
         when(abuseEventRepository.countByUserIdAndEventTypeAndCreatedAtAfter(eq(userId), any(), any()))
                 .thenReturn(100L);
+        when(redisTemplate.hasKey("abuse:softblock:user:" + userId)).thenReturn(Boolean.TRUE);
+        when(redisTemplate.hasKey("abuse:softblock:ip:" + ipAddress)).thenReturn(Boolean.TRUE);
         abuseDetectionService.trackEvent(userId, ipAddress, AbuseEventType.MESSAGE_SPAM, "Spam");
 
         // Then
@@ -101,12 +118,14 @@ class AbuseDetectionServiceTest {
         // Given
         when(abuseEventRepository.countByIpAddressAndEventTypeAndCreatedAtAfter(eq(ipAddress), eq(AbuseEventType.LOGIN_BRUTE_FORCE), any()))
                 .thenReturn(10L);
+        when(redisTemplate.hasKey("abuse:softblock:ip:" + ipAddress)).thenReturn(Boolean.TRUE);
 
         // When
         abuseDetectionService.trackEvent(null, ipAddress, AbuseEventType.LOGIN_BRUTE_FORCE, "Brute force");
 
         // Then
         verify(fraudRiskService, never()).recordDecision(any(), any(), any(), any());
+        verify(valueOps).set(eq("abuse:softblock:ip:" + ipAddress), eq("1"), eq(Duration.ofHours(1)));
         assertTrue(abuseDetectionService.isSoftBlocked(null, ipAddress));
     }
 

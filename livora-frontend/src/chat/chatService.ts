@@ -1,4 +1,3 @@
-import { webSocketService } from '../websocket/webSocketService';
 import { Message } from '../types/chat';
 
 /**
@@ -41,8 +40,19 @@ class ChatService {
   /**
    * Sends a chat message to the specified room via WebSocket.
    */
-  public sendMessage(roomId: string | number, senderId: string | number, role: string, content: string, creatorUserId?: string | number) {
-    webSocketService.send('/app/chat.send', {
+  public sendMessage(
+    roomId: string | number,
+    senderId: string | number,
+    role: string,
+    content: string,
+    creatorUserId?: string | number,
+    wsSend?: (destination: string, body: any) => void
+  ) {
+    if (!wsSend) {
+      console.error('chatService.sendMessage: wsSend function not provided');
+      return;
+    }
+    wsSend('/app/chat.send', {
       creatorUserId,
       roomId,
       senderId,

@@ -83,7 +83,15 @@ public class SecurityConfig {
                     csrf
                         .csrfTokenRepository(csrfTokenRepository)
                         .csrfTokenRequestHandler(requestHandler)
-                        .ignoringRequestMatchers("/", "/login", "/register", "/pricing", "/explore", "/api/auth/**", "/api/public/**", "/api/creators/**", "/webhooks/stripe", "/api/stripe/webhook", "/api/stream/auth", "/api/stream/auth-done", "/api/stream/record-done", "/ws/**", "/api/health", "/actuator/health", "/api/actuator/health", "/api/creator/**", "/api/payments/**");
+                        .ignoringRequestMatchers(
+                                "/api/auth/**",
+                                "/api/public/**",
+                                "/webhooks/stripe", "/api/stripe/webhook",
+                                "/api/stream/auth", "/api/stream/auth-done", "/api/stream/record-done",
+                                "/ws/**",
+                                "/api/health", "/actuator/health", "/api/actuator/health",
+                                "/", "/login", "/register", "/pricing", "/explore"
+                        );
                 }
             })
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -188,6 +196,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/stream/auth", "/api/stream/auth-done", "/api/stream/record-done").permitAll()
                 .requestMatchers("/api/stream/live", "/api/stream/vod", "/api/stream/{creatorId}", "/api/stream/room/{id}", "/api/stream/{id}/status", "/api/stream/{id}/pinned", "/api/stream/creator/{creatorId}/pinned", "/api/stream/{id}/highlight").authenticated()
                 .requestMatchers("/api/stream/{id}/hls").authenticated()
+                // /api/hls/validate is called by Nginx auth_request (no JWT cookie) — must be public
+                // /api/hls/token is called by the authenticated frontend player to obtain a short-lived token
+                // /api/hls/** (fallback Spring serving) requires authentication
+                .requestMatchers("/api/hls/validate").permitAll()
+                .requestMatchers("/api/hls/token").authenticated()
                 .requestMatchers("/api/hls/**").authenticated()
                 // Allow any authenticated user to check their own moderator status and use mod actions (controller enforces per-stream permissions)
                 .requestMatchers(HttpMethod.GET, "/api/stream/moderators/check/**").authenticated()

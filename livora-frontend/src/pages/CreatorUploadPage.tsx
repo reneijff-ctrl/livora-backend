@@ -38,7 +38,7 @@ const CreatorUploadPage: React.FC = () => {
       formData.append("unlockPriceTokens", unlockPriceTokens.toString());
 
       await axios.post(
-        "http://localhost:8080/api/creators/content/upload",
+        `${import.meta.env.VITE_API_BASE_URL || '/api'}/creators/content/upload`,
         formData,
         {
           headers: {

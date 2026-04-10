@@ -1,12 +1,18 @@
 package com.joinlivora.backend.livestream.listener;
 
-import com.joinlivora.backend.livestream.event.StreamEndedEvent;
-import com.joinlivora.backend.livestream.event.StreamStartedEvent;
+import com.joinlivora.backend.livestream.event.StreamEndedEventV2;
+import com.joinlivora.backend.livestream.event.StreamStartedEventV2;
 import com.joinlivora.backend.presence.service.CreatorPresenceService;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.streaming.service.StreamModeratorService;
+import com.joinlivora.backend.streaming.service.StreamShardingService;
+import com.joinlivora.backend.streaming.service.ViewerLoadSheddingService;
+import com.joinlivora.backend.streaming.service.StreamAnalyticsService;
+import com.joinlivora.backend.streaming.service.HlsPreWarmService;
 import com.joinlivora.backend.websocket.RealtimeMessage;
 import com.joinlivora.backend.creator.repository.CreatorRepository;
+import com.joinlivora.backend.streaming.service.StreamCacheService;
+import com.joinlivora.backend.streaming.transcode.TranscodeJobPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -32,106 +38,114 @@ public class LivestreamEventListener {
     private final CreatorRepository creatorRepository;
     private final org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
     private final StreamModeratorService streamModeratorService;
+    private final TranscodeJobPublisher transcodeJobPublisher;
+    private final StreamCacheService streamCacheService;
+    private final StreamShardingService streamShardingService;
+    private final ViewerLoadSheddingService viewerLoadSheddingService;
+    private final StreamAnalyticsService streamAnalyticsService;
+    private final HlsPreWarmService hlsPreWarmService;
 
     @EventListener
     @Async
-    public void handleStreamStarted(StreamStartedEvent event) {
-        var session = event.getSession();
-        Long creatorUserId = session.getCreator().getId();
-        log.info("LIVESTREAM-EVENT: Stream started for creator {}", creatorUserId);
+    public void handleStreamStartedV2(StreamStartedEventV2 event) {
+        log.info("Handling StreamStartedEventV2 for stream {} creator {}", event.getStreamId(), event.getCreatorUserId());
+        Long creatorUserId = event.getCreatorUserId();
 
-        // 1. WebSocket broadcaster
-        broadcastStreamState(creatorUserId, "LIVE", session.getId());
-        
+        // Reset UUID-based Redis viewer keys for the new stream
+        liveViewerCounterService.resetViewerCountByStreamId(event.getStreamId(), creatorUserId);
+
+        // Pre-warm CDN cache — fires async HTTP requests before any viewer arrives
+        hlsPreWarmService.preWarmStream(event.getStreamId());
+
+        // Clear any stale shard data from a previous stream run
+        streamShardingService.cleanupStreamShards(event.getStreamId());
+
+        // Initialize analytics for this stream
+        streamAnalyticsService.recordViewerEvent(event.getStreamId(), creatorUserId, "stream-start");
+
+        // Broadcast presence update using UUID stream id
+        broadcastStreamStateV2(creatorUserId, "LIVE", event.getStreamId());
+
         // Broadcast presence update (ONLINE and LIVE)
         creatorRepository.findByUser_Id(creatorUserId).ifPresent(creator -> {
-            Long creatorId = creator.getId();
-            
-            // 2. Presence updater
-            presenceService.markOnline(creatorId);
-            
-            // Broadcasters for general discovery topics
+            presenceService.markOnline(creator.getId());
             Map<String, Object> presenceUpdate = Map.of(
                     "creatorUserId", creatorUserId,
-                    "creator", creatorId,
+                    "creator", creator.getId(),
                     "online", true,
                     "availability", "LIVE"
             );
             messagingTemplate.convertAndSend("/exchange/amq.topic/creators.presence", RealtimeMessage.of("presence:update", presenceUpdate));
         });
-
-        // 3. Cleanup Redis state for new session
-        liveViewerCounterService.resetViewerCount(session.getId(), creatorUserId);
-        
-        // 4. Notification dispatcher
-        log.info("LIVESTREAM-EVENT: Dispatching notifications for stream start of creator {}", creatorUserId);
-        // (Placeholder for actual notification service call)
     }
 
     @EventListener
     @Async
-    public void handleStreamEnded(StreamEndedEvent event) {
-        var session = event.getSession();
-        Long creatorUserId = session.getCreator().getId();
-        log.info("LIVESTREAM-EVENT: Stream ended for creator {}", creatorUserId);
+    public void handleStreamEndedV2(StreamEndedEventV2 event) {
+        log.info("Handling StreamEndedEventV2 for stream {} creator {} reason={}", event.getStreamId(), event.getCreatorUserId(), event.getReason());
+        Long creatorUserId = event.getCreatorUserId();
 
-        // 1. WebSocket broadcaster
-        broadcastStreamState(creatorUserId, "ENDED", session.getId());
-        
-        // Broadcast presence update (still ONLINE but no longer LIVE)
+        // Cleanup UUID-based Redis viewer keys
+        liveViewerCounterService.resetViewerCountByStreamId(event.getStreamId(), creatorUserId);
+
+        // Broadcast stream ended status
+        broadcastStreamStateV2(creatorUserId, "ENDED", event.getStreamId());
+
+        // Broadcast presence update (no longer LIVE)
         creatorRepository.findByUser_Id(creatorUserId).ifPresent(creator -> {
-            Long creatorId = creator.getId();
-            
-            // 2. Presence updater (sync availability)
-            // We don't mark offline because they might still be in chat or browse, 
-            // but availability will resolve to ONLINE instead of LIVE automatically.
-            
             Map<String, Object> presenceUpdate = Map.of(
                     "creatorUserId", creatorUserId,
-                    "creator", creatorId,
+                    "creator", creator.getId(),
                     "online", true,
                     "availability", "ONLINE"
             );
             messagingTemplate.convertAndSend("/exchange/amq.topic/creators.presence", RealtimeMessage.of("presence:update", presenceUpdate));
         });
 
-        // 3. Cleanup Redis state
-        liveViewerCounterService.resetViewerCount(session.getId(), creatorUserId);
-
-        // 4. Clear chat history buffer
+        // Clear chat history buffer
         try {
             redisTemplate.delete("chat:history:" + creatorUserId);
         } catch (Exception e) {
             log.warn("Failed to clear chat history buffer for creator {}: {}", creatorUserId, e.getMessage());
         }
 
-        // 5. Clear stream-only moderators
+        // Clear stream-only moderators
         try {
             streamModeratorService.clearSessionModerators(creatorUserId);
-            log.info("LIVESTREAM-EVENT: Cleared session moderators for creator {}", creatorUserId);
+            log.info("LIVESTREAM-EVENT: Cleared session moderators for creator {} (V2)", creatorUserId);
         } catch (Exception e) {
-            log.warn("Failed to clear session moderators for creator {}: {}", creatorUserId, e.getMessage());
+            log.warn("Failed to clear session moderators for creator {} (V2): {}", creatorUserId, e.getMessage());
         }
 
-        // 6. Notification dispatcher
-        log.info("LIVESTREAM-EVENT: Dispatching notifications for stream end of creator {}", creatorUserId);
-        // (Placeholder for actual notification service call)
+        // Remove stream from Redis ZSET cache (explore page)
+        streamCacheService.removeStream(event.getStreamId());
+
+        // Signal the transcode-worker to stop the FFmpeg process and clean up HLS files
+        transcodeJobPublisher.publishStopSignal(event.getStreamId());
+
+        // Clean up sharded viewer keys
+        streamShardingService.cleanupStreamShards(event.getStreamId());
+
+        // Clear load shedding flags
+        viewerLoadSheddingService.clearSheddingState(event.getStreamId());
+
+        // Finalize analytics — keep metrics for 7 days, mark stream as ended
+        streamAnalyticsService.finalizeStreamAnalytics(event.getStreamId());
     }
 
-    private void broadcastStreamState(Long creatorUserId, String status, Long sessionId) {
+    private void broadcastStreamStateV2(Long creatorUserId, String status, java.util.UUID streamId) {
         RealtimeMessage streamUpdate = RealtimeMessage.builder()
                 .type("stream:state:update")
                 .timestamp(Instant.now())
                 .payload(Map.of(
                         "creatorUserId", creatorUserId,
-                        "sessionId", sessionId,
+                        "streamId", streamId.toString(),
                         "status", status
                 ))
                 .build();
-        
+
         messagingTemplate.convertAndSend("/exchange/amq.topic/stream.v2.creator." + creatorUserId + ".status", streamUpdate);
-        
-        // Also broadcast to the session-specific topic
-        messagingTemplate.convertAndSend("/exchange/amq.topic/stream.v2.session." + sessionId + ".status", streamUpdate);
+        messagingTemplate.convertAndSend("/exchange/amq.topic/stream.v2.stream." + streamId + ".status", streamUpdate);
     }
+
 }

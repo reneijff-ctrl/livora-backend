@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import webSocketService from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import { useAuth } from '../auth/useAuth';
 
 interface AdminEvent {
@@ -11,6 +11,7 @@ interface AdminEvent {
 
 const AdminRealtimeDashboard: React.FC = () => {
   const { user, authLoading } = useAuth();
+  const { subscribe, connected } = useWs();
   const [events, setEvents] = useState<AdminEvent[]>([]);
   const [metrics, setMetrics] = useState<any>({});
 
@@ -21,7 +22,7 @@ const AdminRealtimeDashboard: React.FC = () => {
     }
 
     // Subscribe to admin activity
-    const unsubActivity = webSocketService.subscribe('/exchange/amq.topic/admin.activity', (msg) => {
+    const unsubActivity = subscribe('/exchange/amq.topic/admin.activity', (msg) => {
       const data = JSON.parse(msg.body);
       const newEvent: AdminEvent = {
         id: Date.now(),
@@ -33,7 +34,7 @@ const AdminRealtimeDashboard: React.FC = () => {
     });
 
     // Subscribe to admin payments
-    const unsubPayments = webSocketService.subscribe('/exchange/amq.topic/admin.payments', (msg) => {
+    const unsubPayments = subscribe('/exchange/amq.topic/admin.payments', (msg) => {
       const data = JSON.parse(msg.body);
       const newEvent: AdminEvent = {
         id: Date.now(),
@@ -45,17 +46,17 @@ const AdminRealtimeDashboard: React.FC = () => {
     });
 
     // Subscribe to admin metrics
-    const unsubMetrics = webSocketService.subscribe('/exchange/amq.topic/admin.metrics', (msg) => {
+    const unsubMetrics = subscribe('/exchange/amq.topic/admin.metrics', (msg) => {
       const data = JSON.parse(msg.body);
       setMetrics((prev: any) => ({ ...prev, lastEvent: data.event, lastTimestamp: data.timestamp }));
     });
 
     return () => {
-      unsubActivity();
-      unsubPayments();
-      unsubMetrics();
+      if (typeof unsubActivity === 'function') unsubActivity();
+      if (typeof unsubPayments === 'function') unsubPayments();
+      if (typeof unsubMetrics === 'function') unsubMetrics();
     };
-  }, [user, authLoading]);
+  }, [user, authLoading, subscribe, connected]);
 
   return (
     <div style={{ marginTop: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>

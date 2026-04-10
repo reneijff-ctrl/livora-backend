@@ -306,7 +306,7 @@ public class StreamChatController {
         } else {
             // Fallback if service not available
             if (liveStreamServiceV2 != null) {
-                Stream active = null;
+                StreamCacheDTO active = null;
                 try {
                     active = liveStreamServiceV2.getActiveStream(creatorUserId);
                 } catch (Exception ignored) {}

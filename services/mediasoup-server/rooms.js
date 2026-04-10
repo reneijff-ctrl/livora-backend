@@ -146,6 +146,60 @@ const getGlobalStats = () => {
   };
 };
 
+/**
+ * Returns aggregate bitrate stats across all rooms.
+ * Iterates producers (inbound) and consumers (outbound) to sum bytesReceived/bytesSent.
+ */
+const getAggregateBitrateStats = async () => {
+  let totalBitrateIn = 0;
+  let totalBitrateOut = 0;
+  const perRoom = [];
+
+  for (const [roomId, room] of rooms.entries()) {
+    let roomBitrateIn = 0;
+    let roomBitrateOut = 0;
+
+    for (const producer of room.producers.values()) {
+      try {
+        const stats = await producer.getStats();
+        for (const s of stats) {
+          if (s.type === 'inbound-rtp' && typeof s.bitrate === 'number') {
+            roomBitrateIn += s.bitrate;
+          }
+        }
+      } catch (_) { /* producer may have closed */ }
+    }
+
+    for (const consumer of room.consumers.values()) {
+      try {
+        const stats = await consumer.getStats();
+        for (const s of stats) {
+          if (s.type === 'outbound-rtp' && typeof s.bitrate === 'number') {
+            roomBitrateOut += s.bitrate;
+          }
+        }
+      } catch (_) { /* consumer may have closed */ }
+    }
+
+    totalBitrateIn += roomBitrateIn;
+    totalBitrateOut += roomBitrateOut;
+    perRoom.push({ roomId, bitrateIn: roomBitrateIn, bitrateOut: roomBitrateOut, viewers: room.consumers.size });
+  }
+
+  return { totalBitrateIn, totalBitrateOut, perRoom };
+};
+
+/**
+ * Returns per-room viewer counts (consumers per room).
+ */
+const getViewerCounts = () => {
+  const result = [];
+  for (const [roomId, room] of rooms.entries()) {
+    result.push({ roomId, viewers: room.consumers.size, producers: room.producers.size });
+  }
+  return result;
+};
+
 const getRoomStats = async (roomId) => {
   const room = rooms.get(roomId);
   if (!room) return null;
@@ -199,6 +253,8 @@ module.exports = {
   getAllRooms,
   getGlobalStats,
   getRoomStats,
+  getAggregateBitrateStats,
+  getViewerCounts,
   ensureProducerOnRouter,
   getLeastLoadedRouter,
 };

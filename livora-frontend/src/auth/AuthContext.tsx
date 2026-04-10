@@ -1,5 +1,4 @@
 import React, { createContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
-import webSocketService from "../websocket/webSocketService";
 import { AuthContextType } from '../types';
 import authStore, { AuthState } from '../store/authStore';
 
@@ -37,7 +36,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = useCallback(() => {
     authStore.logout();
-    webSocketService.disconnect();
+    // WebSocket disconnect is handled by WsContext reacting to auth state change
   }, []);
 
   const bootstrap = useCallback(async () => { await authStore.refresh(); }, []);

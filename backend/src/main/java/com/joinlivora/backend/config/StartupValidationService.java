@@ -110,9 +110,10 @@ public class StartupValidationService implements CommandLineRunner {
 
     private void validateTables() throws Exception {
         log.info("STARTUP CHECK: Validating required tables existence...");
+        // NOTE: "livestream_sessions" was intentionally removed — the table was dropped in V36 migration
+        // as part of the LivestreamSession (V1) full removal. Streams are now tracked exclusively via "streams".
         String[] requiredTables = {
                 "streams",
-                "livestream_sessions",
                 "users",
                 "payments"
         };

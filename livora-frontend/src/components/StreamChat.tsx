@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth/useAuth';
-import webSocketService from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import { showToast } from './Toast';
 import badgeService, { UserBadge } from '../api/badgeService';
 
@@ -32,6 +32,7 @@ const GIF_URL_REGEX = /https?:\/\/\S+\.gif(?:\?\S+)?/i;
 
 const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minChatTokens = 0 }) => {
   const { user, tokenBalance, refreshTokenBalance } = useAuth();
+  const { subscribe, send, connected } = useWs();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isPaidMessage, setIsPaidMessage] = useState(false);
@@ -89,9 +90,9 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
       }
     };
 
-    const unsubscribe = webSocketService.subscribe(`/exchange/amq.topic/chat.${creatorUserId}`, handleIncomingMessage);
+    const unsubscribe = subscribe(`/exchange/amq.topic/chat.${creatorUserId}`, handleIncomingMessage);
 
-    const unsubscribePrivate = webSocketService.subscribe('/user/queue/chat', (msg) => {
+    const unsubscribePrivate = subscribe('/user/queue/chat', (msg) => {
       const data = JSON.parse(msg.body);
       // For stream chat, roomId might be stream-${streamId} or just streamId
       const msgRoomId = data.roomId || (data.chatMessage && data.chatMessage.roomId);
@@ -100,7 +101,7 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
       }
     });
 
-    const unsubNotifications = webSocketService.subscribe('/user/queue/notifications', (msg) => {
+    const unsubNotifications = subscribe('/user/queue/notifications', (msg) => {
       const data = JSON.parse(msg.body);
       if (data.type === 'DISCONNECT') {
         showToast(data.payload?.reason || 'Disconnected', 'error');
@@ -118,11 +119,11 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
     loadBadges();
 
     return () => {
-      unsubscribe();
-      unsubscribePrivate();
-      unsubNotifications();
+      if (typeof unsubscribe === 'function') unsubscribe();
+      if (typeof unsubscribePrivate === 'function') unsubscribePrivate();
+      if (typeof unsubNotifications === 'function') unsubNotifications();
     };
-  }, [streamId]);
+  }, [streamId, subscribe, connected]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -174,7 +175,7 @@ const StreamChat: React.FC<StreamChatProps> = ({ streamId, creatorUserId, minCha
     // Identify highest priority badge
     const badgeType = myBadges.length > 0 ? myBadges[0].badge.name : undefined;
 
-    webSocketService.send('/app/chat.send', {
+    send('/app/chat.send', {
       creatorUserId: creatorUserId,
       content: input,
       type: 'CHAT',

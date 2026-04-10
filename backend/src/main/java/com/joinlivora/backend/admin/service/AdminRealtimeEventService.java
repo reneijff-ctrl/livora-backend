@@ -3,7 +3,8 @@ package com.joinlivora.backend.admin.service;
 import com.joinlivora.backend.admin.dto.AdminAbuseEventDTO;
 import com.joinlivora.backend.admin.dto.AdminRealtimeEventDTO;
 import com.joinlivora.backend.creator.model.CreatorApplication;
-import com.joinlivora.backend.livestream.domain.LivestreamSession;
+import com.joinlivora.backend.livestream.event.StreamEndedEventV2;
+import com.joinlivora.backend.livestream.event.StreamStartedEventV2;
 import com.joinlivora.backend.moderation.dto.ModerationDecisionDTO;
 import com.joinlivora.backend.payment.Payment;
 import com.joinlivora.backend.report.model.Report;
@@ -78,65 +79,67 @@ public class AdminRealtimeEventService {
         broadcast(event);
     }
 
-    public void broadcastStreamStarted(LivestreamSession stream, int viewerCount, int fraudRiskScore) {
-        AdminRealtimeEventDTO event = AdminRealtimeEventDTO.builder()
+    /**
+     * Broadcasts the STREAM_STARTED admin event from a {@link StreamStartedEventV2} payload.
+     */
+    public void broadcastStreamStarted(StreamStartedEventV2 event, int viewerCount, int fraudRiskScore) {
+        AdminRealtimeEventDTO dto = AdminRealtimeEventDTO.builder()
                 .type("STREAM_STARTED")
                 .eventType("STREAM_STARTED")
-                .message("Stream started by: " + (stream.getCreator() != null ? stream.getCreator().getUsername() : "Unknown"))
+                .message("Stream started by creator " + event.getCreatorUserId())
                 .severity("INFO")
-                .streamId(stream.getId() != null ? stream.getId().toString() : null)
-                .timestamp(stream.getStartedAt().atZone(java.time.ZoneId.systemDefault()).toInstant())
+                .streamId(event.getStreamId().toString())
+                .timestamp(event.getStartedAt())
                 .metadata(Map.of(
-                        "sessionId", stream.getId() != null ? stream.getId() : UUID.randomUUID(),
-                        "creatorId", stream.getCreator() != null ? stream.getCreator().getId() : 0,
-                        "username", stream.getCreator() != null ? stream.getCreator().getUsername() : "Unknown",
+                        "streamId", event.getStreamId().toString(),
+                        "creatorUserId", event.getCreatorUserId(),
+                        "isPaid", event.isPaid(),
+                        "admissionPrice", event.getAdmissionPrice() != null ? event.getAdmissionPrice().toPlainString() : "0",
                         "viewerCount", viewerCount,
                         "fraudRiskScore", fraudRiskScore,
-                        "messageRate", 0, // Placeholder
-                        "startedAt", stream.getStartedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toString()
-                    ))
+                        "startedAt", event.getStartedAt().toString()
+                ))
                 .build();
-        broadcast(event);
+        broadcast(dto);
     }
 
-    public void broadcastStreamStopped(LivestreamSession stream, int viewerCount) {
-        broadcastStreamStopped(stream, viewerCount, "unknown", null);
-    }
-
-    public void broadcastStreamStopped(LivestreamSession stream, int viewerCount, String reason, UUID unifiedStreamId) {
+    /**
+     * Broadcasts the STREAM_STOPPED admin event from a {@link StreamEndedEventV2} payload.
+     */
+    public void broadcastStreamStopped(StreamEndedEventV2 event, int viewerCount) {
+        String reason = event.getReason() != null ? event.getReason() : "unknown";
         String message;
-        switch (reason != null ? reason : "unknown") {
+        switch (reason) {
             case "creator":
-                message = "Creator ended the stream" + (stream.getCreator() != null ? ": " + stream.getCreator().getUsername() : "");
+                message = "Creator ended the stream (creator " + event.getCreatorUserId() + ")";
                 break;
             case "admin":
-                message = "Stream stopped by admin" + (stream.getCreator() != null ? ": " + stream.getCreator().getUsername() : "");
+                message = "Stream stopped by admin (creator " + event.getCreatorUserId() + ")";
                 break;
             case "disconnect":
-                message = "Stream ended unexpectedly" + (stream.getCreator() != null ? ": " + stream.getCreator().getUsername() : "");
+                message = "Stream ended unexpectedly (creator " + event.getCreatorUserId() + ")";
                 break;
             default:
-                message = "Stream ended" + (stream.getCreator() != null ? ": " + stream.getCreator().getUsername() : "");
+                message = "Stream ended (creator " + event.getCreatorUserId() + ")";
                 break;
         }
 
-        AdminRealtimeEventDTO event = AdminRealtimeEventDTO.builder()
+        AdminRealtimeEventDTO dto = AdminRealtimeEventDTO.builder()
                 .type("STREAM_STOPPED")
                 .eventType("STREAM_STOPPED")
                 .message(message)
                 .severity("admin".equals(reason) ? "WARNING" : "INFO")
-                .streamId(unifiedStreamId != null ? unifiedStreamId.toString() : (stream.getId() != null ? stream.getId().toString() : null))
-                .timestamp(Instant.now())
+                .streamId(event.getStreamId().toString())
+                .timestamp(event.getEndedAt() != null ? event.getEndedAt() : Instant.now())
                 .metadata(Map.of(
-                        "sessionId", stream.getId() != null ? stream.getId() : UUID.randomUUID(),
-                        "streamId", unifiedStreamId != null ? unifiedStreamId.toString() : "",
-                        "creatorId", stream.getCreator() != null ? stream.getCreator().getId() : 0,
-                        "username", stream.getCreator() != null ? stream.getCreator().getUsername() : "Unknown",
+                        "streamId", event.getStreamId().toString(),
+                        "creatorUserId", event.getCreatorUserId(),
+                        "isPaid", event.isPaid(),
                         "viewerCount", viewerCount,
-                        "reason", reason != null ? reason : "unknown"
+                        "reason", reason
                 ))
                 .build();
-        broadcast(event);
+        broadcast(dto);
     }
 
     public void broadcastPaymentCompleted(Payment payment) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth/useAuth';
-import webSocketService from '../websocket/webSocketService';
+import { useWs } from '../ws/WsContext';
 import chatRoomService, { ChatRoomDto } from '../api/chatRoomService';
 import { showToast } from './Toast';
 
@@ -21,6 +21,7 @@ interface ChatMessage {
 
 const GlobalChat: React.FC = () => {
   const { user, hasPremiumAccess } = useAuth();
+  const { subscribe, send } = useWs();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [rooms, setRooms] = useState<ChatRoomDto[]>([]);
@@ -94,21 +95,21 @@ const GlobalChat: React.FC = () => {
       }
     };
 
-    const unsubChat = webSocketService.subscribe(`/exchange/amq.topic/chat.${activeRoom.creatorId}`, handleChatMessage);
+    const unsubChat = subscribe(`/exchange/amq.topic/chat.${activeRoom.creatorId}`, handleChatMessage);
 
-    const unsubPresence = webSocketService.subscribe('/exchange/amq.topic/presence', (msg) => {
+    const unsubPresence = subscribe('/exchange/amq.topic/presence', (msg) => {
       const data = JSON.parse(msg.body);
       if (data.onlineCount !== undefined) {
         setOnlineCount(data.onlineCount);
       }
     });
 
-    const unsubErrors = webSocketService.subscribe('/user/queue/errors', (msg) => {
+    const unsubErrors = subscribe('/user/queue/errors', (msg) => {
       const data = JSON.parse(msg.body);
       showToast(data.payload?.message || 'WebSocket Error', 'error');
     });
 
-    const unsubNotifications = webSocketService.subscribe('/user/queue/notifications', (msg) => {
+    const unsubNotifications = subscribe('/user/queue/notifications', (msg) => {
       const data = JSON.parse(msg.body);
       if (data.type === 'DISCONNECT') {
         showToast(data.payload?.reason || 'Disconnected', 'error');
@@ -116,18 +117,18 @@ const GlobalChat: React.FC = () => {
     });
 
     // Send join message
-    webSocketService.send('/app/chat.join', { 
+    send('/app/chat.join', { 
       creatorUserId: activeRoom.creatorId,
       roomId: activeRoom.id 
     });
 
     return () => {
-      unsubChat();
-      unsubPresence();
-      unsubErrors();
-      unsubNotifications();
+      if (typeof unsubChat === 'function') unsubChat();
+      if (typeof unsubPresence === 'function') unsubPresence();
+      if (typeof unsubErrors === 'function') unsubErrors();
+      if (typeof unsubNotifications === 'function') unsubNotifications();
     };
-  }, [activeRoom, user]);
+  }, [activeRoom, user, subscribe, send]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -142,7 +143,7 @@ const GlobalChat: React.FC = () => {
       return;
     }
 
-    webSocketService.send('/app/chat.send', {
+    send('/app/chat.send', {
       creatorUserId: activeRoom.creatorId,
       content: input,
       type: 'CHAT'
