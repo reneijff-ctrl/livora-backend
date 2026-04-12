@@ -1,0 +1,92 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "mediasoup-system",
+    "title": "Mediasoup — System Dashboard",
+    "tags": ["mediasoup", "system", "livora"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Worker CPU Usage (user + system rate)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          {
+            "expr": "rate(mediasoup_worker_cpu_user_ms[1m]) + rate(mediasoup_worker_cpu_system_ms[1m])",
+            "legendFormat": "{{ node }} pid={{ pid }}"
+          }
+        ],
+        "fieldConfig": { "defaults": { "unit": "ms/s", "max": 1000 } }
+      },
+      {
+        "id": 2,
+        "title": "Process Memory RSS (per node)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          { "expr": "mediasoup_process_memory_rss_bytes", "legendFormat": "{{ node }}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "bytes" } }
+      },
+      {
+        "id": 3,
+        "title": "Worker Memory RSS (per worker)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "targets": [
+          { "expr": "mediasoup_worker_memory_rss_kb * 1024", "legendFormat": "{{ node }} pid={{ pid }}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "bytes" } }
+      },
+      {
+        "id": 4,
+        "title": "Active Transports (per node)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "targets": [
+          { "expr": "mediasoup_transports_total", "legendFormat": "{{ node }}" }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Node Uptime",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 12, "x": 0, "y": 16 },
+        "targets": [
+          { "expr": "mediasoup_uptime_seconds", "legendFormat": "{{ node }}" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "s" } }
+      },
+      {
+        "id": 6,
+        "title": "Workers per Node",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 12, "x": 12, "y": 16 },
+        "targets": [
+          { "expr": "mediasoup_workers_total", "legendFormat": "{{ node }}" }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Draining Status",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 24, "x": 0, "y": 20 },
+        "targets": [
+          { "expr": "mediasoup_draining", "legendFormat": "{{ node }}" }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "Active", "color": "green" }, "1": { "text": "Draining", "color": "orange" } } }
+            ]
+          }
+        }
+      }
+    ],
+    "schemaVersion": 39
+  },
+  "overwrite": true
+}

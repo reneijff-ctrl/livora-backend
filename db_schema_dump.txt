@@ -1,0 +1,1055 @@
+﻿           table_name           |        column_name         |          data_type          | is_nullable 
+--------------------------------+----------------------------+-----------------------------+-------------
+ abuse_events                   | created_at                 | timestamp with time zone    | NO
+ abuse_events                   | id                         | uuid                        | NO
+ abuse_events                   | user_id                    | uuid                        | YES
+ abuse_events                   | description                | text                        | YES
+ abuse_events                   | event_type                 | character varying           | NO
+ abuse_events                   | ip_address                 | character varying           | YES
+ abuse_reports                  | created_at                 | timestamp with time zone    | NO
+ abuse_reports                  | id                         | bigint                      | NO
+ abuse_reports                  | reporter_id                | bigint                      | NO
+ abuse_reports                  | target_user_id             | bigint                      | YES
+ abuse_reports                  | target_stream_id           | uuid                        | YES
+ abuse_reports                  | reason                     | character varying           | NO
+ abuse_reports                  | status                     | character varying           | NO
+ adaptive_tip_experiments       | id                         | uuid                        | NO
+ adaptive_tip_experiments       | confidence_tier            | character varying           | YES
+ adaptive_tip_experiments       | created_at                 | timestamp without time zone | YES
+ adaptive_tip_experiments       | evaluated_at               | timestamp without time zone | YES
+ adaptive_tip_experiments       | experiment_group           | character varying           | YES
+ adaptive_tip_experiments       | momentum                   | double precision            | NO
+ adaptive_tip_experiments       | previous_floor             | double precision            | NO
+ adaptive_tip_experiments       | revenue_after24h           | double precision            | YES
+ adaptive_tip_experiments       | revenue_after7d            | double precision            | YES
+ adaptive_tip_experiments       | risk_score                 | integer                     | NO
+ adaptive_tip_experiments       | success                    | boolean                     | YES
+ adaptive_tip_experiments       | suggested_floor            | double precision            | NO
+ adaptive_tip_experiments       | creator_id                 | bigint                      | NO
+ adaptive_tip_experiments       | baseline_revenue           | double precision            | YES
+ adaptive_tip_experiments       | new_risk_score             | integer                     | YES
+ adaptive_tip_experiments       | revenue_lift               | double precision            | YES
+ adaptive_tip_experiments       | risk_delta                 | double precision            | YES
+ aml_incidents                  | created_at                 | timestamp with time zone    | NO
+ aml_incidents                  | id                         | uuid                        | NO
+ aml_incidents                  | user_id                    | uuid                        | NO
+ aml_incidents                  | description                | text                        | YES
+ aml_incidents                  | risk_level                 | character varying           | NO
+ aml_risk_scores                | score                      | integer                     | NO
+ aml_risk_scores                | last_evaluated_at          | timestamp with time zone    | NO
+ aml_risk_scores                | id                         | uuid                        | NO
+ aml_risk_scores                | user_id                    | uuid                        | NO
+ aml_risk_scores                | level                      | character varying           | NO
+ aml_rules                      | enabled                    | boolean                     | NO
+ aml_rules                      | threshold                  | integer                     | NO
+ aml_rules                      | id                         | uuid                        | NO
+ aml_rules                      | code                       | character varying           | NO
+ aml_rules                      | description                | character varying           | NO
+ analytics_events               | created_at                 | timestamp with time zone    | NO
+ analytics_events               | user_id                    | bigint                      | YES
+ analytics_events               | id                         | uuid                        | NO
+ analytics_events               | event_type                 | character varying           | NO
+ analytics_events               | funnel_id                  | character varying           | YES
+ analytics_events               | metadata                   | jsonb                       | YES
+ audit_logs                     | created_at                 | timestamp with time zone    | NO
+ audit_logs                     | actor_user_id              | uuid                        | YES
+ audit_logs                     | id                         | uuid                        | NO
+ audit_logs                     | target_id                  | uuid                        | YES
+ audit_logs                     | action                     | character varying           | NO
+ audit_logs                     | ip_address                 | character varying           | YES
+ audit_logs                     | metadata                   | text                        | YES
+ audit_logs                     | target_type                | character varying           | NO
+ audit_logs                     | user_agent                 | character varying           | YES
+ badges                         | duration_days              | integer                     | YES
+ badges                         | created_at                 | timestamp with time zone    | YES
+ badges                         | token_cost                 | bigint                      | NO
+ badges                         | id                         | uuid                        | NO
+ badges                         | name                       | character varying           | NO
+ chargeback_audits              | cluster_size               | integer                     | YES
+ chargeback_audits              | created_at                 | timestamp with time zone    | NO
+ chargeback_audits              | creator_id                 | bigint                      | YES
+ chargeback_audits              | chargeback_id              | uuid                        | NO
+ chargeback_audits              | id                         | uuid                        | NO
+ chargeback_audits              | user_id                    | uuid                        | NO
+ chargeback_audits              | actions_taken              | text                        | YES
+ chargeback_audits              | reason                     | text                        | YES
+ chargeback_audits              | risk_level                 | character varying           | YES
+ chargeback_cases               | amount                     | numeric                     | NO
+ chargeback_cases               | fraud_score_at_time        | integer                     | NO
+ chargeback_cases               | created_at                 | timestamp with time zone    | NO
+ chargeback_cases               | updated_at                 | timestamp with time zone    | YES
+ chargeback_cases               | id                         | uuid                        | NO
+ chargeback_cases               | user_id                    | uuid                        | NO
+ chargeback_cases               | currency                   | character varying           | NO
+ chargeback_cases               | payment_intent_id          | character varying           | NO
+ chargeback_cases               | reason                     | character varying           | YES
+ chargeback_cases               | status                     | character varying           | NO
+ chargebacks                    | amount                     | numeric                     | YES
+ chargebacks                    | created_at                 | timestamp with time zone    | NO
+ chargebacks                    | id                         | bigint                      | NO
+ chargebacks                    | resolved_at                | timestamp with time zone    | YES
+ chargebacks                    | user_id                    | bigint                      | NO
+ chargebacks                    | currency                   | character varying           | YES
+ chargebacks                    | reason                     | character varying           | YES
+ chargebacks                    | status                     | character varying           | YES
+ chargebacks                    | stripe_charge_id           | character varying           | NO
+ chat_messages                  | created_at                 | timestamp with time zone    | NO
+ chat_messages                  | id                         | bigint                      | NO
+ chat_messages                  | room_id                    | bigint                      | NO
+ chat_messages                  | sender_id                  | bigint                      | NO
+ chat_messages                  | content                    | text                        | YES
+ chat_messages                  | sender_role                | character varying           | YES
+ chat_moderations               | created_at                 | timestamp with time zone    | NO
+ chat_moderations               | expires_at                 | timestamp with time zone    | YES
+ chat_moderations               | id                         | bigint                      | NO
+ chat_moderations               | moderator_id               | bigint                      | NO
+ chat_moderations               | target_user_id             | bigint                      | YES
+ chat_moderations               | action                     | character varying           | NO
+ chat_moderations               | message_id                 | character varying           | YES
+ chat_moderations               | reason                     | character varying           | YES
+ chat_moderations               | room_id                    | character varying           | YES
+ chat_rooms                     | is_live                    | boolean                     | NO
+ chat_rooms                     | is_paid                    | boolean                     | NO
+ chat_rooms                     | is_private                 | boolean                     | NO
+ chat_rooms                     | created_at                 | timestamp with time zone    | NO
+ chat_rooms                     | created_by                 | bigint                      | NO
+ chat_rooms                     | price_per_message          | bigint                      | YES
+ chat_rooms                     | id                         | uuid                        | NO
+ chat_rooms                     | ppv_content_id             | uuid                        | YES
+ chat_rooms                     | chat_mode                  | character varying           | NO
+ chat_rooms                     | name                       | character varying           | NO
+ chat_rooms_v2                  | is_live                    | boolean                     | NO
+ chat_rooms_v2                  | activated_at               | timestamp with time zone    | YES
+ chat_rooms_v2                  | created_at                 | timestamp with time zone    | NO
+ chat_rooms_v2                  | creator_id                 | bigint                      | NO
+ chat_rooms_v2                  | id                         | bigint                      | NO
+ chat_rooms_v2                  | status                     | character varying           | NO
+ chat_rooms_v2                  | room_type                  | character varying           | NO
+ chat_rooms_v2                  | viewer_id                  | bigint                      | YES
+ chat_rooms_v2                  | chat_mode                  | character varying           | NO
+ chat_rooms_v2                  | is_private                 | boolean                     | NO
+ chat_rooms_v2                  | is_paid                    | boolean                     | NO
+ chat_rooms_v2                  | price_per_message          | bigint                      | YES
+ chat_rooms_v2                  | name                       | character varying           | YES
+ chat_rooms_v2                  | ppv_content_id             | uuid                        | YES
+ chat_violation_logs            | creator_id                 | bigint                      | NO
+ chat_violation_logs            | id                         | bigint                      | NO
+ chat_violation_logs            | timestamp                  | timestamp with time zone    | NO
+ chat_violation_logs            | user_id                    | bigint                      | NO
+ chat_violation_logs            | message                    | character varying           | NO
+ chat_violation_logs            | severity                   | character varying           | NO
+ content                        | disabled                   | boolean                     | NO
+ content                        | created_at                 | timestamp with time zone    | YES
+ content                        | creator_id                 | bigint                      | NO
+ content                        | id                         | uuid                        | NO
+ content                        | access_level               | character varying           | NO
+ content                        | description                | text                        | YES
+ content                        | media_url                  | character varying           | YES
+ content                        | thumbnail_url              | character varying           | YES
+ content                        | title                      | character varying           | NO
+ content                        | unlock_price_tokens        | integer                     | NO
+ content                        | type                       | character varying           | NO
+ content_analytics              | date                       | date                        | NO
+ content_analytics              | revenue                    | numeric                     | NO
+ content_analytics              | content_id                 | uuid                        | NO
+ content_analytics              | creator_id                 | uuid                        | NO
+ content_analytics              | id                         | uuid                        | NO
+ content_analytics              | content_type               | character varying           | NO
+ content_unlocks                | id                         | uuid                        | NO
+ content_unlocks                | user_id                    | bigint                      | NO
+ content_unlocks                | content_id                 | uuid                        | NO
+ content_unlocks                | unlocked_at                | timestamp without time zone | NO
+ creator_analytics              | date                       | date                        | NO
+ creator_analytics              | live_stream_earnings       | numeric                     | NO
+ creator_analytics              | messages_per_viewer        | double precision            | NO
+ creator_analytics              | ppv_earnings               | numeric                     | NO
+ creator_analytics              | subscription_earnings      | numeric                     | NO
+ creator_analytics              | tips_earnings              | numeric                     | NO
+ creator_analytics              | total_earnings             | numeric                     | NO
+ creator_analytics              | avg_session_duration       | bigint                      | NO
+ creator_analytics              | returning_viewers          | bigint                      | NO
+ creator_analytics              | subscriptions_count        | bigint                      | NO
+ creator_analytics              | total_views                | bigint                      | NO
+ creator_analytics              | unique_viewers             | bigint                      | NO
+ creator_analytics              | creator_id                 | uuid                        | NO
+ creator_analytics              | id                         | uuid                        | NO
+ creator_applications           | id                         | bigint                      | NO
+ creator_applications           | user_id                    | bigint                      | NO
+ creator_applications           | status                     | character varying           | NO
+ creator_applications           | stripe_account_id          | character varying           | YES
+ creator_applications           | terms_accepted             | boolean                     | NO
+ creator_applications           | age_verified               | boolean                     | NO
+ creator_applications           | submitted_at               | timestamp without time zone | NO
+ creator_applications           | approved_at                | timestamp without time zone | YES
+ creator_applications           | review_notes               | text                        | YES
+ creator_collusion_records      | score                      | integer                     | NO
+ creator_collusion_records      | evaluated_at               | timestamp with time zone    | YES
+ creator_collusion_records      | creator_id                 | uuid                        | NO
+ creator_collusion_records      | id                         | uuid                        | NO
+ creator_collusion_records      | detected_pattern           | text                        | YES
+ creator_earnings               | available_tokens           | bigint                      | NO
+ creator_earnings               | locked_tokens              | bigint                      | NO
+ creator_earnings               | total_earned_tokens        | bigint                      | NO
+ creator_earnings               | updated_at                 | timestamp with time zone    | NO
+ creator_earnings               | user_id                    | bigint                      | NO
+ creator_earnings               | id                         | uuid                        | NO
+ creator_earnings_balances      | available_balance          | numeric                     | NO
+ creator_earnings_balances      | payouts_disabled           | boolean                     | NO
+ creator_earnings_balances      | pending_balance            | numeric                     | NO
+ creator_earnings_balances      | total_earned               | numeric                     | NO
+ creator_earnings_balances      | created_at                 | timestamp with time zone    | NO
+ creator_earnings_balances      | creator_id                 | bigint                      | NO
+ creator_earnings_balances      | updated_at                 | timestamp with time zone    | NO
+ creator_earnings_balances      | id                         | uuid                        | NO
+ creator_earnings_history       | dry_run                    | boolean                     | NO
+ creator_earnings_history       | gross_amount               | numeric                     | NO
+ creator_earnings_history       | locked                     | boolean                     | NO
+ creator_earnings_history       | net_amount                 | numeric                     | NO
+ creator_earnings_history       | platform_fee               | numeric                     | NO
+ creator_earnings_history       | created_at                 | timestamp with time zone    | NO
+ creator_earnings_history       | creator_id                 | bigint                      | NO
+ creator_earnings_history       | user_id                    | bigint                      | YES
+ creator_earnings_history       | hold_policy_id             | uuid                        | YES
+ creator_earnings_history       | id                         | uuid                        | NO
+ creator_earnings_history       | invoice_id                 | uuid                        | YES
+ creator_earnings_history       | payout_hold_id             | uuid                        | YES
+ creator_earnings_history       | payout_id                  | uuid                        | YES
+ creator_earnings_history       | payout_request_id          | uuid                        | YES
+ creator_earnings_history       | currency                   | character varying           | NO
+ creator_earnings_history       | source_type                | character varying           | NO
+ creator_earnings_history       | stripe_charge_id           | character varying           | YES
+ creator_earnings_history       | stripe_session_id          | character varying           | YES
+ creator_earnings_invoices      | gross_earnings             | numeric                     | NO
+ creator_earnings_invoices      | net_earnings               | numeric                     | NO
+ creator_earnings_invoices      | platform_fee               | numeric                     | NO
+ creator_earnings_invoices      | created_at                 | timestamp with time zone    | NO
+ creator_earnings_invoices      | creator_id                 | bigint                      | NO
+ creator_earnings_invoices      | period_end                 | timestamp with time zone    | NO
+ creator_earnings_invoices      | period_start               | timestamp with time zone    | NO
+ creator_earnings_invoices      | id                         | uuid                        | NO
+ creator_earnings_invoices      | creator_address            | character varying           | YES
+ creator_earnings_invoices      | creator_email              | character varying           | YES
+ creator_earnings_invoices      | creator_name               | character varying           | YES
+ creator_earnings_invoices      | currency                   | character varying           | NO
+ creator_earnings_invoices      | invoice_number             | character varying           | NO
+ creator_earnings_invoices      | seller_address             | character varying           | YES
+ creator_earnings_invoices      | seller_email               | character varying           | YES
+ creator_earnings_invoices      | seller_name                | character varying           | YES
+ creator_earnings_invoices      | seller_vat_number          | character varying           | YES
+ creator_earnings_invoices      | status                     | character varying           | NO
+ creator_follow                 | created_at                 | timestamp with time zone    | NO
+ creator_follow                 | creator_id                 | bigint                      | NO
+ creator_follow                 | follower_id                | bigint                      | NO
+ creator_follow                 | id                         | bigint                      | NO
+ creator_moderation_settings    | ai_highlight_enabled       | boolean                     | NO
+ creator_moderation_settings    | auto_pin_large_tips        | boolean                     | NO
+ creator_moderation_settings    | strict_mode                | boolean                     | NO
+ creator_moderation_settings    | creator_user_id            | bigint                      | NO
+ creator_moderation_settings    | banned_words               | text                        | YES
+ creator_monetization           | subscription_price         | numeric                     | NO
+ creator_monetization           | tip_enabled                | boolean                     | NO
+ creator_monetization           | created_at                 | timestamp with time zone    | YES
+ creator_monetization           | creator_profile_id         | bigint                      | NO
+ creator_monetization           | id                         | bigint                      | NO
+ creator_monetization           | updated_at                 | timestamp with time zone    | YES
+ creator_payout_settings        | enabled                    | boolean                     | NO
+ creator_payout_settings        | minimum_payout_amount      | numeric                     | YES
+ creator_payout_settings        | created_at                 | timestamp with time zone    | NO
+ creator_payout_settings        | updated_at                 | timestamp with time zone    | NO
+ creator_payout_settings        | creator_id                 | uuid                        | NO
+ creator_payout_settings        | id                         | uuid                        | NO
+ creator_payout_settings        | payout_method              | character varying           | NO
+ creator_payout_settings        | stripe_account_id          | character varying           | YES
+ creator_payout_states          | current_limit              | numeric                     | YES
+ creator_payout_states          | manual_override            | boolean                     | NO
+ creator_payout_states          | updated_at                 | timestamp with time zone    | NO
+ creator_payout_states          | creator_id                 | uuid                        | NO
+ creator_payout_states          | id                         | uuid                        | NO
+ creator_payout_states          | frequency                  | character varying           | NO
+ creator_payout_states          | status                     | character varying           | NO
+ creator_payouts                | amount                     | numeric                     | NO
+ creator_payouts                | completed_at               | timestamp with time zone    | YES
+ creator_payouts                | created_at                 | timestamp with time zone    | NO
+ creator_payouts                | creator_id                 | uuid                        | NO
+ creator_payouts                | id                         | uuid                        | NO
+ creator_payouts                | currency                   | character varying           | NO
+ creator_payouts                | failure_reason             | character varying           | YES
+ creator_payouts                | status                     | character varying           | NO
+ creator_payouts                | stripe_transfer_id         | character varying           | YES
+ creator_posts                  | created_at                 | timestamp with time zone    | NO
+ creator_posts                  | creator_id                 | bigint                      | NO
+ creator_posts                  | id                         | uuid                        | NO
+ creator_posts                  | title                      | character varying           | NO
+ creator_posts                  | content                    | text                        | NO
+ creator_presence               | online                     | boolean                     | NO
+ creator_presence               | creator_id                 | bigint                      | NO
+ creator_presence               | id                         | bigint                      | NO
+ creator_presence               | last_seen                  | timestamp with time zone    | NO
+ creator_private_settings       | creator_id                 | bigint                      | NO
+ creator_private_settings       | enabled                    | boolean                     | NO
+ creator_private_settings       | price_per_minute           | bigint                      | NO
+ creator_private_settings       | allow_spy_on_private       | boolean                     | NO
+ creator_private_settings       | spy_price_per_minute       | bigint                      | NO
+ creator_private_settings       | max_spy_viewers            | integer                     | YES
+ creator_profiles               | created_at                 | timestamp with time zone    | YES
+ creator_profiles               | id                         | bigint                      | NO
+ creator_profiles               | user_id                    | bigint                      | NO
+ creator_profiles               | avatar_url                 | character varying           | YES
+ creator_profiles               | banner_url                 | character varying           | YES
+ creator_profiles               | bio                        | text                        | YES
+ creator_profiles               | display_name               | character varying           | YES
+ creator_profiles               | public_handle              | character varying           | YES
+ creator_profiles               | status                     | character varying           | NO
+ creator_profiles               | username                   | character varying           | YES
+ creator_profiles               | visibility                 | character varying           | NO
+ creator_profiles               | real_name                  | character varying           | YES
+ creator_profiles               | gender                     | character varying           | YES
+ creator_profiles               | interested_in              | character varying           | YES
+ creator_profiles               | languages                  | character varying           | YES
+ creator_profiles               | location                   | character varying           | YES
+ creator_profiles               | body_type                  | character varying           | YES
+ creator_profiles               | ethnicity                  | character varying           | YES
+ creator_profiles               | eye_color                  | character varying           | YES
+ creator_profiles               | hair_color                 | character varying           | YES
+ creator_profiles               | height_cm                  | integer                     | YES
+ creator_profiles               | weight_kg                  | integer                     | YES
+ creator_profiles               | show_age                   | boolean                     | YES
+ creator_profiles               | show_location              | boolean                     | YES
+ creator_profiles               | show_languages             | boolean                     | YES
+ creator_profiles               | show_body_type             | boolean                     | YES
+ creator_profiles               | show_ethnicity             | boolean                     | YES
+ creator_profiles               | show_height_weight         | boolean                     | YES
+ creator_profiles               | onlyfans_url               | character varying           | YES
+ creator_profiles               | throne_url                 | character varying           | YES
+ creator_profiles               | wishlist_url               | character varying           | YES
+ creator_profiles               | twitter_url                | character varying           | YES
+ creator_profiles               | instagram_url              | character varying           | YES
+ creator_records                | active                     | boolean                     | NO
+ creator_records                | id                         | bigint                      | NO
+ creator_records                | user_id                    | bigint                      | NO
+ creator_records                | bio                        | text                        | YES
+ creator_records                | profile_image_url          | character varying           | YES
+ creator_reputation_snapshot    | current_score              | integer                     | NO
+ creator_reputation_snapshot    | last_decay_at              | timestamp with time zone    | YES
+ creator_reputation_snapshot    | last_positive_event_at     | timestamp with time zone    | YES
+ creator_reputation_snapshot    | updated_at                 | timestamp with time zone    | NO
+ creator_reputation_snapshot    | creator_id                 | uuid                        | NO
+ creator_reputation_snapshot    | status                     | character varying           | NO
+ creator_room_bans              | id                         | uuid                        | NO
+ creator_room_bans              | creator_id                 | bigint                      | NO
+ creator_room_bans              | target_user_id             | bigint                      | NO
+ creator_room_bans              | issued_by_user_id          | bigint                      | NO
+ creator_room_bans              | ban_type                   | character varying           | NO
+ creator_room_bans              | reason                     | text                        | YES
+ creator_room_bans              | expires_at                 | timestamp with time zone    | YES
+ creator_room_bans              | active                     | boolean                     | NO
+ creator_room_bans              | created_at                 | timestamp with time zone    | NO
+ creator_stats                  | today_net_earnings         | numeric                     | NO
+ creator_stats                  | total_net_earnings         | numeric                     | NO
+ creator_stats                  | highlights_count           | bigint                      | NO
+ creator_stats                  | subscription_count         | bigint                      | NO
+ creator_stats                  | tips_count                 | bigint                      | NO
+ creator_stats                  | today_net_tokens           | bigint                      | NO
+ creator_stats                  | total_net_tokens           | bigint                      | NO
+ creator_stats                  | updated_at                 | timestamp with time zone    | NO
+ creator_stats                  | creator_id                 | uuid                        | NO
+ creator_stripe_accounts        | onboarding_completed       | boolean                     | NO
+ creator_stripe_accounts        | created_at                 | timestamp with time zone    | YES
+ creator_stripe_accounts        | creator_id                 | bigint                      | NO
+ creator_stripe_accounts        | id                         | bigint                      | NO
+ creator_stripe_accounts        | stripe_account_id          | character varying           | NO
+ creator_tips                   | amount                     | numeric                     | NO
+ creator_tips                   | created_at                 | timestamp with time zone    | NO
+ creator_tips                   | creator_id                 | bigint                      | NO
+ creator_tips                   | user_id                    | bigint                      | NO
+ creator_tips                   | id                         | uuid                        | NO
+ creator_tips                   | currency                   | character varying           | NO
+ creator_tips                   | status                     | character varying           | NO
+ creator_tips                   | stripe_session_id          | character varying           | YES
+ creator_top_content            | rank                       | integer                     | NO
+ creator_top_content            | total_revenue              | numeric                     | NO
+ creator_top_content            | updated_at                 | timestamp with time zone    | NO
+ creator_top_content            | content_id                 | uuid                        | NO
+ creator_top_content            | creator_id                 | uuid                        | NO
+ creator_top_content            | id                         | uuid                        | NO
+ creator_top_content            | content_type               | character varying           | NO
+ creator_top_content            | title                      | character varying           | NO
+ creator_verification           | date_of_birth              | date                        | NO
+ creator_verification           | created_at                 | timestamp with time zone    | NO
+ creator_verification           | creator_id                 | bigint                      | NO
+ creator_verification           | id                         | bigint                      | NO
+ creator_verification           | updated_at                 | timestamp with time zone    | NO
+ creator_verification           | country                    | character varying           | NO
+ creator_verification           | document_back_url          | character varying           | YES
+ creator_verification           | id_document_url            | character varying           | NO
+ creator_verification           | document_type              | character varying           | NO
+ creator_verification           | legal_first_name           | character varying           | NO
+ creator_verification           | legal_last_name            | character varying           | NO
+ creator_verification           | rejection_reason           | character varying           | YES
+ creator_verification           | selfie_document_url        | character varying           | NO
+ creator_verification           | status                     | character varying           | NO
+ creators                       | payout_frozen              | boolean                     | NO
+ creators                       | frozen_at                  | timestamp with time zone    | YES
+ creators                       | creator_id                 | uuid                        | NO
+ creators                       | id                         | uuid                        | NO
+ creators                       | freeze_reason              | character varying           | YES
+ device_fingerprints            | trusted                    | boolean                     | NO
+ device_fingerprints            | first_seen                 | timestamp with time zone    | NO
+ device_fingerprints            | last_seen                  | timestamp with time zone    | NO
+ device_fingerprints            | user_id                    | bigint                      | NO
+ device_fingerprints            | id                         | uuid                        | NO
+ device_fingerprints            | fingerprint_hash           | character varying           | NO
+ device_fingerprints            | ip_address                 | character varying           | YES
+ device_fingerprints            | user_agent                 | character varying           | YES
+ experiment_analytics           | count                      | bigint                      | NO
+ experiment_analytics           | updated_at                 | timestamp with time zone    | NO
+ experiment_analytics           | experiment_key             | character varying           | NO
+ experiment_analytics           | variant                    | character varying           | NO
+ export_jobs                    | completed_at               | timestamp with time zone    | YES
+ export_jobs                    | created_at                 | timestamp with time zone    | YES
+ export_jobs                    | id                         | bigint                      | NO
+ export_jobs                    | requested_by_admin_id      | bigint                      | YES
+ export_jobs                    | error_message              | character varying           | YES
+ export_jobs                    | file_path                  | character varying           | YES
+ export_jobs                    | status                     | character varying           | YES
+ export_jobs                    | type                       | character varying           | YES
+ feature_flags                  | enabled                    | boolean                     | NO
+ feature_flags                  | is_experiment              | boolean                     | NO
+ feature_flags                  | rollout_percentage         | integer                     | NO
+ feature_flags                  | created_at                 | timestamp with time zone    | NO
+ feature_flags                  | updated_at                 | timestamp with time zone    | NO
+ feature_flags                  | id                         | uuid                        | NO
+ feature_flags                  | environment                | character varying           | NO
+ feature_flags                  | flag_key                   | character varying           | NO
+ flyway_schema_history          | installed_rank             | integer                     | NO
+ flyway_schema_history          | version                    | character varying           | YES
+ flyway_schema_history          | description                | character varying           | NO
+ flyway_schema_history          | type                       | character varying           | NO
+ flyway_schema_history          | script                     | character varying           | NO
+ flyway_schema_history          | checksum                   | integer                     | YES
+ flyway_schema_history          | installed_by               | character varying           | NO
+ flyway_schema_history          | installed_on               | timestamp without time zone | NO
+ flyway_schema_history          | execution_time             | integer                     | NO
+ flyway_schema_history          | success                    | boolean                     | NO
+ fraud_decisions                | score                      | integer                     | NO
+ fraud_decisions                | created_at                 | timestamp with time zone    | NO
+ fraud_decisions                | related_tip_id             | bigint                      | YES
+ fraud_decisions                | id                         | uuid                        | NO
+ fraud_decisions                | user_id                    | uuid                        | NO
+ fraud_decisions                | risk_level                 | character varying           | NO
+ fraud_decisions                | reasons                    | character varying           | YES
+ fraud_events                   | created_at                 | timestamp with time zone    | NO
+ fraud_events                   | id                         | uuid                        | NO
+ fraud_events                   | user_id                    | uuid                        | NO
+ fraud_events                   | event_type                 | character varying           | NO
+ fraud_events                   | metadata                   | text                        | YES
+ fraud_events                   | reason                     | character varying           | YES
+ fraud_flags                    | score                      | integer                     | YES
+ fraud_flags                    | created_at                 | timestamp with time zone    | NO
+ fraud_flags                    | id                         | uuid                        | NO
+ fraud_flags                    | user_id                    | uuid                        | NO
+ fraud_flags                    | reason                     | character varying           | YES
+ fraud_flags                    | source                     | character varying           | NO
+ fraud_flags                    | stripe_charge_id           | character varying           | YES
+ fraud_risk_assessments         | score                      | integer                     | NO
+ fraud_risk_assessments         | created_at                 | timestamp with time zone    | NO
+ fraud_risk_assessments         | id                         | uuid                        | NO
+ fraud_risk_assessments         | user_id                    | uuid                        | NO
+ fraud_risk_assessments         | reasons                    | text                        | YES
+ fraud_risk_assessments         | risk_level                 | character varying           | NO
+ fraud_risk_scores              | score                      | integer                     | NO
+ fraud_risk_scores              | evaluated_at               | timestamp with time zone    | NO
+ fraud_risk_scores              | user_id                    | bigint                      | NO
+ fraud_risk_scores              | factors                    | jsonb                       | YES
+ fraud_scores                   | score                      | integer                     | NO
+ fraud_scores                   | calculated_at              | timestamp with time zone    | NO
+ fraud_scores                   | id                         | bigint                      | NO
+ fraud_scores                   | user_id                    | bigint                      | NO
+ fraud_scores                   | risk_level                 | character varying           | NO
+ fraud_signals                  | score                      | integer                     | NO
+ fraud_signals                  | created_at                 | timestamp with time zone    | NO
+ fraud_signals                  | id                         | uuid                        | NO
+ fraud_signals                  | room_id                    | uuid                        | YES
+ fraud_signals                  | user_id                    | uuid                        | NO
+ fraud_signals                  | reasons                    | text                        | YES
+ fraud_signals                  | risk_level                 | character varying           | NO
+ highlighted_messages           | amount                     | numeric                     | NO
+ highlighted_messages           | moderated                  | boolean                     | NO
+ highlighted_messages           | created_at                 | timestamp with time zone    | NO
+ highlighted_messages           | moderated_at               | timestamp with time zone    | YES
+ highlighted_messages           | moderated_by               | bigint                      | YES
+ highlighted_messages           | user_id                    | bigint                      | NO
+ highlighted_messages           | id                         | uuid                        | NO
+ highlighted_messages           | room_id                    | uuid                        | NO
+ highlighted_messages           | client_request_id          | character varying           | YES
+ highlighted_messages           | content                    | character varying           | NO
+ highlighted_messages           | currency                   | character varying           | NO
+ highlighted_messages           | highlight_type             | character varying           | NO
+ highlighted_messages           | message_id                 | character varying           | NO
+ highlighted_messages           | moderation_reason          | character varying           | YES
+ highlighted_messages           | status                     | character varying           | NO
+ highlighted_messages           | stripe_payment_intent_id   | character varying           | YES
+ invoices                       | gross_amount               | numeric                     | NO
+ invoices                       | net_amount                 | numeric                     | NO
+ invoices                       | vat_amount                 | numeric                     | NO
+ invoices                       | issued_at                  | timestamp with time zone    | NO
+ invoices                       | user_id                    | bigint                      | NO
+ invoices                       | id                         | uuid                        | NO
+ invoices                       | billing_address            | character varying           | YES
+ invoices                       | billing_email              | character varying           | YES
+ invoices                       | billing_name               | character varying           | YES
+ invoices                       | country_code               | character varying           | NO
+ invoices                       | currency                   | character varying           | NO
+ invoices                       | invoice_number             | character varying           | NO
+ invoices                       | invoice_type               | character varying           | NO
+ invoices                       | seller_address             | character varying           | YES
+ invoices                       | seller_email               | character varying           | YES
+ invoices                       | seller_name                | character varying           | YES
+ invoices                       | seller_vat_number          | character varying           | YES
+ invoices                       | status                     | character varying           | NO
+ invoices                       | stripe_invoice_id          | character varying           | YES
+ leaderboard_entries            | leaderboard_rank           | integer                     | NO
+ leaderboard_entries            | reference_date             | date                        | NO
+ leaderboard_entries            | total_earnings             | numeric                     | NO
+ leaderboard_entries            | calculated_at              | timestamp with time zone    | NO
+ leaderboard_entries            | total_subscribers          | bigint                      | NO
+ leaderboard_entries            | total_viewers              | bigint                      | NO
+ leaderboard_entries            | creator_id                 | uuid                        | NO
+ leaderboard_entries            | id                         | uuid                        | NO
+ leaderboard_entries            | category                   | character varying           | YES
+ leaderboard_entries            | period                     | character varying           | NO
+ legacy_chargebacks             | amount                     | numeric                     | YES
+ legacy_chargebacks             | resolved                   | boolean                     | YES
+ legacy_chargebacks             | created_at                 | timestamp with time zone    | NO
+ legacy_chargebacks             | creator_id                 | bigint                      | YES
+ legacy_chargebacks             | updated_at                 | timestamp with time zone    | YES
+ legacy_chargebacks             | id                         | uuid                        | NO
+ legacy_chargebacks             | transaction_id             | uuid                        | NO
+ legacy_chargebacks             | user_id                    | uuid                        | NO
+ legacy_chargebacks             | currency                   | character varying           | YES
+ legacy_chargebacks             | device_fingerprint         | character varying           | YES
+ legacy_chargebacks             | ip_address                 | character varying           | YES
+ legacy_chargebacks             | payment_method_brand       | character varying           | YES
+ legacy_chargebacks             | payment_method_fingerprint | character varying           | YES
+ legacy_chargebacks             | payment_method_last4       | character varying           | YES
+ legacy_chargebacks             | reason                     | character varying           | YES
+ legacy_chargebacks             | status                     | character varying           | NO
+ legacy_chargebacks             | stripe_charge_id           | character varying           | NO
+ legacy_chargebacks             | stripe_dispute_id          | character varying           | YES
+ legacy_creator_profiles        | active                     | boolean                     | NO
+ legacy_creator_profiles        | created_at                 | timestamp with time zone    | NO
+ legacy_creator_profiles        | updated_at                 | timestamp with time zone    | NO
+ legacy_creator_profiles        | user_id                    | bigint                      | NO
+ legacy_creator_profiles        | id                         | uuid                        | NO
+ legacy_creator_profiles        | avatar_url                 | character varying           | YES
+ legacy_creator_profiles        | banner_url                 | character varying           | YES
+ legacy_creator_profiles        | bio                        | text                        | YES
+ legacy_creator_profiles        | category                   | character varying           | YES
+ legacy_creator_profiles        | display_name               | character varying           | NO
+ legacy_creator_profiles        | username                   | character varying           | NO
+ legacy_creator_stripe_accounts | charges_enabled            | boolean                     | NO
+ legacy_creator_stripe_accounts | onboarding_completed       | boolean                     | NO
+ legacy_creator_stripe_accounts | payouts_enabled            | boolean                     | NO
+ legacy_creator_stripe_accounts | created_at                 | timestamp with time zone    | NO
+ legacy_creator_stripe_accounts | creator_id                 | bigint                      | NO
+ legacy_creator_stripe_accounts | updated_at                 | timestamp with time zone    | NO
+ legacy_creator_stripe_accounts | id                         | uuid                        | NO
+ legacy_creator_stripe_accounts | onboarding_status          | character varying           | NO
+ legacy_creator_stripe_accounts | stripe_account_id          | character varying           | NO
+ live_access                    | created_at                 | timestamp with time zone    | NO
+ live_access                    | creator_user_id            | bigint                      | NO
+ live_access                    | expires_at                 | timestamp with time zone    | NO
+ live_access                    | id                         | bigint                      | NO
+ live_access                    | viewer_user_id             | bigint                      | NO
+ live_streams                   | is_live                    | boolean                     | NO
+ live_streams                   | is_premium                 | boolean                     | NO
+ live_streams                   | recording_enabled          | boolean                     | NO
+ live_streams                   | creator_id                 | bigint                      | NO
+ live_streams                   | ended_at                   | timestamp with time zone    | YES
+ live_streams                   | started_at                 | timestamp with time zone    | NO
+ live_streams                   | id                         | uuid                        | NO
+ live_streams                   | ppv_content_id             | uuid                        | YES
+ live_streams                   | hls_url                    | character varying           | YES
+ live_streams                   | recording_path             | character varying           | YES
+ live_streams                   | stream_key                 | character varying           | NO
+ live_streams                   | title                      | character varying           | NO
+ live_streams_v2                | created_at                 | timestamp with time zone    | NO
+ live_streams_v2                | creator_id                 | bigint                      | NO
+ live_streams_v2                | ended_at                   | timestamp with time zone    | YES
+ live_streams_v2                | started_at                 | timestamp with time zone    | YES
+ live_streams_v2                | id                         | uuid                        | NO
+ live_streams_v2                | status                     | character varying           | NO
+ livestream_sessions            | admission_price            | numeric                     | NO
+ livestream_sessions            | is_paid                    | boolean                     | NO
+ livestream_sessions            | viewer_count               | integer                     | YES
+ livestream_sessions            | creator_id                 | bigint                      | NO
+ livestream_sessions            | ended_at                   | timestamp without time zone | YES
+ livestream_sessions            | id                         | bigint                      | NO
+ livestream_sessions            | started_at                 | timestamp without time zone | YES
+ livestream_sessions            | version                    | bigint                      | YES
+ livestream_sessions            | status                     | character varying           | NO
+ livestream_sessions            | stream_key                 | character varying           | YES
+ moderation_audit_log           | id                         | uuid                        | NO
+ moderation_audit_log           | action_type                | character varying           | NO
+ moderation_audit_log           | creator_id                 | bigint                      | NO
+ moderation_audit_log           | target_user_id             | bigint                      | NO
+ moderation_audit_log           | target_username            | character varying           | YES
+ moderation_audit_log           | actor_user_id              | bigint                      | NO
+ moderation_audit_log           | actor_username             | character varying           | YES
+ moderation_audit_log           | actor_role                 | character varying           | NO
+ moderation_audit_log           | metadata                   | text                        | YES
+ moderation_audit_log           | created_at                 | timestamp with time zone    | NO
+ payments                       | amount                     | numeric                     | YES
+ payments                       | success                    | boolean                     | NO
+ payments                       | created_at                 | timestamp with time zone    | NO
+ payments                       | creator_id                 | bigint                      | YES
+ payments                       | user_id                    | bigint                      | NO
+ payments                       | id                         | uuid                        | NO
+ payments                       | country                    | character varying           | YES
+ payments                       | currency                   | character varying           | YES
+ payments                       | device_fingerprint         | character varying           | YES
+ payments                       | failure_reason             | character varying           | YES
+ payments                       | ip_address                 | character varying           | YES
+ payments                       | payment_method_brand       | character varying           | YES
+ payments                       | payment_method_fingerprint | character varying           | YES
+ payments                       | payment_method_last4       | character varying           | YES
+ payments                       | receipt_url                | character varying           | YES
+ payments                       | risk_level                 | character varying           | YES
+ payments                       | status                     | character varying           | YES
+ payments                       | stripe_invoice_id          | character varying           | YES
+ payments                       | stripe_payment_intent_id   | character varying           | YES
+ payments                       | stripe_session_id          | character varying           | YES
+ payments                       | user_agent                 | character varying           | YES
+ payout_audit_logs              | created_at                 | timestamp with time zone    | NO
+ payout_audit_logs              | actor_id                   | uuid                        | YES
+ payout_audit_logs              | id                         | uuid                        | NO
+ payout_audit_logs              | payout_id                  | uuid                        | NO
+ payout_audit_logs              | message                    | character varying           | YES
+ payout_audit_logs              | action                     | character varying           | NO
+ payout_audit_logs              | actor_type                 | character varying           | NO
+ payout_audit_logs              | new_status                 | character varying           | YES
+ payout_audit_logs              | previous_status            | character varying           | YES
+ payout_freeze_audit_log        | admin_id                   | bigint                      | YES
+ payout_freeze_audit_log        | created_at                 | timestamp with time zone    | NO
+ payout_freeze_audit_log        | creator_id                 | bigint                      | NO
+ payout_freeze_audit_log        | id                         | bigint                      | NO
+ payout_freeze_audit_log        | action                     | character varying           | NO
+ payout_freeze_audit_log        | reason                     | character varying           | YES
+ payout_freeze_history          | created_at                 | timestamp with time zone    | NO
+ payout_freeze_history          | creator_id                 | uuid                        | NO
+ payout_freeze_history          | id                         | uuid                        | NO
+ payout_freeze_history          | reason                     | character varying           | NO
+ payout_freeze_history          | triggered_by               | character varying           | NO
+ payout_freezes                 | active                     | boolean                     | NO
+ payout_freezes                 | created_at                 | timestamp with time zone    | NO
+ payout_freezes                 | created_by_admin_id        | bigint                      | YES
+ payout_freezes                 | creator_id                 | bigint                      | NO
+ payout_freezes                 | id                         | bigint                      | NO
+ payout_freezes                 | reason                     | character varying           | YES
+ payout_hold_audits             | new_hold_days              | integer                     | NO
+ payout_hold_audits             | prev_hold_days             | integer                     | YES
+ payout_hold_audits             | admin_id                   | bigint                      | YES
+ payout_hold_audits             | created_at                 | timestamp with time zone    | NO
+ payout_hold_audits             | new_expires_at             | timestamp with time zone    | YES
+ payout_hold_audits             | prev_expires_at            | timestamp with time zone    | YES
+ payout_hold_audits             | id                         | uuid                        | NO
+ payout_hold_audits             | subject_id                 | uuid                        | NO
+ payout_hold_audits             | action                     | character varying           | NO
+ payout_hold_audits             | new_hold_level             | character varying           | NO
+ payout_hold_audits             | prev_hold_level            | character varying           | YES
+ payout_hold_audits             | reason                     | text                        | YES
+ payout_hold_audits             | subject_type               | character varying           | NO
+ payout_hold_audits             | type                       | character varying           | NO
+ payout_hold_policies           | hold_days                  | integer                     | NO
+ payout_hold_policies           | created_at                 | timestamp with time zone    | NO
+ payout_hold_policies           | expires_at                 | timestamp with time zone    | YES
+ payout_hold_policies           | id                         | uuid                        | NO
+ payout_hold_policies           | subject_id                 | uuid                        | NO
+ payout_hold_policies           | transaction_id             | uuid                        | YES
+ payout_hold_policies           | hold_level                 | character varying           | NO
+ payout_hold_policies           | reason                     | character varying           | YES
+ payout_hold_policies           | risk_level                 | character varying           | YES
+ payout_hold_policies           | subject_type               | character varying           | NO
+ payout_holds                   | created_at                 | timestamp with time zone    | NO
+ payout_holds                   | hold_until                 | timestamp with time zone    | NO
+ payout_holds                   | id                         | uuid                        | NO
+ payout_holds                   | transaction_id             | uuid                        | YES
+ payout_holds                   | user_id                    | uuid                        | NO
+ payout_holds                   | reason                     | text                        | YES
+ payout_holds                   | risk_level                 | character varying           | NO
+ payout_holds                   | status                     | character varying           | NO
+ payout_policy_decisions        | applied_limit_amount       | numeric                     | YES
+ payout_policy_decisions        | risk_score                 | integer                     | YES
+ payout_policy_decisions        | created_at                 | timestamp with time zone    | NO
+ payout_policy_decisions        | creator_id                 | uuid                        | NO
+ payout_policy_decisions        | explanation_id             | uuid                        | YES
+ payout_policy_decisions        | id                         | uuid                        | NO
+ payout_policy_decisions        | applied_limit_frequency    | character varying           | NO
+ payout_policy_decisions        | decision_source            | character varying           | NO
+ payout_policy_decisions        | reason                     | text                        | YES
+ payout_requests                | amount                     | numeric                     | NO
+ payout_requests                | created_at                 | timestamp with time zone    | NO
+ payout_requests                | updated_at                 | timestamp with time zone    | YES
+ payout_requests                | creator_id                 | uuid                        | NO
+ payout_requests                | id                         | uuid                        | NO
+ payout_requests                | currency                   | character varying           | NO
+ payout_requests                | rejection_reason           | character varying           | YES
+ payout_requests                | status                     | character varying           | NO
+ payout_requests                | stripe_transfer_id         | character varying           | YES
+ payout_risks                   | risk_score                 | integer                     | NO
+ payout_risks                   | last_evaluated_at          | timestamp with time zone    | YES
+ payout_risks                   | user_id                    | bigint                      | NO
+ payout_risks                   | id                         | uuid                        | NO
+ payout_risks                   | reasons                    | text                        | YES
+ payouts                        | eur_amount                 | numeric                     | NO
+ payouts                        | created_at                 | timestamp with time zone    | NO
+ payouts                        | token_amount               | bigint                      | NO
+ payouts                        | updated_at                 | timestamp with time zone    | NO
+ payouts                        | user_id                    | bigint                      | NO
+ payouts                        | id                         | uuid                        | NO
+ payouts                        | error_message              | character varying           | YES
+ payouts                        | status                     | character varying           | NO
+ payouts                        | stripe_transfer_id         | character varying           | YES
+ platform_analytics             | date                       | date                        | NO
+ platform_analytics             | total_revenue              | numeric                     | NO
+ platform_analytics             | active_subscriptions       | bigint                      | NO
+ platform_analytics             | churned_subscriptions      | bigint                      | NO
+ platform_analytics             | new_subscriptions          | bigint                      | NO
+ platform_analytics             | registrations              | bigint                      | NO
+ platform_analytics             | unique_visits              | bigint                      | NO
+ platform_balances              | available_balance          | numeric                     | NO
+ platform_balances              | total_creator_earnings     | numeric                     | NO
+ platform_balances              | total_fees_collected       | numeric                     | NO
+ platform_balances              | updated_at                 | timestamp with time zone    | NO
+ platform_balances              | id                         | uuid                        | NO
+ pm_read_state                  | id                         | bigint                      | NO
+ pm_read_state                  | room_id                    | bigint                      | NO
+ pm_read_state                  | user_id                    | bigint                      | NO
+ pm_read_state                  | last_read_message_id       | bigint                      | YES
+ pm_read_state                  | unread_count               | integer                     | NO
+ pm_read_state                  | updated_at                 | timestamp without time zone | NO
+ post_likes                     | created_at                 | timestamp with time zone    | NO
+ post_likes                     | user_id                    | bigint                      | NO
+ post_likes                     | id                         | uuid                        | NO
+ post_likes                     | post_id                    | uuid                        | NO
+ ppv_chat_access                | expires_at                 | timestamp with time zone    | YES
+ ppv_chat_access                | granted_at                 | timestamp with time zone    | NO
+ ppv_chat_access                | user_id                    | bigint                      | NO
+ ppv_chat_access                | id                         | uuid                        | NO
+ ppv_chat_access                | ppv_content_id             | uuid                        | NO
+ ppv_chat_access                | room_id                    | uuid                        | NO
+ ppv_content                    | active                     | boolean                     | NO
+ ppv_content                    | price                      | numeric                     | NO
+ ppv_content                    | created_at                 | timestamp with time zone    | NO
+ ppv_content                    | creator_id                 | bigint                      | NO
+ ppv_content                    | id                         | uuid                        | NO
+ ppv_content                    | content_url                | character varying           | NO
+ ppv_content                    | currency                   | character varying           | NO
+ ppv_content                    | description                | text                        | YES
+ ppv_content                    | title                      | character varying           | NO
+ ppv_purchases                  | amount                     | numeric                     | NO
+ ppv_purchases                  | purchased_at               | timestamp with time zone    | NO
+ ppv_purchases                  | user_id                    | bigint                      | NO
+ ppv_purchases                  | id                         | uuid                        | NO
+ ppv_purchases                  | ppv_content_id             | uuid                        | NO
+ ppv_purchases                  | client_request_id          | character varying           | YES
+ ppv_purchases                  | status                     | character varying           | NO
+ ppv_purchases                  | stripe_payment_intent_id   | character varying           | YES
+ private_sessions               | accepted_at                | timestamp with time zone    | YES
+ private_sessions               | creator_id                 | bigint                      | NO
+ private_sessions               | ended_at                   | timestamp with time zone    | YES
+ private_sessions               | last_billed_at             | timestamp with time zone    | YES
+ private_sessions               | price_per_minute           | bigint                      | NO
+ private_sessions               | rejected_at                | timestamp with time zone    | YES
+ private_sessions               | requested_at               | timestamp with time zone    | YES
+ private_sessions               | started_at                 | timestamp with time zone    | YES
+ private_sessions               | viewer_id                  | bigint                      | NO
+ private_sessions               | id                         | uuid                        | NO
+ private_sessions               | end_reason                 | character varying           | YES
+ private_sessions               | status                     | character varying           | NO
+ private_spy_sessions           | id                         | uuid                        | NO
+ private_spy_sessions           | private_session_id         | uuid                        | NO
+ private_spy_sessions           | spy_viewer_id              | bigint                      | NO
+ private_spy_sessions           | spy_price_per_minute       | bigint                      | NO
+ private_spy_sessions           | status                     | character varying           | NO
+ private_spy_sessions           | started_at                 | timestamp without time zone | YES
+ private_spy_sessions           | ended_at                   | timestamp without time zone | YES
+ private_spy_sessions           | last_billed_at             | timestamp without time zone | YES
+ private_spy_sessions           | end_reason                 | character varying           | YES
+ refresh_tokens                 | revoked                    | boolean                     | NO
+ refresh_tokens                 | expiry_date                | timestamp with time zone    | NO
+ refresh_tokens                 | user_id                    | bigint                      | NO
+ refresh_tokens                 | id                         | uuid                        | NO
+ refresh_tokens                 | replaced_by_token          | character varying           | YES
+ refresh_tokens                 | token_hash                 | character varying           | NO
+ reports                        | created_at                 | timestamp with time zone    | NO
+ reports                        | reported_user_id           | bigint                      | NO
+ reports                        | reporter_user_id           | bigint                      | YES
+ reports                        | updated_at                 | timestamp with time zone    | YES
+ reports                        | id                         | uuid                        | NO
+ reports                        | stream_id                  | uuid                        | YES
+ reports                        | description                | text                        | YES
+ reports                        | reason                     | character varying           | NO
+ reports                        | status                     | character varying           | NO
+ reputation_change_logs         | new_score                  | integer                     | NO
+ reputation_change_logs         | old_score                  | integer                     | NO
+ reputation_change_logs         | created_at                 | timestamp with time zone    | NO
+ reputation_change_logs         | creator_id                 | uuid                        | NO
+ reputation_change_logs         | id                         | uuid                        | NO
+ reputation_change_logs         | reason                     | character varying           | NO
+ reputation_change_logs         | source                     | character varying           | NO
+ reputation_events              | delta_score                | integer                     | NO
+ reputation_events              | created_at                 | timestamp with time zone    | NO
+ reputation_events              | creator_id                 | uuid                        | NO
+ reputation_events              | id                         | uuid                        | NO
+ reputation_events              | source                     | character varying           | NO
+ reputation_events              | type                       | character varying           | NO
+ reputation_events              | metadata                   | jsonb                       | YES
+ risk_decision_audits           | score                      | integer                     | YES
+ risk_decision_audits           | created_at                 | timestamp with time zone    | NO
+ risk_decision_audits           | id                         | uuid                        | NO
+ risk_decision_audits           | transaction_id             | uuid                        | YES
+ risk_decision_audits           | user_id                    | uuid                        | NO
+ risk_decision_audits           | actions_taken              | text                        | YES
+ risk_decision_audits           | decision_type              | character varying           | NO
+ risk_decision_audits           | metadata                   | text                        | YES
+ risk_decision_audits           | reason                     | text                        | YES
+ risk_decision_audits           | risk_level                 | character varying           | NO
+ risk_decision_audits           | triggered_by               | character varying           | NO
+ risk_explanation_logs          | timestamp                  | timestamp with time zone    | NO
+ risk_explanation_logs          | explanation_id             | uuid                        | NO
+ risk_explanation_logs          | id                         | uuid                        | NO
+ risk_explanation_logs          | requester_id               | uuid                        | NO
+ risk_explanation_logs          | role                       | character varying           | NO
+ risk_explanations              | risk_score                 | integer                     | NO
+ risk_explanations              | generated_at               | timestamp with time zone    | NO
+ risk_explanations              | id                         | uuid                        | NO
+ risk_explanations              | subject_id                 | uuid                        | NO
+ risk_explanations              | decision                   | character varying           | NO
+ risk_explanations              | explanation_text           | text                        | YES
+ risk_explanations              | subject_type               | character varying           | NO
+ risk_explanations              | factors                    | jsonb                       | YES
+ risk_scores                    | score                      | integer                     | NO
+ risk_scores                    | last_evaluated_at          | timestamp with time zone    | YES
+ risk_scores                    | user_id                    | uuid                        | NO
+ risk_scores                    | breakdown                  | text                        | YES
+ rule_fraud_signals             | resolved                   | boolean                     | NO
+ rule_fraud_signals             | created_at                 | timestamp with time zone    | NO
+ rule_fraud_signals             | resolved_at                | timestamp with time zone    | YES
+ rule_fraud_signals             | user_id                    | bigint                      | NO
+ rule_fraud_signals             | id                         | uuid                        | NO
+ rule_fraud_signals             | resolved_by                | uuid                        | YES
+ rule_fraud_signals             | action_reason              | character varying           | YES
+ rule_fraud_signals             | reason                     | character varying           | NO
+ rule_fraud_signals             | risk_level                 | character varying           | NO
+ rule_fraud_signals             | source                     | character varying           | NO
+ rule_fraud_signals             | type                       | character varying           | NO
+ slow_mode_bypass               | created_at                 | timestamp with time zone    | NO
+ slow_mode_bypass               | expires_at                 | timestamp with time zone    | NO
+ slow_mode_bypass               | user_id                    | bigint                      | NO
+ slow_mode_bypass               | id                         | uuid                        | NO
+ slow_mode_bypass               | room_id                    | uuid                        | NO
+ slow_mode_bypass               | source                     | character varying           | NO
+ stream_rooms                   | admission_price            | numeric                     | NO
+ stream_rooms                   | is_paid                    | boolean                     | NO
+ stream_rooms                   | is_premium                 | boolean                     | NO
+ stream_rooms                   | slow_mode                  | boolean                     | NO
+ stream_rooms                   | viewer_count               | integer                     | NO
+ stream_rooms                   | created_at                 | timestamp with time zone    | NO
+ stream_rooms                   | creator_id                 | bigint                      | NO
+ stream_rooms                   | ended_at                   | timestamp with time zone    | YES
+ stream_rooms                   | min_chat_tokens            | bigint                      | YES
+ stream_rooms                   | price_per_message          | bigint                      | YES
+ stream_rooms                   | started_at                 | timestamp with time zone    | YES
+ stream_rooms                   | id                         | uuid                        | NO
+ stream_rooms                   | description                | character varying           | YES
+ stream_rooms                   | stream_title               | character varying           | YES
+ stream_rooms                   | is_live                    | boolean                     | NO
+ stream_rooms                   | thumbnail_url              | character varying           | YES
+ streams                        | id                         | uuid                        | NO
+ streams                        | creator_id                 | bigint                      | NO
+ streams                        | title                      | character varying           | YES
+ streams                        | is_live                    | boolean                     | NO
+ streams                        | started_at                 | timestamp with time zone    | YES
+ streams                        | ended_at                   | timestamp with time zone    | YES
+ streams                        | mediasoup_room_id          | uuid                        | YES
+ streams                        | stream_key                 | character varying           | YES
+ streams                        | created_at                 | timestamp with time zone    | NO
+ streams                        | is_paid                    | boolean                     | NO
+ streams                        | admission_price            | numeric                     | NO
+ streams                        | chat_enabled               | boolean                     | NO
+ streams                        | slow_mode                  | boolean                     | NO
+ streams                        | slow_mode_interval         | integer                     | YES
+ streams                        | max_viewers                | integer                     | YES
+ streams                        | stream_category            | character varying           | YES
+ streams                        | thumbnail_url              | character varying           | YES
+ stripe_accounts                | charges_enabled            | boolean                     | NO
+ stripe_accounts                | onboarding_completed       | boolean                     | NO
+ stripe_accounts                | payouts_enabled            | boolean                     | NO
+ stripe_accounts                | created_at                 | timestamp with time zone    | NO
+ stripe_accounts                | updated_at                 | timestamp with time zone    | NO
+ stripe_accounts                | user_id                    | bigint                      | NO
+ stripe_accounts                | id                         | uuid                        | NO
+ stripe_accounts                | stripe_account_id          | character varying           | YES
+ stripe_webhook_events          | received_at                | timestamp with time zone    | NO
+ stripe_webhook_events          | event_id                   | character varying           | NO
+ stripe_webhook_events          | payload_hash               | character varying           | YES
+ stripe_webhook_events          | type                       | character varying           | NO
+ stripe_webhook_events          | status                     | character varying           | NO
+ stripe_webhook_events          | processed_at               | timestamp with time zone    | YES
+ subscriptions                  | cancel_at_period_end       | boolean                     | NO
+ subscriptions                  | created_at                 | timestamp with time zone    | NO
+ subscriptions                  | current_period_end         | timestamp with time zone    | YES
+ subscriptions                  | current_period_start       | timestamp with time zone    | YES
+ subscriptions                  | next_invoice_date          | timestamp with time zone    | YES
+ subscriptions                  | updated_at                 | timestamp with time zone    | NO
+ subscriptions                  | user_id                    | bigint                      | NO
+ subscriptions                  | id                         | uuid                        | NO
+ subscriptions                  | last4                      | character varying           | YES
+ subscriptions                  | payment_method_brand       | character varying           | YES
+ subscriptions                  | status                     | character varying           | NO
+ subscriptions                  | stripe_subscription_id     | character varying           | YES
+ super_tips                     | amount                     | numeric                     | NO
+ super_tips                     | duration_seconds           | integer                     | NO
+ super_tips                     | created_at                 | timestamp with time zone    | NO
+ super_tips                     | creator_id                 | bigint                      | NO
+ super_tips                     | from_user_id               | bigint                      | NO
+ super_tips                     | id                         | uuid                        | NO
+ super_tips                     | room_id                    | uuid                        | NO
+ super_tips                     | client_request_id          | character varying           | YES
+ super_tips                     | highlight_level            | character varying           | NO
+ super_tips                     | message                    | character varying           | YES
+ super_tips                     | status                     | character varying           | NO
+ tip_actions                    | is_enabled                 | boolean                     | NO
+ tip_actions                    | amount                     | bigint                      | NO
+ tip_actions                    | creator_id                 | bigint                      | NO
+ tip_actions                    | id                         | uuid                        | NO
+ tip_actions                    | description                | character varying           | NO
+ tip_actions                    | category_id                | uuid                        | YES
+ tip_actions                    | sort_order                 | integer                     | YES
+ tip_goal_groups                | id                         | uuid                        | NO
+ tip_goal_groups                | creator_id                 | bigint                      | NO
+ tip_goal_groups                | title                      | character varying           | NO
+ tip_goal_groups                | target_amount              | bigint                      | NO
+ tip_goal_groups                | current_amount             | bigint                      | NO
+ tip_goal_groups                | is_active                  | boolean                     | YES
+ tip_goal_groups                | auto_reset                 | boolean                     | YES
+ tip_goal_groups                | order_index                | integer                     | YES
+ tip_goal_groups                | created_at                 | timestamp with time zone    | YES
+ tip_goals                      | auto_reset                 | boolean                     | NO
+ tip_goals                      | is_active                  | boolean                     | NO
+ tip_goals                      | order_index                | integer                     | YES
+ tip_goals                      | created_at                 | timestamp with time zone    | YES
+ tip_goals                      | creator_id                 | bigint                      | NO
+ tip_goals                      | current_amount             | bigint                      | NO
+ tip_goals                      | target_amount              | bigint                      | NO
+ tip_goals                      | updated_at                 | timestamp with time zone    | YES
+ tip_goals                      | id                         | uuid                        | NO
+ tip_goals                      | title                      | character varying           | YES
+ tip_goals                      | group_id                   | uuid                        | YES
+ tip_menu_categories            | id                         | uuid                        | NO
+ tip_menu_categories            | creator_id                 | bigint                      | NO
+ tip_menu_categories            | title                      | character varying           | NO
+ tip_menu_categories            | sort_order                 | integer                     | YES
+ tip_menu_categories            | is_enabled                 | boolean                     | YES
+ tip_menu_categories            | created_at                 | timestamp without time zone | YES
+ tip_records                    | amount                     | bigint                      | NO
+ tip_records                    | created_at                 | timestamp with time zone    | NO
+ tip_records                    | creator_earning_tokens     | bigint                      | NO
+ tip_records                    | creator_id                 | bigint                      | NO
+ tip_records                    | platform_fee_tokens        | bigint                      | NO
+ tip_records                    | viewer_id                  | bigint                      | NO
+ tip_records                    | id                         | uuid                        | NO
+ tip_records                    | room_id                    | uuid                        | YES
+ tips                           | amount                     | numeric                     | NO
+ tips                           | created_at                 | timestamp with time zone    | NO
+ tips                           | creator_id                 | bigint                      | NO
+ tips                           | from_user_id               | bigint                      | NO
+ tips                           | id                         | uuid                        | NO
+ tips                           | room_id                    | uuid                        | YES
+ tips                           | client_request_id          | character varying           | YES
+ tips                           | currency                   | character varying           | NO
+ tips                           | message                    | character varying           | YES
+ tips                           | status                     | character varying           | NO
+ tips                           | stripe_payment_intent_id   | character varying           | YES
+ token_packages                 | active                     | boolean                     | NO
+ token_packages                 | price                      | numeric                     | NO
+ token_packages                 | token_amount               | bigint                      | NO
+ token_packages                 | id                         | uuid                        | NO
+ token_packages                 | currency                   | character varying           | NO
+ token_packages                 | name                       | character varying           | NO
+ token_packages                 | stripe_price_id            | character varying           | NO
+ token_transactions             | amount                     | bigint                      | NO
+ token_transactions             | created_at                 | timestamp with time zone    | NO
+ token_transactions             | creator_id                 | bigint                      | NO
+ token_transactions             | user_id                    | bigint                      | NO
+ token_transactions             | id                         | uuid                        | NO
+ token_transactions             | type                       | character varying           | NO
+ user_badges                    | created_at                 | timestamp with time zone    | YES
+ user_badges                    | expires_at                 | timestamp with time zone    | YES
+ user_badges                    | user_id                    | bigint                      | NO
+ user_badges                    | badge_id                   | uuid                        | NO
+ user_badges                    | id                         | uuid                        | NO
+ user_restrictions              | created_at                 | timestamp with time zone    | NO
+ user_restrictions              | expires_at                 | timestamp with time zone    | YES
+ user_restrictions              | id                         | uuid                        | NO
+ user_restrictions              | user_id                    | uuid                        | NO
+ user_restrictions              | reason                     | character varying           | NO
+ user_restrictions              | restriction_level          | character varying           | NO
+ user_risk_state                | payment_locked             | boolean                     | NO
+ user_risk_state                | blocked_until              | timestamp with time zone    | YES
+ user_risk_state                | updated_at                 | timestamp with time zone    | NO
+ user_risk_state                | user_id                    | bigint                      | NO
+ user_risk_state                | current_risk               | character varying           | NO
+ user_wallets                   | balance                    | bigint                      | NO
+ user_wallets                   | reserved_balance           | bigint                      | NO
+ user_wallets                   | updated_at                 | timestamp with time zone    | NO
+ user_wallets                   | user_id                    | bigint                      | NO
+ user_wallets                   | id                         | uuid                        | NO
+ users                          | email_verified             | boolean                     | NO
+ users                          | failed_login_attempts      | integer                     | YES
+ users                          | payouts_enabled            | boolean                     | NO
+ users                          | shadowbanned               | boolean                     | NO
+ users                          | stripe_onboarding_complete | boolean                     | NO
+ users                          | trust_score                | integer                     | NO
+ users                          | created_at                 | timestamp with time zone    | NO
+ users                          | id                         | bigint                      | NO
+ users                          | lockout_until              | timestamp with time zone    | YES
+ users                          | sessions_invalidated_at    | timestamp with time zone    | YES
+ users                          | display_name               | character varying           | YES
+ users                          | email                      | character varying           | NO
+ users                          | email_verification_token   | character varying           | YES
+ users                          | fraud_risk_level           | character varying           | NO
+ users                          | password                   | character varying           | NO
+ users                          | role                       | character varying           | NO
+ users                          | status                     | character varying           | NO
+ users                          | stripe_account_id          | character varying           | YES
+ users                          | username                   | character varying           | NO
+ velocity_metrics               | count                      | integer                     | NO
+ velocity_metrics               | user_id                    | bigint                      | NO
+ velocity_metrics               | window_end                 | timestamp with time zone    | NO
+ velocity_metrics               | window_start               | timestamp with time zone    | NO
+ velocity_metrics               | id                         | uuid                        | NO
+ velocity_metrics               | action_type                | character varying           | NO
+ wallet_transactions            | amount                     | bigint                      | NO
+ wallet_transactions            | created_at                 | timestamp with time zone    | NO
+ wallet_transactions            | user_id                    | bigint                      | NO
+ wallet_transactions            | id                         | uuid                        | NO
+ wallet_transactions            | reason                     | character varying           | NO
+ wallet_transactions            | reference_id               | character varying           | YES
+ wallet_transactions            | type                       | character varying           | NO
+ webhook_events                 | processed                  | boolean                     | NO
+ webhook_events                 | created_at                 | timestamp with time zone    | NO
+ webhook_events                 | id                         | uuid                        | NO
+ webhook_events                 | error_message              | text                        | YES
+ webhook_events                 | event_type                 | character varying           | YES
+ webhook_events                 | payload                    | text                        | YES
+ webhook_events                 | stripe_event_id            | character varying           | NO
+ weekly_tip_leaderboards        | total_amount               | numeric                     | NO
+ weekly_tip_leaderboards        | week_number                | integer                     | NO
+ weekly_tip_leaderboards        | year                       | integer                     | NO
+ weekly_tip_leaderboards        | creator_id                 | bigint                      | NO
+ weekly_tip_leaderboards        | id                         | uuid                        | NO
+ weekly_tip_leaderboards        | username                   | character varying           | NO
+(1051 rows)
+

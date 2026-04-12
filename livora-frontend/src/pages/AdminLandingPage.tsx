@@ -382,6 +382,12 @@ const AdminLandingPage: React.FC = () => {
             <Link to="/admin/reports" className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-sm font-semibold transition-all border border-zinc-700 no-underline">
               Manage Reports
             </Link>
+            <Link to="/admin/profile" className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-sm font-semibold transition-all border border-zinc-700 no-underline">
+              My Profile
+            </Link>
+            <Link to="/admin/team" className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-sm font-semibold transition-all border border-zinc-700 no-underline">
+              Manage Admins
+            </Link>
           </div>
         </div>
 

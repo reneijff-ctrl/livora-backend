@@ -1,0 +1,85 @@
+groups:
+  - name: region_health
+    rules:
+      - alert: RegionNoHealthyNodes
+        expr: |
+          count by (region) (mediasoup_draining{} == 0) == 0
+          or
+          absent(mediasoup_active_viewers)
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Region {{ $labels.region }} has no healthy mediasoup nodes"
+          description: "All mediasoup nodes in region {{ $labels.region }} are down or draining. Viewers will be routed cross-region."
+
+      - alert: RegionAllNodesDraining
+        expr: |
+          count by (region) (mediasoup_draining == 1) == count by (region) (mediasoup_draining)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "All nodes in region {{ $labels.region }} are draining"
+          description: "Every mediasoup node in {{ $labels.region }} is in drain mode. No new streams can be assigned to this region."
+
+  - name: region_capacity
+    rules:
+      - alert: RegionHighViewerLoad
+        expr: |
+          sum by (region) (mediasoup_active_viewers) / count by (region) (mediasoup_draining == 0) > 300
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Region {{ $labels.region }} averaging >300 viewers per node"
+          description: "Region {{ $labels.region }} has {{ $value }} avg viewers/node. Consider scaling up nodes in this region."
+
+      - alert: RegionCriticalViewerLoad
+        expr: |
+          sum by (region) (mediasoup_active_viewers) / count by (region) (mediasoup_draining == 0) > 450
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Region {{ $labels.region }} at critical capacity (>450 viewers/node)"
+          description: "Region {{ $labels.region }} has {{ $value }} avg viewers/node. Immediate scale-up required."
+
+  - name: region_failover
+    rules:
+      - alert: CrossRegionTrafficSpike
+        expr: |
+          sum by (region) (mediasoup_active_viewers) > 0
+          and
+          count by (region) (mediasoup_draining == 0) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cross-region failover active for {{ $labels.region }}"
+          description: "Region {{ $labels.region }} has viewers but no healthy nodes. Traffic is being routed cross-region."
+
+      - alert: RegionLatencyHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le, region) (rate(mediasoup_health_check_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected in region {{ $labels.region }}"
+          description: "95th percentile health check latency in {{ $labels.region }} is {{ $value }}s. May indicate network issues."
+
+  - name: region_imbalance
+    rules:
+      - alert: RegionTrafficImbalance
+        expr: |
+          max without() (sum by (region) (mediasoup_active_viewers))
+          /
+          (min without() (sum by (region) (mediasoup_active_viewers)) > 0)
+          > 5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Significant traffic imbalance between regions"
+          description: "One region has 5x more viewers than another. Review geo-routing configuration."

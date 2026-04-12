@@ -1,0 +1,73 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "mediasoup-streams",
+    "title": "Mediasoup — Streams Dashboard",
+    "tags": ["mediasoup", "streams", "livora"],
+    "timezone": "browser",
+    "refresh": "10s",
+    "time": { "from": "now-1h", "to": "now" },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Active Streams (per node)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          { "expr": "mediasoup_active_streams", "legendFormat": "{{ node }}" }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Total Active Viewers (per node)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          { "expr": "mediasoup_active_viewers", "legendFormat": "{{ node }}" }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Viewers per Stream",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "targets": [
+          { "expr": "mediasoup_room_viewers", "legendFormat": "{{ room }} ({{ node }})" }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Inbound Bitrate per Node",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "targets": [
+          { "expr": "mediasoup_bitrate_in_bps / 1000000", "legendFormat": "{{ node }} Mbps" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "Mbps" } }
+      },
+      {
+        "id": 5,
+        "title": "Outbound Bitrate per Node",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "targets": [
+          { "expr": "mediasoup_bitrate_out_bps / 1000000", "legendFormat": "{{ node }} Mbps" }
+        ],
+        "fieldConfig": { "defaults": { "unit": "Mbps" } }
+      },
+      {
+        "id": 6,
+        "title": "Producers / Consumers / Transports",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "targets": [
+          { "expr": "sum(mediasoup_producers_total)", "legendFormat": "Producers" },
+          { "expr": "sum(mediasoup_consumers_total)", "legendFormat": "Consumers" },
+          { "expr": "sum(mediasoup_transports_total)", "legendFormat": "Transports" }
+        ]
+      }
+    ],
+    "schemaVersion": 39
+  },
+  "overwrite": true
+}

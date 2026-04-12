@@ -6,8 +6,10 @@ import com.joinlivora.backend.auth.dto.LoginResponse;
 import com.joinlivora.backend.auth.dto.RefreshTokenRequest;
 import com.joinlivora.backend.auth.dto.TokenRefreshResponse;
 import com.joinlivora.backend.auth.dto.UserDto;
+import com.joinlivora.backend.admin.service.AdminPermissionService;
 import com.joinlivora.backend.auth.dto.UserMeResponse;
 import com.joinlivora.backend.creator.repository.CreatorRepository;
+import com.joinlivora.backend.security.UserPrincipal;
 import com.joinlivora.backend.security.CookieUtil;
 import com.joinlivora.backend.auth.AuthService;
 import com.joinlivora.backend.util.RequestUtil;
@@ -17,7 +19,9 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -30,13 +34,15 @@ public class AuthController {
     private final com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService;
     private final com.joinlivora.backend.presence.service.CreatorPresenceService creatorPresenceService;
     private final CreatorRepository creatorRepository;
+    private final AdminPermissionService adminPermissionService;
 
-    public AuthController(AuthService authService, CookieUtil cookieUtil, 
+    public AuthController(AuthService authService, CookieUtil cookieUtil,
                           com.joinlivora.backend.user.UserService userService,
                           com.joinlivora.backend.token.TokenWalletService tokenWalletService,
                           com.joinlivora.backend.creator.service.CreatorProfileService creatorProfileService,
                           com.joinlivora.backend.presence.service.CreatorPresenceService creatorPresenceService,
-                          CreatorRepository creatorRepository) {
+                          CreatorRepository creatorRepository,
+                          AdminPermissionService adminPermissionService) {
         this.authService = authService;
         this.cookieUtil = cookieUtil;
         this.userService = userService;
@@ -44,6 +50,7 @@ public class AuthController {
         this.creatorProfileService = creatorProfileService;
         this.creatorPresenceService = creatorPresenceService;
         this.creatorRepository = creatorRepository;
+        this.adminPermissionService = adminPermissionService;
     }
 
     @PostMapping("/login")
@@ -64,7 +71,9 @@ public class AuthController {
                 loginResponse.getUserId(),
                 loginResponse.getEmail(),
                 loginResponse.getUsername(),
-                loginResponse.getRole()
+                loginResponse.getRole(),
+                loginResponse.getAdminRole(),
+                loginResponse.getPermissions()
         );
 
         return ResponseEntity.ok(new LoginApiResponse(
@@ -167,7 +176,12 @@ public class AuthController {
             creatorProfile = creatorProfileService.getProfileDTO(user).orElse(null);
         }
 
-        return ResponseEntity.ok(new UserMeResponse(
+        UserPrincipal principal2 = new UserPrincipal(user);
+        String adminRoleName = user.getAdminRole() != null ? user.getAdminRole().name() : null;
+        List<String> permissions = adminPermissionService.getPermissions(principal2).stream()
+                .map(Enum::name)
+                .collect(Collectors.toList());
+        UserMeResponse meResponse = new UserMeResponse(
                 user.getId(),
                 user.getEmail(),
                 user.getUsername(),
@@ -178,6 +192,9 @@ public class AuthController {
                 tokenBalance,
                 sub,
                 creatorProfile
-        ));
+        );
+        meResponse.setAdminRole(user.getAdminRole());
+        meResponse.setPermissions(permissions);
+        return ResponseEntity.ok(meResponse);
     }
 }

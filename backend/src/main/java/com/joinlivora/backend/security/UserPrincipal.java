@@ -1,5 +1,7 @@
 package com.joinlivora.backend.security;
 
+import com.joinlivora.backend.user.AdminRole;
+import com.joinlivora.backend.user.Role;
 import com.joinlivora.backend.user.User;
 import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
@@ -15,16 +17,20 @@ public class UserPrincipal implements UserDetails {
     private final String email;
     private final String password;
     private final Collection<? extends GrantedAuthority> authorities;
+    private final Role role;
+    private final AdminRole adminRole;
 
     public UserPrincipal(User user) {
         this.userId = user.getId();
         this.email = user.getEmail();
         this.password = user.getPassword();
-        
+        this.role = user.getRole();
+        this.adminRole = user.getAdminRole();
+
         java.util.List<GrantedAuthority> auths = new java.util.ArrayList<>();
         auths.add(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()));
         // Every authenticated user also has the base USER role
-        if (user.getRole() != com.joinlivora.backend.user.Role.USER) {
+        if (user.getRole() != Role.USER) {
             auths.add(new SimpleGrantedAuthority("ROLE_USER"));
         }
         this.authorities = java.util.Collections.unmodifiableList(auths);
@@ -34,6 +40,8 @@ public class UserPrincipal implements UserDetails {
         this.userId = userId;
         this.email = email;
         this.password = password;
+        this.role = null;
+        this.adminRole = null;
         this.authorities = authorities;
     }
 

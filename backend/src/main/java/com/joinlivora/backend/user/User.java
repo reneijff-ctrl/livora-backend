@@ -32,6 +32,10 @@ public class User {
     @Column(nullable = false)
     private Role role;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "admin_role")
+    private AdminRole adminRole;
+
     @Column(name = "failed_login_attempts")
     private int failedLoginAttempts = 0;
 
@@ -116,6 +120,14 @@ public class User {
 
     public Role getRole() {
         return role;
+    }
+
+    public AdminRole getAdminRole() {
+        return adminRole;
+    }
+
+    public void setAdminRole(AdminRole adminRole) {
+        this.adminRole = adminRole;
     }
 
     public int getFailedLoginAttempts() {

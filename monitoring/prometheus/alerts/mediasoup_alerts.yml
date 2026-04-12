@@ -1,0 +1,115 @@
+groups:
+  - name: mediasoup_critical
+    rules:
+      # ── Node Health ──
+      - alert: MediasoupNodeDown
+        expr: up{job="mediasoup"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mediasoup node {{ $labels.instance }} is down"
+          description: "Node {{ $labels.instance }} has been unreachable for 30 seconds."
+
+      - alert: NoHealthyMediasoupNodes
+        expr: count(up{job="mediasoup"} == 1) == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "No healthy mediasoup nodes available"
+          description: "All mediasoup nodes are down. Streaming is completely unavailable."
+
+      # ── CPU Overload ──
+      - alert: MediasoupHighCPU
+        expr: rate(mediasoup_worker_cpu_user_ms[5m]) + rate(mediasoup_worker_cpu_system_ms[5m]) > 800
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mediasoup worker {{ $labels.pid }} on {{ $labels.node }} has high CPU"
+          description: "Worker CPU rate exceeds 800ms/s (80% of a core) for 2 minutes."
+
+      - alert: MediasoupCriticalCPU
+        expr: rate(mediasoup_worker_cpu_user_ms[5m]) + rate(mediasoup_worker_cpu_system_ms[5m]) > 950
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mediasoup worker {{ $labels.pid }} on {{ $labels.node }} at critical CPU"
+          description: "Worker CPU rate exceeds 950ms/s (95% of a core). Streams may degrade."
+
+      # ── Memory ──
+      - alert: MediasoupHighMemory
+        expr: mediasoup_process_memory_rss_bytes > 900 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mediasoup node {{ $labels.node }} memory > 900MB"
+          description: "Process RSS is {{ $value | humanize1024 }}. Container limit is 1GB."
+
+      # ── Viewer Capacity ──
+      - alert: MediasoupHighViewerCount
+        expr: mediasoup_active_viewers > 400
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mediasoup node {{ $labels.node }} has {{ $value }} active viewers"
+          description: "Approaching max viewer capacity per node (500). Consider scaling."
+
+      # ── Draining ──
+      - alert: MediasoupNodeDraining
+        expr: mediasoup_draining == 1
+        for: 0s
+        labels:
+          severity: info
+        annotations:
+          summary: "Mediasoup node {{ $labels.node }} is draining"
+          description: "Node is in drain mode. No new streams will be assigned."
+
+  - name: mediasoup_backend
+    rules:
+      # ── Stream Restart Rate ──
+      - alert: HighStreamRestartRate
+        expr: increase(mediasoup_cluster_stream_restarts_total[5m]) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High stream restart rate ({{ $value }} in 5m)"
+          description: "Multiple streams are restarting, indicating node instability."
+
+      # ── Reconnect Failure Rate ──
+      - alert: HighReconnectFailureRate
+        expr: >
+          (increase(mediasoup_cluster_reconnect_attempts_total[5m]) - increase(mediasoup_cluster_successful_recoveries_total[5m]))
+          / increase(mediasoup_cluster_reconnect_attempts_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reconnect failure rate > 5%"
+          description: "{{ $value | humanizePercentage }} of reconnect attempts are failing."
+
+      # ── Cluster Capacity ──
+      - alert: AllNodesHighLoad
+        expr: min(mediasoup_active_viewers) > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "All mediasoup nodes have > 300 viewers"
+          description: "Cluster is approaching capacity. Auto-scaling should trigger."
+
+  - name: mediasoup_bitrate
+    rules:
+      - alert: HighOutboundBitrate
+        expr: mediasoup_bitrate_out_bps > 500 * 1000 * 1000
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mediasoup node {{ $labels.node }} outbound bitrate > 500 Mbps"
+          description: "High bandwidth usage may indicate need for more nodes or bitrate limits."

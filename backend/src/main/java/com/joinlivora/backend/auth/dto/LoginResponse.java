@@ -1,6 +1,7 @@
 package com.joinlivora.backend.auth.dto;
 
 import java.time.Instant;
+import java.util.List;
 
 public class LoginResponse {
     private String accessToken;
@@ -10,6 +11,8 @@ public class LoginResponse {
     private Long userId;
     private String email;
     private String username;
+    private String adminRole;
+    private List<String> permissions;
 
     public LoginResponse(String accessToken, String refreshToken, java.time.Instant expiresAt, String role, Long userId, String email, String username) {
         this.accessToken = accessToken;
@@ -19,6 +22,18 @@ public class LoginResponse {
         this.userId = userId;
         this.email = email;
         this.username = username;
+    }
+
+    public LoginResponse(String accessToken, String refreshToken, java.time.Instant expiresAt, String role, Long userId, String email, String username, String adminRole, List<String> permissions) {
+        this.accessToken = accessToken;
+        this.refreshToken = refreshToken;
+        this.expiresAt = expiresAt;
+        this.role = role;
+        this.userId = userId;
+        this.email = email;
+        this.username = username;
+        this.adminRole = adminRole;
+        this.permissions = permissions;
     }
 
     public String getAccessToken() {
@@ -47,5 +62,13 @@ public class LoginResponse {
 
     public String getUsername() {
         return username;
+    }
+
+    public String getAdminRole() {
+        return adminRole;
+    }
+
+    public List<String> getPermissions() {
+        return permissions;
     }
 }

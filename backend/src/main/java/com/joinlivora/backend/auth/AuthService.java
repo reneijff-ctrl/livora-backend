@@ -1,5 +1,6 @@
 package com.joinlivora.backend.auth;
 
+import com.joinlivora.backend.admin.service.AdminPermissionService;
 import com.joinlivora.backend.admin.service.AdminRealtimeEventService;
 import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.analytics.AnalyticsEventType;
@@ -45,7 +46,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class AuthService {
@@ -71,6 +74,7 @@ public class AuthService {
     private final CreatorProfileService creatorProfileService;
     private final ApplicationEventPublisher eventPublisher;
     private final AdminRealtimeEventService adminRealtimeEventService;
+    private final AdminPermissionService adminPermissionService;
     private final Environment env;
 
     public AuthService(
@@ -93,6 +97,7 @@ public class AuthService {
             CreatorProfileService creatorProfileService,
             ApplicationEventPublisher eventPublisher,
             AdminRealtimeEventService adminRealtimeEventService,
+            AdminPermissionService adminPermissionService,
             Environment env
     ) {
         this.authenticationManager = authenticationManager;
@@ -114,6 +119,7 @@ public class AuthService {
         this.creatorProfileService = creatorProfileService;
         this.eventPublisher = eventPublisher;
         this.adminRealtimeEventService = adminRealtimeEventService;
+        this.adminPermissionService = adminPermissionService;
         this.env = env;
     }
 
@@ -291,6 +297,11 @@ public class AuthService {
 
             loginSuccessHandler.onLoginSuccess(authenticatedUser, httpRequest);
 
+            com.joinlivora.backend.security.UserPrincipal principal = new com.joinlivora.backend.security.UserPrincipal(authenticatedUser);
+            String adminRoleName = authenticatedUser.getAdminRole() != null ? authenticatedUser.getAdminRole().name() : null;
+            List<String> permissions = adminPermissionService.getPermissions(principal).stream()
+                    .map(Enum::name)
+                    .collect(Collectors.toList());
             return new LoginResponse(
                     accessToken,
                     refreshToken.getPlainToken(),
@@ -298,7 +309,9 @@ public class AuthService {
                     authenticatedUser.getRole().name(),
                     authenticatedUser.getId(),
                     authenticatedUser.getEmail(),
-                    authenticatedUser.getUsername()
+                    authenticatedUser.getUsername(),
+                    adminRoleName,
+                    permissions
             );
         } catch (BadCredentialsException e) {
             userService.incrementFailedAttempts(user);

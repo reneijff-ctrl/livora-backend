@@ -1,5 +1,16 @@
 export type Role = 'USER' | 'PREMIUM' | 'ADMIN' | 'CREATOR' | 'VIEWER';
 
+export type AdminRole = 'CEO' | 'ADMIN' | 'MODERATOR' | 'SUPPORT';
+
+export type Permission =
+  | 'CREATOR_APPROVE'
+  | 'CREATOR_REJECT'
+  | 'CREATOR_SUSPEND'
+  | 'CREATOR_VIEW'
+  | 'ADMIN_MANAGE'
+  | 'REPORTS_VIEW'
+  | 'STREAMS_MODERATE';
+
 export enum SubscriptionStatus {
   NONE = 'NONE',
   FREE = 'FREE',
@@ -44,6 +55,8 @@ export interface User {
   username: string;
   displayName?: string;
   role: Role;
+  adminRole?: AdminRole;
+  permissions?: Permission[];
   status: UserStatus;
   emailVerified: boolean;
   tokenBalance?: number;
@@ -128,6 +141,8 @@ export interface LoginResponse {
     id: string;
     email: string;
     role: string;
+    adminRole?: AdminRole;
+    permissions?: Permission[];
   };
 }
 

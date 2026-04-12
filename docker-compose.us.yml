@@ -1,0 +1,167 @@
+# ============================================================
+# Livora Platform — US Region Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.us.yml up -d
+# ============================================================
+# This override configures the US (secondary) region:
+# - Sets MEDIASOUP_LOCAL_REGION=us on backend
+# - Configures US-specific mediasoup nodes with @us region tags
+# - Deploys regional TURN server (coturn-us)
+# - Deploys regional Redis for US state
+# - Connects to EU primary database (cross-region read replica recommended)
+# ============================================================
+
+services:
+  livora-backend:
+    environment:
+      MEDIASOUP_LOCAL_REGION: us
+      MEDIASOUP_NODES: >-
+        us-ms-1@us:http://us-ms-1:4000,
+        us-ms-2@us:http://us-ms-2:4001
+      MEDIASOUP_ANNOUNCED_IP: ${US_PUBLIC_IP}
+      TURN_SERVER_URL: "turn:turn-us.${DOMAIN:-joinlivora.com}:3478"
+      # Point to US regional Redis for low-latency state
+      REDIS_HOST: redis-us
+      # Database: use a read replica in US or cross-region connection to EU primary
+      # DB_URL: jdbc:postgresql://us-postgres-replica:5432/joinlivora
+
+  # ── US Mediasoup Nodes ──
+  us-ms-1:
+    image: ${MEDIASOUP_IMAGE:-livora-mediasoup}
+    build: ./services/mediasoup-server
+    container_name: us-ms-1
+    restart: always
+    environment:
+      MEDIASOUP_NODE_ID: us-ms-1
+      MEDIASOUP_REGION: us
+      MEDIASOUP_PORT: 4000
+      MEDIASOUP_INTERNAL_SECRET: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_LISTEN_IP: "0.0.0.0"
+      MEDIASOUP_ANNOUNCED_IP: ${US_PUBLIC_IP}
+      RTC_MIN_PORT: "40000"
+      RTC_MAX_PORT: "40100"
+      TURN_SERVER_URL: "turn:turn-us.${DOMAIN:-joinlivora.com}:3478"
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+    ports:
+      - "40000-40100:40000-40100/udp"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+    networks:
+      - livora-network
+
+  us-ms-2:
+    image: ${MEDIASOUP_IMAGE:-livora-mediasoup}
+    build: ./services/mediasoup-server
+    container_name: us-ms-2
+    restart: always
+    environment:
+      MEDIASOUP_NODE_ID: us-ms-2
+      MEDIASOUP_REGION: us
+      MEDIASOUP_PORT: 4001
+      MEDIASOUP_INTERNAL_SECRET: ${MEDIASOUP_AUTH_TOKEN}
+      MEDIASOUP_LISTEN_IP: "0.0.0.0"
+      MEDIASOUP_ANNOUNCED_IP: ${US_PUBLIC_IP}
+      RTC_MIN_PORT: "40101"
+      RTC_MAX_PORT: "40200"
+      TURN_SERVER_URL: "turn:turn-us.${DOMAIN:-joinlivora.com}:3478"
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+    ports:
+      - "40101-40200:40101-40200/udp"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4001/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '2.0'
+    networks:
+      - livora-network
+
+  # ── US TURN Server ──
+  coturn-us:
+    image: coturn/coturn:latest
+    container_name: coturn-us
+    restart: unless-stopped
+    network_mode: "host"
+    command: >
+      turnserver
+      --log-file=stdout
+      --min-port=49152
+      --max-port=49200
+      --fingerprint
+      --lt-cred-mech
+      --realm=${TURN_REALM:-joinlivora.com}
+      --user=${TURN_USERNAME:-turnuser}:${TURN_CREDENTIAL:-turnpassword}
+      --external-ip=${US_PUBLIC_IP}
+      --listening-port=3478
+      --no-cli
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ── US Regional Redis ──
+  redis-us:
+    image: redis:7-alpine
+    container_name: redis-us
+    restart: always
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    volumes:
+      - redis_us_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - livora-network
+
+  # ── US Transcode Worker ────────────────────────────────────────────────────
+  transcode-worker:
+    environment:
+      # US region identity — embedded in heartbeat values and logs
+      TRANSCODE_REGION: us
+      # Redis: use US regional Redis for low-latency state
+      REDIS_HOST: redis-us
+      # S3 / R2 storage: same bucket as EU — segments written here are visible
+      # globally via Cloudflare R2 or S3 cross-region replication.
+      TRANSCODE_S3_ENABLED: ${TRANSCODE_S3_ENABLED:-false}
+      TRANSCODE_S3_BUCKET: ${TRANSCODE_S3_BUCKET:-livora-hls}
+      TRANSCODE_S3_ENDPOINT: ${TRANSCODE_S3_ENDPOINT:-}
+      TRANSCODE_S3_REGION: ${TRANSCODE_S3_REGION:-auto}
+      TRANSCODE_S3_ACCESS_KEY_ID: ${TRANSCODE_S3_ACCESS_KEY_ID:-}
+      TRANSCODE_S3_SECRET_ACCESS_KEY: ${TRANSCODE_S3_SECRET_ACCESS_KEY:-}
+    volumes:
+      - streams_us_data:/streams
+    depends_on:
+      redis-us:
+        condition: service_healthy
+    networks:
+      - livora-network
+
+volumes:
+  redis_us_data:
+  streams_us_data:

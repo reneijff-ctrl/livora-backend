@@ -20,6 +20,13 @@ export interface CreatorApplication {
   reviewNotes?: string;
 }
 
+export interface AdminUser {
+  id: number;
+  email: string;
+  username: string;
+  adminRole?: string;
+}
+
 export interface PageResponse<T> {
   content: T[];
   totalElements: number;
@@ -270,6 +277,14 @@ const adminService = {
 
   suspendCreatorProfile: async (userId: number, reason: string): Promise<void> => {
     await apiClient.post(`/admin/creators/${userId}/suspend-profile`, { reason });
+  },
+  getAdmins: async (): Promise<AdminUser[]> => {
+    const response = await apiClient.get<AdminUser[]>('/admin/users');
+    return response.data;
+  },
+  updateAdminRole: async (id: number, adminRole: string): Promise<AdminUser> => {
+    const response = await apiClient.put<AdminUser>(`/admin/users/${id}/role`, { adminRole });
+    return response.data;
   },
 };
 

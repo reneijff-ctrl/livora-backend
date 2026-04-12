@@ -10,6 +10,8 @@ import Home from './pages/Home';
 import PricingPage from './pages/PricingPage';
 import ExploreCreatorsPage from './pages/ExploreCreatorsPage';
 import AdminLandingPage from './pages/AdminLandingPage';
+import AdminProfilePage from './pages/AdminProfilePage';
+import AdminTeamPage from './pages/AdminTeamPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminStreamsPage from './pages/AdminStreamsPage';
 import CreatorDirectoryPage from './pages/admin/creators/CreatorDirectoryPage';
@@ -318,6 +320,22 @@ export const router = createBrowserRouter([
             element: (
               <RequireRole role="ADMIN">
                 <AdminReportsPage />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'admin/profile',
+            element: (
+              <RequireRole role="ADMIN">
+                <AdminProfilePage />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'admin/team',
+            element: (
+              <RequireRole role="ADMIN">
+                <AdminTeamPage />
               </RequireRole>
             ),
           },

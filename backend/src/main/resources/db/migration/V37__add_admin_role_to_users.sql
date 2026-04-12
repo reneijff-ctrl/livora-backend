@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN admin_role VARCHAR(50);

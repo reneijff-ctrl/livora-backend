@@ -1,8 +1,11 @@
 package com.joinlivora.backend.auth.dto;
 
+import com.joinlivora.backend.user.AdminRole;
+import com.joinlivora.backend.user.Permission;
 import com.joinlivora.backend.user.Role;
 import com.joinlivora.backend.user.UserStatus;
 import com.joinlivora.backend.payment.dto.SubscriptionResponse;
+import java.util.List;
 
 public class UserMeResponse {
     private Long id;
@@ -15,6 +18,8 @@ public class UserMeResponse {
     private long tokenBalance;
     private SubscriptionResponse subscription;
     private com.joinlivora.backend.creator.dto.CreatorProfileDTO creatorProfile;
+    private AdminRole adminRole;
+    private List<String> permissions;
 
     public UserMeResponse() {}
 
@@ -116,5 +121,17 @@ public class UserMeResponse {
 
     public void setCreatorProfile(com.joinlivora.backend.creator.dto.CreatorProfileDTO creatorProfile) {
         this.creatorProfile = creatorProfile;
+    }
+    public AdminRole getAdminRole() {
+        return adminRole;
+    }
+    public void setAdminRole(AdminRole adminRole) {
+        this.adminRole = adminRole;
+    }
+    public List<String> getPermissions() {
+        return permissions;
+    }
+    public void setPermissions(List<String> permissions) {
+        this.permissions = permissions;
     }
 }

@@ -1,0 +1,72 @@
+spring:
+  application:
+    name: transcode-worker
+  data:
+    redis:
+      host: ${REDIS_HOST:livora-redis}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      connect-timeout: 1000ms
+
+server:
+  port: 8090
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  endpoint:
+    health:
+      show-details: always
+
+transcode:
+  # HLS output root — must match the /streams Docker volume mount
+  output-dir: ${TRANSCODE_OUTPUT_DIR:/streams}
+  # Maximum concurrent FFmpeg processes this worker instance will run
+  max-concurrent: ${TRANSCODE_MAX_CONCURRENT:4}
+  # Seconds to wait for RTMP stream to appear before giving up
+  rtmp-connect-timeout: ${TRANSCODE_RTMP_TIMEOUT:30}
+  # Number of automatic FFmpeg restart attempts before marking stream degraded
+  max-retries: ${TRANSCODE_MAX_RETRIES:3}
+  # Delay between retry attempts in milliseconds
+  retry-delay-ms: ${TRANSCODE_RETRY_DELAY_MS:5000}
+  # Redis keys (must match TranscodeJobPublisher in the main backend)
+  jobs-list-key: stream:transcode:jobs
+  stop-channel: stream:transcode:stop
+  # BLPOP blocking timeout in seconds (0 = block forever)
+  blpop-timeout: ${TRANSCODE_BLPOP_TIMEOUT:5}
+  # Low-latency HLS: 2s segments, 4-segment window, split_by_time+program_date_time flags
+  # Set to true for <5s latency (increases segment request rate ~2x vs standard 4s)
+  low-latency-mode: ${TRANSCODE_LOW_LATENCY:false}
+
+  # ── Worker identity ───────────────────────────────────────────────────────
+  # Region label embedded in heartbeat values (e.g. "eu", "us")
+  region: ${TRANSCODE_REGION:eu}
+
+  # ── Heartbeat / failover ──────────────────────────────────────────────────
+  # Publishes stream:worker:{streamId} to Redis every heartbeat-interval-ms.
+  # If the key expires (TTL = heartbeat-ttl-seconds) another worker can detect
+  # the orphan and re-enqueue the job for recovery.
+  heartbeat-enabled: ${TRANSCODE_HEARTBEAT_ENABLED:true}
+  heartbeat-interval-ms: ${TRANSCODE_HEARTBEAT_INTERVAL_MS:5000}
+  heartbeat-ttl-seconds: ${TRANSCODE_HEARTBEAT_TTL_SECONDS:15}
+
+  # ── S3 / R2 object storage ────────────────────────────────────────────────
+  # When true, HLS segments and playlists are uploaded to S3/R2 after creation.
+  # Set TRANSCODE_S3_ENABLED=true in production to enable multi-region delivery.
+  # Leave false for single-region local-volume mode (development default).
+  s3-enabled: ${TRANSCODE_S3_ENABLED:false}
+  s3-bucket: ${TRANSCODE_S3_BUCKET:livora-hls}
+  # For Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com
+  # For AWS S3: leave empty (SDK resolves from region)
+  s3-endpoint: ${TRANSCODE_S3_ENDPOINT:}
+  # R2: "auto"  |  AWS: e.g. "eu-central-1"
+  s3-region: ${TRANSCODE_S3_REGION:auto}
+  s3-access-key-id: ${TRANSCODE_S3_ACCESS_KEY_ID:}
+  s3-secret-access-key: ${TRANSCODE_S3_SECRET_ACCESS_KEY:}
+  # Key prefix inside bucket: segments uploaded as <prefix>/<streamId>/<file>
+  s3-key-prefix: ${TRANSCODE_S3_KEY_PREFIX:streams}
+  # How often the S3 watcher scans for new segments to upload (milliseconds)
+  s3-watch-interval-ms: ${TRANSCODE_S3_WATCH_INTERVAL_MS:1000}
