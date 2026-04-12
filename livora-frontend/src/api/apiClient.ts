@@ -20,6 +20,18 @@ const apiClient = axios.create({
  */
 export const publicApiClient = apiClient;
 
+// Guard: if any code accidentally calls apiClient with /actuator/health,
+// strip the baseURL so it goes to /actuator/health directly (not /api/actuator/health).
+apiClient.interceptors.request.use(
+  (config) => {
+    if (config.url?.includes('/actuator/')) {
+      config.baseURL = '';
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // Add request interceptor to attach JWT token
 apiClient.interceptors.request.use(
   (config) => {

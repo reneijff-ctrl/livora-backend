@@ -13,10 +13,16 @@ import LanguageSelect from '../components/ui/LanguageSelect';
 const GENDER_OPTIONS = [
   { value: 'Male', label: 'Male' },
   { value: 'Female', label: 'Female' },
-  { value: 'Trans Female', label: 'Trans Female' },
   { value: 'Trans Male', label: 'Trans Male' },
-  { value: 'Non Binary', label: 'Non Binary' },
+  { value: 'Trans Female', label: 'Trans Female' },
+  { value: 'Non-binary', label: 'Non-binary' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' },
+];
+
+const CREATOR_TYPE_OPTIONS = [
+  { value: 'Solo', label: 'Solo' },
   { value: 'Couple', label: 'Couple' },
+  { value: 'Group', label: 'Group' },
 ];
 
 const INTEREST_OPTIONS = [
@@ -72,13 +78,13 @@ const BecomeCreatorPage: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const [isDragging, setIsDragging] = useState<{ [key: string]: boolean }>({});
+  const [step2Errors, setStep2Errors] = useState<{ realName?: string; birthDate?: string; country?: string; gender?: string }>({});
   
   // Step 1 State
   const [basics, setBasics] = useState({
     username: '',
     displayName: '',
-    bio: '',
-    profilePicture: ''
+    bio: ''
   });
 
   // Step 2 State
@@ -86,6 +92,7 @@ const BecomeCreatorPage: React.FC = () => {
     realName: '',
     birthDate: '',
     gender: '',
+    creatorType: '',
     interestedIn: '',
     languages: [] as string[],
     location: '',
@@ -115,8 +122,7 @@ const BecomeCreatorPage: React.FC = () => {
       setBasics({
         username: user.username || '',
         displayName: user.displayName || '',
-        bio: user.creatorProfile?.bio || '',
-        profilePicture: user.creatorProfile?.avatarUrl || ''
+        bio: user.creatorProfile?.bio || ''
       });
       
       if (user.creatorProfile) {
@@ -124,6 +130,7 @@ const BecomeCreatorPage: React.FC = () => {
             realName: (user.creatorProfile as any).realName || '',
             birthDate: (user.creatorProfile as any).birthDate || '',
             gender: (user.creatorProfile as any).gender || '',
+            creatorType: (user.creatorProfile as any).creatorType || '',
             interestedIn: (user.creatorProfile as any).interestedIn || '',
             languages: (() => {
               const lang = (user.creatorProfile as any).languages || '';
@@ -161,12 +168,42 @@ const BecomeCreatorPage: React.FC = () => {
     }
   };
 
+  const validateStep2 = (): boolean => {
+    const errors: { realName?: string; birthDate?: string; country?: string; gender?: string } = {};
+    const trimmedName = profile.realName.trim();
+    if (!trimmedName) {
+      errors.realName = 'Real name is required.';
+    } else if (trimmedName.split(/\s+/).filter(Boolean).length < 2) {
+      errors.realName = 'Please enter your first and last name.';
+    }
+    if (!profile.birthDate) {
+      errors.birthDate = 'Birth date is required.';
+    } else {
+      const dob = new Date(profile.birthDate);
+      const today = new Date();
+      const age = today.getFullYear() - dob.getFullYear() -
+        (today < new Date(today.getFullYear(), dob.getMonth(), dob.getDate()) ? 1 : 0);
+      if (age < 18) {
+        errors.birthDate = 'You must be at least 18 years old.';
+      }
+    }
+    if (!profile.gender) {
+      errors.gender = 'Gender is required.';
+    }
+    if (!profile.location) {
+      errors.country = 'Country is required.';
+    }
+    setStep2Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleNext = async () => {
     try {
       setLoading(true);
       if (step === 1) {
         await creatorService.saveOnboardingBasics(basics);
       } else if (step === 2) {
+        if (!validateStep2()) { setLoading(false); return; }
         await creatorService.saveOnboardingProfile({
           ...profile,
           languages: profile.languages.join(', '),
@@ -199,10 +236,7 @@ const BecomeCreatorPage: React.FC = () => {
     try {
       setIsUploading(true);
       let url = '';
-      if (field === 'profilePicture') {
-        const updatedProfile = await creatorService.uploadCreatorImage(file, 'PROFILE');
-        url = updatedProfile.avatarUrl || '';
-      } else if (field === 'governmentIdImage') {
+      if (field === 'governmentIdImage') {
         url = await creatorService.uploadVerificationId(file, (p) => {
           setUploadProgress(prev => ({ ...prev, [field]: p }));
         });
@@ -212,9 +246,7 @@ const BecomeCreatorPage: React.FC = () => {
         });
       }
 
-      if (step === 1) {
-        setBasics({ ...basics, profilePicture: url });
-      } else if (step === 3) {
+      if (step === 3) {
         setVerification({ ...verification, [field]: url });
       }
     } catch (err) {
@@ -293,18 +325,8 @@ const BecomeCreatorPage: React.FC = () => {
           {step === 1 && (
             <div className="space-y-6">
               <h2 className="text-2xl font-bold mb-6">Account Basics</h2>
-              <div className="flex flex-col items-center mb-8">
-                  <div className="w-24 h-24 rounded-full bg-zinc-800 border-2 border-zinc-700 overflow-hidden mb-4 flex items-center justify-center">
-                    {basics.profilePicture ? (
-                        <img src={basics.profilePicture} alt="Profile" className="w-full h-full object-cover" />
-                    ) : (
-                        <span className="text-3xl text-zinc-600">👤</span>
-                    )}
-                  </div>
-                  <input type="file" id="pfp" className="hidden" onChange={(e) => handleImageUpload(e, 'profilePicture')} />
-                  <label htmlFor="pfp" className="text-sm font-semibold text-indigo-400 hover:text-indigo-300 cursor-pointer">
-                    {isUploading ? 'Uploading...' : 'Upload Profile Picture'}
-                  </label>
+              <div className="flex items-center gap-3 p-4 mb-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-sm">
+                📸 You can upload your profile picture after becoming a creator.
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
@@ -346,18 +368,30 @@ const BecomeCreatorPage: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-zinc-400 mb-2">Real Name</label>
-                  <input type="text" value={profile.realName} onChange={e => setProfile({...profile, realName: e.target.value})} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3" />
+                  <input type="text" value={profile.realName} onChange={e => { setProfile({...profile, realName: e.target.value}); setStep2Errors(prev => ({...prev, realName: undefined})); }} className={`w-full bg-zinc-800 border rounded-xl px-4 py-3 ${step2Errors.realName ? 'border-red-500 focus:ring-red-500' : 'border-zinc-700 focus:ring-indigo-500'} focus:outline-none focus:ring-2`} placeholder="e.g. Jane Doe" />
+                  {step2Errors.realName && <p className="mt-1 text-xs text-red-400">{step2Errors.realName}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-zinc-400 mb-2">Birth Date</label>
-                  <input type="date" value={profile.birthDate} onChange={e => setProfile({...profile, birthDate: e.target.value})} className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3" />
+                  <input type="date" value={profile.birthDate} onChange={e => { setProfile({...profile, birthDate: e.target.value}); setStep2Errors(prev => ({...prev, birthDate: undefined})); }} className={`w-full bg-zinc-800 border rounded-xl px-4 py-3 ${step2Errors.birthDate ? 'border-red-500 focus:ring-red-500' : 'border-zinc-700 focus:ring-indigo-500'} focus:outline-none focus:ring-2`} />
+                  {step2Errors.birthDate && <p className="mt-1 text-xs text-red-400">{step2Errors.birthDate}</p>}
+                </div>
+                <div>
+                  <SelectField
+                    label="Gender *"
+                    value={profile.gender}
+                    onChange={val => { setProfile({...profile, gender: val}); setStep2Errors(prev => ({...prev, gender: undefined})); }}
+                    options={GENDER_OPTIONS}
+                    placeholder="Select gender"
+                  />
+                  {step2Errors.gender && <p className="mt-1 text-xs text-red-400">{step2Errors.gender}</p>}
                 </div>
                 <SelectField
-                  label="Gender"
-                  value={profile.gender}
-                  onChange={val => setProfile({...profile, gender: val})}
-                  options={GENDER_OPTIONS}
-                  placeholder="Select gender"
+                  label="Creator Type"
+                  value={profile.creatorType}
+                  onChange={val => setProfile({...profile, creatorType: val})}
+                  options={CREATOR_TYPE_OPTIONS}
+                  placeholder="Select creator type"
                 />
                 <SelectField
                   label="Interested In"
@@ -378,9 +412,10 @@ const BecomeCreatorPage: React.FC = () => {
                   <label className="block text-sm font-medium text-zinc-400 mb-2">Country</label>
                   <CountrySelect
                     value={profile.location}
-                    onChange={(code) => setProfile({...profile, location: code, state: ''})}
+                    onChange={(code) => { setProfile({...profile, location: code, state: ''}); setStep2Errors(prev => ({...prev, country: undefined})); }}
                     placeholder="Select country"
                   />
+                  {step2Errors.country && <p className="mt-1 text-xs text-red-400">{step2Errors.country}</p>}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-zinc-400 mb-2">State / Province</label>

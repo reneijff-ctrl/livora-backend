@@ -18,6 +18,7 @@ public class AdminStreamDTO {
     private Long userId;     // Added for compatibility with AdminLiveStreamsWidget.tsx
     private Long creator;    // Added for compatibility with AdminLiveStreamsWidget.tsx
     private String creatorUsername;
+    private String creatorAvatarUrl;
     private String title;
     private int viewerCount;
     private Instant startedAt;

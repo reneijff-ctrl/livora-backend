@@ -15,4 +15,6 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, UUID>, JpaSp
     List<AuditLog> findAllByTargetTypeAndTargetIdOrderByCreatedAtDesc(String targetType, UUID targetId);
 
     void deleteAllByCreatedAtBefore(Instant threshold);
+
+    List<AuditLog> findByTargetTypeAndActionInOrderByCreatedAtDesc(String targetType, List<String> actions, org.springframework.data.domain.Pageable pageable);
 }

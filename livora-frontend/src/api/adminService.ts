@@ -118,8 +118,13 @@ const adminService = {
   },
 
   getHealth: async (): Promise<any> => {
-    const response = await apiClient.get('http://localhost:8080/actuator/health', { _skipToast: true });
-    return response.data;
+    try {
+      const response = await apiClient.get('/admin/health', { _skipToast: true });
+      return response.data;
+    } catch (e) {
+      console.warn('[HEALTH] request failed', e);
+      return null;
+    }
   },
 
   getSystemHealth: async (): Promise<any> => {
@@ -186,7 +191,86 @@ const adminService = {
   getActiveStreams: async (): Promise<any[]> => {
     const response = await apiClient.get('/admin/streams/active');
     return response.data?.content ?? [];
-  }
+  },
+
+  getRecentAuditEvents: async (type = 'CREATOR', limit = 20): Promise<any[]> => {
+    try {
+      const response = await apiClient.get(`/admin/audit/recent?type=${type}&limit=${limit}`, { _skipToast: true });
+      return response.data;
+    } catch (e) {
+      console.warn('[AUDIT] failed to fetch recent events', e);
+      return [];
+    }
+  },
+
+  // -------------------------------------------------------------------------
+  // Unified creator lifecycle API
+  // -------------------------------------------------------------------------
+
+  getUnifiedCreators: async (params: { status?: string; search?: string; page?: number; size?: number } = {}): Promise<PageResponse<any>> => {
+    const q = new URLSearchParams();
+    if (params.status) q.append('status', params.status);
+    if (params.search) q.append('search', params.search);
+    q.append('page', String(params.page ?? 0));
+    q.append('size', String(params.size ?? 20));
+    const response = await apiClient.get(`/admin/creators?${q.toString()}`);
+    return response.data;
+  },
+
+  getUnifiedCreator: async (userId: number): Promise<any> => {
+    const response = await apiClient.get(`/admin/creators/${userId}`);
+    return response.data;
+  },
+
+  getApplicationQueue: async (): Promise<any[]> => {
+    const response = await apiClient.get('/admin/creators/queue/applications');
+    return response.data;
+  },
+
+  getVerificationQueue: async (): Promise<any[]> => {
+    const response = await apiClient.get('/admin/creators/queue/verifications');
+    return response.data;
+  },
+
+  approveCreatorApplication: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/approve-application`);
+  },
+
+  rejectCreatorApplication: async (userId: number, reason: string): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/reject-application`, { reason });
+  },
+
+  approveCreatorVerification: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/approve-verification`);
+  },
+
+  rejectCreatorVerification: async (userId: number, reason: string): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/reject-verification`, { reason });
+  },
+
+  suspendCreator: async (userId: number, reason: string): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/suspend`, { reason });
+  },
+
+  unsuspendCreator: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/unsuspend`);
+  },
+
+  approveCreator: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/approve`);
+  },
+
+  rejectCreator: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/reject`);
+  },
+
+  activateCreator: async (userId: number): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/activate`);
+  },
+
+  suspendCreatorProfile: async (userId: number, reason: string): Promise<void> => {
+    await apiClient.post(`/admin/creators/${userId}/suspend-profile`, { reason });
+  },
 };
 
 export default adminService;

@@ -62,11 +62,7 @@ const creatorService = {
     formData.append('file', file);
     formData.append('type', type);
 
-    const response = await apiClient.post<any>('/creator/profile/upload', formData, {
-      headers: {
-        'Content-Type': undefined,
-      },
-    });
+    const response = await apiClient.post<any>('/creator/profile/upload', formData, { timeout: 60000 });
     return adaptCreator(response.data);
   },
 
@@ -582,9 +578,7 @@ const creatorService = {
     formData.append('file', file);
 
     const response = await apiClient.post<{ url: string }>('/creator/verification/upload-id', formData, {
-      headers: {
-        'Content-Type': undefined,
-      },
+      timeout: 60000,
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -603,9 +597,7 @@ const creatorService = {
     formData.append('file', file);
 
     const response = await apiClient.post<{ url: string }>('/creator/verification/upload-selfie', formData, {
-      headers: {
-        'Content-Type': undefined,
-      },
+      timeout: 60000,
       onUploadProgress: (progressEvent) => {
         if (onProgress && progressEvent.total) {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);

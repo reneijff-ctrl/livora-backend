@@ -2,81 +2,75 @@ package com.joinlivora.backend.admin.exception;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.MethodParameter;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.method.HandlerMethod;
+import org.springframework.core.MethodParameter;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Global exception handler for admin endpoints to prevent UI crashes.
- * Returns HTTP 200 with fallback values for specific internal errors.
+ * Fallback handler for admin read-only endpoints only.
+ *
+ * Scope: restricted to endpoints that return List or Page (dashboard stats, queues).
+ * Mutation endpoints (approve/reject/suspend/etc.) are NOT intercepted here —
+ * they fall through to GlobalExceptionHandler and return proper HTTP 4xx/5xx.
+ *
+ * Does NOT carry @Order(HIGHEST_PRECEDENCE) — GlobalExceptionHandler takes priority
+ * for all typed exceptions (BusinessException, ResourceNotFoundException, etc.).
  */
 @Slf4j
-@ControllerAdvice(basePackages = {"com.joinlivora.backend.admin", "com.joinlivora.backend.streaming", "com.joinlivora.backend.audit", "com.joinlivora.backend.analytics", "com.joinlivora.backend.chargeback"})
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@ControllerAdvice(basePackages = {
+        "com.joinlivora.backend.admin",
+        "com.joinlivora.backend.streaming",
+        "com.joinlivora.backend.audit",
+        "com.joinlivora.backend.analytics",
+        "com.joinlivora.backend.chargeback"
+})
 public class GlobalAdminExceptionHandler {
 
-    @ExceptionHandler({NullPointerException.class, IllegalStateException.class, RuntimeException.class})
-    public ResponseEntity<Object> handleAdminException(Exception ex, HandlerMethod handlerMethod, HttpServletRequest request) {
-        String controllerName = handlerMethod.getBeanType().getSimpleName();
-        String packageName = handlerMethod.getBeanType().getPackageName();
-        String path = request.getRequestURI();
-
-        boolean isAdmin = controllerName.contains("Admin") || 
-                          packageName.contains(".admin") || 
-                          packageName.endsWith(".admin") ||
-                          path.contains("/api/admin") ||
-                          path.contains("/internal/admin") ||
-                          path.contains("/api/admin/dashboard");
-
-        if (!isAdmin) {
-            // Signal to Spring to try other @ExceptionHandler methods by returning null
-            return null;
-        }
-
-        log.error("ADMIN_ERROR: Internal failure in admin endpoint [{}]: {}", 
-                handlerMethod.getMethod().getName(), ex.getMessage(), ex);
+    /**
+     * Safe fallback ONLY for read-only list/page endpoints.
+     * Returns an empty collection so the dashboard renders instead of crashing.
+     * For any other return type (DTO, void, ResponseEntity<DTO>) this method
+     * returns null, signalling Spring to try the next handler (GlobalExceptionHandler).
+     */
+    @ExceptionHandler({NullPointerException.class, IllegalStateException.class})
+    public ResponseEntity<Object> handleAdminReadOnlyException(
+            Exception ex, HandlerMethod handlerMethod, HttpServletRequest request) {
 
         MethodParameter returnParam = handlerMethod.getReturnType();
         Class<?> returnType = returnParam.getParameterType();
 
-        // If it returns a ResponseEntity, look into the nested type
+        // Unwrap ResponseEntity<T> to inspect T
         if (ResponseEntity.class.isAssignableFrom(returnType)) {
             try {
                 returnType = returnParam.nested().getNestedParameterType();
             } catch (Exception e) {
-                // If nested type cannot be determined, fallback to Map
-                returnType = Map.class;
+                // Cannot determine nested type — do not intercept, let it propagate
+                return null;
             }
         }
 
-        // 1. If it returns a List, provide an empty list
+        // Safe fallback: empty list for list-returning read endpoints
         if (List.class.isAssignableFrom(returnType)) {
+            log.error("ADMIN_READ_ERROR [{}] returning empty list: {}",
+                    handlerMethod.getMethod().getName(), ex.getMessage(), ex);
             return ResponseEntity.ok(new ArrayList<>());
         }
 
-        // 2. If it returns a Page, provide an empty page
+        // Safe fallback: empty page for paginated read endpoints
         if (Page.class.isAssignableFrom(returnType)) {
+            log.error("ADMIN_READ_ERROR [{}] returning empty page: {}",
+                    handlerMethod.getMethod().getName(), ex.getMessage(), ex);
             return ResponseEntity.ok(Page.empty());
         }
 
-        // 3. For other types (usually DTOs), return a safe map
-        // Most admin DTOs in this project are flat or have simple structures.
-        // Returning an empty map/object is safer for the frontend than a 500 error.
-        Map<String, Object> fallback = new HashMap<>();
-        fallback.put("success", true);
-        fallback.put("isFallback", true);
-        fallback.put("message", "Service temporarily degraded. Returning safe defaults.");
-        
-        return ResponseEntity.ok(fallback);
+        // All other return types (DTOs, void, mutation endpoints) — do NOT intercept.
+        // Fall through to GlobalExceptionHandler → returns proper HTTP 500.
+        return null;
     }
 }

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useWs } from '../../ws/WsContext';
 import { AdminRealtimeEventDTO } from '../../types';
 import { safeRender } from '@/utils/safeRender';
+import adminService from '../../api/adminService';
 
 interface ModerationEvent {
   id: string;
@@ -14,6 +15,21 @@ interface ModerationEvent {
 const AdminModerationEventsFeed: React.FC = () => {
   const { subscribe, connected } = useWs();
   const [events, setEvents] = useState<ModerationEvent[]>([]);
+
+  // Seed feed with historical audit events on mount
+  useEffect(() => {
+    adminService.getRecentAuditEvents('CREATOR', 20).then((data) => {
+      if (!data || data.length === 0) return;
+      const historical: ModerationEvent[] = data.map((e: any) => ({
+        id: `audit-${e.timestamp}-${e.creatorId}`,
+        type: e.action,
+        message: e.message,
+        timestamp: e.timestamp,
+        severity: 'INFO',
+      }));
+      setEvents(historical);
+    });
+  }, []);
 
   useEffect(() => {
     if (!connected) return;

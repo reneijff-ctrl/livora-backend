@@ -4,7 +4,6 @@ import creatorService, { CreatorApplicationResponse } from '../api/creatorServic
 import { useAuth } from '../auth/useAuth';
 import DashboardSkeleton from '../components/DashboardSkeleton';
 import SEO from '../components/SEO';
-import SafeAvatar from '@/components/ui/SafeAvatar';
 import ImageWithFallback from '@/components/ImageWithFallback';
 import { getDashboardRouteByRole } from '../store/authStore';
 import { showToast } from '../components/Toast';
@@ -22,9 +21,7 @@ const CreatorOnboardingPage: React.FC = () => {
   // Profile form state
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState('');
   const [bannerUrl, setBannerUrl] = useState('');
-  const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -43,7 +40,6 @@ const CreatorOnboardingPage: React.FC = () => {
     if (user?.creatorProfile) {
       setDisplayName(user.creatorProfile.displayName || '');
       setBio(user.creatorProfile.bio || '');
-      setAvatarUrl(user.creatorProfile.avatarUrl || '');
       setBannerUrl(user.creatorProfile.bannerUrl || '');
     }
   }, [user]);
@@ -94,26 +90,19 @@ const CreatorOnboardingPage: React.FC = () => {
     }
 
     try {
-      setIsUploading(true);
       setError(null);
       const updatedProfile = await creatorService.uploadCreatorImage(file, type);
-      if (type === 'PROFILE') {
-        setAvatarUrl(updatedProfile.avatarUrl || '');
-      } else {
-        setBannerUrl(updatedProfile.bannerUrl || '');
-      }
+      setBannerUrl(updatedProfile.bannerUrl || '');
     } catch (err: any) {
       console.error(`Failed to upload ${type.toLowerCase()} image:`, err);
       setError(err.response?.data?.message || `Failed to upload ${type.toLowerCase()} image.`);
-    } finally {
-      setIsUploading(false);
     }
   };
 
   const handleSubmitProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName || !bio || !avatarUrl) {
-      setError('Please fill in all required fields and upload an avatar.');
+    if (!displayName || !bio) {
+      setError('Please fill in all required fields.');
       return;
     }
 
@@ -297,31 +286,14 @@ const CreatorOnboardingPage: React.FC = () => {
           <p style={styles.subtitle}>Complete these details to launch your channel</p>
         </div>
 
+        <div style={styles.infoBanner}>
+          📸 You can upload your profile picture after becoming a creator.
+        </div>
+
         {error && <div style={styles.errorBanner}>{error}</div>}
 
         <form onSubmit={handleSubmitProfile} style={styles.form}>
           <div style={styles.grid}>
-            <div style={styles.field}>
-              <label style={styles.label}>Profile Image *</label>
-              <div style={styles.imageUploadContainer}>
-                <SafeAvatar 
-                  src={avatarUrl} 
-                  name={displayName || user.email} 
-                  size={80} 
-                />
-                <input 
-                  type="file" 
-                  id="avatar-upload" 
-                  accept="image/*" 
-                  style={{display: 'none'}} 
-                  onChange={(e) => handleImageUpload(e, 'PROFILE')}
-                />
-                <label htmlFor="avatar-upload" style={styles.uploadLink}>
-                  {isUploading ? 'Uploading...' : 'Upload Avatar'}
-                </label>
-              </div>
-            </div>
-
             <div style={styles.field}>
               <label style={styles.label}>Banner Image (Optional)</label>
               <div style={styles.bannerUploadContainer}>
@@ -477,32 +449,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#F4F4F5',
     outline: 'none',
   },
-  imageUploadContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '0.75rem',
-  },
   bannerUploadContainer: {
     display: 'flex',
     flexDirection: 'column',
     gap: '0.75rem',
-  },
-  avatarPreview: {
-    width: '100px',
-    height: '100px',
-    borderRadius: '50%',
-    objectFit: 'cover',
-    border: '4px solid #f3f4f6',
-  },
-  avatarFallback: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: gradients.primary,
-    color: 'white',
-    fontSize: '2.5rem',
-    fontWeight: 'bold',
   },
   bannerPreview: {
     width: '100%',
@@ -518,13 +468,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderRadius: '8px',
     background: gradients.primary,
     opacity: 0.1,
-  },
-  uploadLink: {
-    fontSize: '0.875rem',
-    color: '#6366f1',
-    fontWeight: '600',
-    cursor: 'pointer',
-    textDecoration: 'underline',
   },
   button: {
     width: '100%',
@@ -544,6 +487,16 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: '#52525B',
     cursor: 'not-allowed',
     boxShadow: 'none',
+  },
+  infoBanner: {
+    padding: '0.875rem 1rem',
+    backgroundColor: 'rgba(99, 102, 241, 0.08)',
+    color: '#A5B4FC',
+    borderRadius: '8px',
+    marginBottom: '1rem',
+    fontSize: '0.875rem',
+    textAlign: 'left',
+    border: '1px solid rgba(99, 102, 241, 0.2)',
   },
   errorBanner: {
     padding: '1rem',

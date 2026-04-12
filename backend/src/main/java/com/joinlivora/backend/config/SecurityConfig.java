@@ -25,7 +25,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
-import org.springframework.core.env.Environment;
 import org.springframework.security.access.expression.method.DefaultMethodSecurityExpressionHandler;
 import org.springframework.security.access.expression.method.MethodSecurityExpressionHandler;
 import org.springframework.security.access.hierarchicalroles.RoleHierarchy;
@@ -35,7 +34,6 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -49,6 +47,9 @@ public class SecurityConfig {
     @org.springframework.beans.factory.annotation.Value("${livora.security.enforce-https:false}")
     private boolean enforceHttps;
 
+    @org.springframework.beans.factory.annotation.Value("${livora.security.csrf.enabled:true}")
+    private boolean csrfEnabled;
+
     @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http, 
@@ -56,8 +57,7 @@ public class SecurityConfig {
             RateLimitingFilter rateLimitingFilter,
             FunnelTrackingFilter funnelTrackingFilter,
             AuditLogoutHandler auditLogoutHandler,
-            ObjectMapper objectMapper,
-            Environment env
+            ObjectMapper objectMapper
     ) throws Exception {
         // CSRF Handler for stateless token handling
         CsrfTokenRequestAttributeHandler requestHandler = new CsrfTokenRequestAttributeHandler();
@@ -77,7 +77,7 @@ public class SecurityConfig {
             .addFilterAfter(rateLimitingFilter, JwtAuthenticationFilter.class)
             .addFilterBefore(funnelTrackingFilter, RateLimitingFilter.class)
             .csrf(csrf -> {
-                if (Arrays.asList(env.getActiveProfiles()).contains("dev")) {
+                if (!csrfEnabled) {
                     csrf.disable();
                 } else {
                     csrf
@@ -163,7 +163,7 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
                 .requestMatchers("/api/actuator/health").permitAll()
                 .requestMatchers("/api/public/creators/**").permitAll()
                 .requestMatchers(HttpMethod.POST, "/webhooks/stripe", "/api/stripe/webhook").permitAll()

@@ -23,14 +23,22 @@ const AdminSystemHealthBar: React.FC<AdminSystemHealthBarProps> = React.memo(({ 
   });
 
   useEffect(() => {
-    if (healthData) {
+    if (!healthData) {
       setHealth(prev => ({
         ...prev,
-        api: healthData.status === 'UP' ? 'UP' : 'DOWN',
-        db: healthData.components?.db?.status === 'UP' ? 'UP' : 'DOWN',
-        redis: healthData.components?.redis?.status === 'UP' ? 'UP' : 'DOWN'
+        api: 'DOWN',
+        db: 'DOWN',
+        redis: 'DOWN'
       }));
+      return;
     }
+
+    setHealth(prev => ({
+      ...prev,
+      api: healthData ? 'UP' : 'DOWN',
+      db: healthData.components?.db?.status === 'UP' ? 'UP' : 'DOWN',
+      redis: healthData.components?.redis?.status === 'UP' ? 'UP' : 'DOWN'
+    }));
   }, [healthData]);
 
   useEffect(() => {

@@ -44,6 +44,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: 'http://localhost:8080',
           changeOrigin: true,
+          timeout: 60000,
         },
         '/auth': {
           target: 'http://localhost:8080',

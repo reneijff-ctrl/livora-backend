@@ -1,5 +1,4 @@
 import axios from 'axios';
-import apiClient from '../api/apiClient';
 
 export type HealthStatus = 'loading' | 'up' | 'down' | 'unauthorized' | 'error';
 
@@ -7,17 +6,19 @@ type Listener = (status: HealthStatus) => void;
 
 /**
  * healthStore manages the backend health check state.
- * 
+ *
  * Invariants:
- * 1. Read-only once resolved: After the initial check completes, the status is effectively locked.
+ * 1. Self-healing: Status is locked to 'up' once confirmed, but retries every 15s after any failure
+ *    so the indicator clears automatically once the backend recovers.
  * 2. Independent: Status never flips based on failures in other API calls (e.g. dashboard).
- * 3. Explicit: Status only changes based on intentional /actuator/health checks.
+ * 3. Explicit: Status only changes based on intentional /actuator/health/liveness checks.
  */
 class HealthStore {
   private status: HealthStatus = 'loading';
   private listeners: Set<Listener> = new Set();
   private isChecking = false;
   private hasChecked = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   getStatus(): HealthStatus {
     return this.status;
@@ -29,13 +30,6 @@ class HealthStore {
   }
 
   private setStatus(newStatus: HealthStatus) {
-    // Audit: Requirement "is read-only once resolved"
-    // Status can only be changed during the initial check or an explicit re-check.
-    // If it's already resolved and we are NOT currently checking, ignore the update.
-    if (this.hasChecked && !this.isChecking) {
-      return;
-    }
-
     if (this.status !== newStatus) {
       this.status = newStatus;
       this.notify();
@@ -47,19 +41,25 @@ class HealthStore {
   }
 
   /**
-   * Performs the health check if it hasn't been performed yet.
+   * Performs the health check. Skips if already in progress.
+   * Can be called again after a previous failure to re-check.
    */
   async checkHealth(): Promise<void> {
-    if (this.hasChecked || this.isChecking) {
+    if (this.isChecking) {
+      return;
+    }
+    // Only skip re-check if already confirmed 'up'
+    if (this.hasChecked && this.status === 'up') {
       return;
     }
 
     this.isChecking = true;
     try {
-      // Use shared apiClient for consistency
-      await apiClient.get(`${import.meta.env.VITE_BACKEND_URL || ''}/actuator/health`, {
+      // Use plain axios (not apiClient) to avoid the /api baseURL prefix
+      // Use /liveness probe so Stripe DOWN does not cause 503 and mark backend as offline
+      await axios.get('/actuator/health/liveness', {
         timeout: 5000,
-        headers: { 
+        headers: {
           'X-Requested-With': 'XMLHttpRequest',
           'Cache-Control': 'no-cache'
         },
@@ -103,6 +103,17 @@ class HealthStore {
     } finally {
       this.isChecking = false;
       this.hasChecked = true;
+      // Schedule a retry if not 'up', so the indicator clears once backend recovers
+      if (this.status !== 'up') {
+        if (this.retryTimer) clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(() => {
+          this.hasChecked = false;
+          this.checkHealth();
+        }, 15000);
+      } else if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
     }
   }
 }

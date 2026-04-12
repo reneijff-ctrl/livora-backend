@@ -10,11 +10,11 @@ import Home from './pages/Home';
 import PricingPage from './pages/PricingPage';
 import ExploreCreatorsPage from './pages/ExploreCreatorsPage';
 import AdminLandingPage from './pages/AdminLandingPage';
-import AdminCreatorsPage from './pages/AdminCreatorsPage';
-import AdminApplicationsPage from './pages/AdminApplicationsPage';
 import AdminReportsPage from './pages/AdminReportsPage';
 import AdminStreamsPage from './pages/AdminStreamsPage';
-import AdminCreatorVerifications from './pages/AdminCreatorVerifications';
+import CreatorDirectoryPage from './pages/admin/creators/CreatorDirectoryPage';
+import CreatorQueuePage from './pages/admin/creators/CreatorQueuePage';
+import CreatorDetailPage from './pages/admin/creators/CreatorDetailPage';
 import Forbidden from './pages/Forbidden';
 import BillingPage from './pages/BillingPage';
 import SubscriptionPage from './pages/SubscriptionPage';
@@ -282,28 +282,36 @@ export const router = createBrowserRouter([
             ),
           },
           {
+            path: 'admin/creators/queue',
+            element: (
+              <RequireRole role="ADMIN">
+                <CreatorQueuePage />
+              </RequireRole>
+            ),
+          },
+          {
+            path: 'admin/creators/:userId',
+            element: (
+              <RequireRole role="ADMIN">
+                <CreatorDetailPage />
+              </RequireRole>
+            ),
+          },
+          {
             path: 'admin/creators',
             element: (
               <RequireRole role="ADMIN">
-                <AdminCreatorsPage />
+                <CreatorDirectoryPage />
               </RequireRole>
             ),
           },
           {
             path: 'admin/applications',
-            element: (
-              <RequireRole role="ADMIN">
-                <AdminApplicationsPage />
-              </RequireRole>
-            ),
+            element: <Navigate to="/admin/creators/queue" replace />,
           },
           {
             path: 'admin/creator-verifications',
-            element: (
-              <RequireRole role="ADMIN">
-                <AdminCreatorVerifications />
-              </RequireRole>
-            ),
+            element: <Navigate to="/admin/creators/queue" replace />,
           },
           {
             path: 'admin/reports',

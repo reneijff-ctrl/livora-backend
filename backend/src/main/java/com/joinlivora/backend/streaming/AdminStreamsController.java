@@ -7,6 +7,7 @@ import com.joinlivora.backend.fraud.service.FraudRiskScoreService;
 import com.joinlivora.backend.privateshow.*;
 import com.joinlivora.backend.streaming.service.LiveViewerCounterService;
 import com.joinlivora.backend.streaming.service.StreamRiskMonitorService;
+import com.joinlivora.backend.creator.repository.CreatorProfileRepository;
 import com.joinlivora.backend.user.User;
 import com.joinlivora.backend.user.UserService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,6 +48,7 @@ public class AdminStreamsController {
     private final PrivateSessionRepository privateSessionRepository;
     private final PrivateSpySessionRepository privateSpySessionRepository;
     private final CreatorPrivateSettingsService creatorPrivateSettingsService;
+    private final CreatorProfileRepository creatorProfileRepository;
 
     @GetMapping({"", "/active"})
     public ResponseEntity<Page<AdminStreamDTO>> getActiveStreams(Pageable pageable) {
@@ -93,6 +95,7 @@ public class AdminStreamsController {
                 .userId(creatorId)   // Compatibility for AdminLiveStreamsWidget.tsx
                 .creator(creatorId)  // Compatibility for AdminLiveStreamsWidget.tsx
                 .creatorUsername(stream.getCreator().getUsername())
+                .creatorAvatarUrl(creatorProfileRepository.findByUserId(stream.getCreator().getId()).map(p -> p.getAvatarUrl()).orElse(null))
                 .title(stream.getTitle())
                 .viewerCount(viewerCount)
                 .startedAt(startedAt)

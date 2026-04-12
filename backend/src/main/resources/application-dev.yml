@@ -50,6 +50,9 @@ management:
   endpoint:
     health:
       show-details: always
+      show-components: always
+      probes:
+        enabled: true
 
 stripe:
   api:
@@ -68,6 +71,8 @@ livora:
     evaluation:
       enabled: false
   security:
+    csrf:
+      enabled: false
     rate-limit:
       anonymous: 1000
       authenticated: 5000

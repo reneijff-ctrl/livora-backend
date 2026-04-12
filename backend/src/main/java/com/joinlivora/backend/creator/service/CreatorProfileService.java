@@ -110,9 +110,12 @@ public class CreatorProfileService {
         
         log.info("Admin updating creator profile status for user {}: {} -> {}", userId, profile.getStatus(), newStatus);
 
-        // Reject approval attempts for DRAFT creators. Only PENDING can be approved.
-        if (newStatus == ProfileStatus.ACTIVE && profile.getStatus() != ProfileStatus.PENDING) {
-            throw new IllegalStateException("Only creators in PENDING status can be approved. Current status: " + profile.getStatus());
+        // Only PENDING or SUSPENDED creators can transition to ACTIVE.
+        if (newStatus == ProfileStatus.ACTIVE
+                && profile.getStatus() != ProfileStatus.PENDING
+                && profile.getStatus() != ProfileStatus.SUSPENDED) {
+            throw new IllegalStateException(
+                    "Cannot set status to ACTIVE from " + profile.getStatus() + ". Allowed source states: PENDING, SUSPENDED.");
         }
 
         profile.setStatus(newStatus);
