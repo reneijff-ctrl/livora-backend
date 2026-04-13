@@ -277,6 +277,20 @@ public class AuthService {
             // Track LOGIN velocity AFTER authentication and BEFORE returning response
             velocityTrackerService.trackAction(authenticatedUser.getId(), VelocityActionType.LOGIN);
 
+            // Admin 2FA enforcement: admins MUST have TOTP enabled before they can log in
+            if (authenticatedUser.getAdminRole() != null && !authenticatedUser.isTotpEnabled()) {
+                logger.warn("SECURITY: Admin login blocked — 2FA setup required for: {}", authenticatedUser.getEmail());
+                String preAuthToken = jwtService.generatePreAuthToken(authenticatedUser);
+                return LoginResponse.twoFactorSetupRequired(preAuthToken);
+            }
+
+            // 2FA gate: if TOTP is enabled, issue a short-lived pre-auth token instead of a full JWT
+            if (authenticatedUser.isTotpEnabled()) {
+                logger.info("SECURITY: 2FA required for user: {} — issuing pre-auth token", authenticatedUser.getEmail());
+                String preAuthToken = jwtService.generatePreAuthToken(authenticatedUser);
+                return LoginResponse.twoFactorRequired(preAuthToken);
+            }
+
             String accessToken = jwtService.generateAccessToken(authenticatedUser);
 
             Instant expiresAt = Instant.now().plusSeconds(jwtService.getJwtExpiration());

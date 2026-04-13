@@ -87,6 +87,26 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             final Claims claims = jwtService.validateToken(jwt);
             subject = claims.getSubject();
 
+            // Enforce pre-auth token scope: only /api/auth/2fa/** is allowed
+            String scope = claims.get("scope", String.class);
+            if ("pre_2fa".equals(scope)) {
+                String path = request.getServletPath();
+                if (!path.startsWith("/api/auth/2fa")) {
+                    log.warn("SECURITY: pre_2fa token used on restricted path: {}", path);
+                    sendErrorResponse(response, ErrorResponse.builder()
+                            .timestamp(Instant.now())
+                            .status(HttpServletResponse.SC_FORBIDDEN)
+                            .error("Forbidden")
+                            .message("Two-factor authentication required.")
+                            .path(request.getRequestURI())
+                            .errorCode("TOTP_REQUIRED")
+                            .build());
+                    return;
+                }
+                filterChain.doFilter(request, response);
+                return;
+            }
+
             // Silent check for soft block
             if (abuseDetectionService != null && abuseDetectionService.isSoftBlocked(null, request.getRemoteAddr())) {
                 log.info("SILENT_DETECTION: IP {} is soft-blocked in AbuseDetectionService", request.getRemoteAddr());

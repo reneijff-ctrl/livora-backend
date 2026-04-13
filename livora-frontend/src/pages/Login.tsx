@@ -23,8 +23,18 @@ const Login: React.FC = () => {
       // Use the login function from AuthContext which handles state synchronization
       await login(email, password);
       
+      // If 2FA is required, redirect to the TOTP verification page
+      const { requiresTwoFactor, requiresTwoFactorSetup, user } = authStore.getState();
+      if (requiresTwoFactor) {
+        navigate('/auth/2fa', { replace: true });
+        return;
+      }
+      if (requiresTwoFactorSetup) {
+        navigate('/admin/setup-2fa', { replace: true });
+        return;
+      }
+
       // Resolve the user's role from the store to determine the default route
-      const { user } = authStore.getState();
       const redirectPath = getDashboardRouteByRole(user?.role);
       
       // After login, redirect based on role using the mapping

@@ -87,6 +87,22 @@ public class JwtService {
         return builder.compact();
     }
 
+    public String generatePreAuthToken(User user) {
+        return Jwts.builder()
+                .subject(user.getId().toString())
+                .issuer(issuer)
+                .audience().add(audience).and()
+                .claim("scope", "pre_2fa")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 300_000)) // 5 minutes
+                .signWith(secretKey, Jwts.SIG.HS256)
+                .compact();
+    }
+
+    public Claims parseClaims(String token) {
+        return validateToken(token);
+    }
+
     public String generateToken(String email, String role) {
         return Jwts.builder()
                 .subject(email)

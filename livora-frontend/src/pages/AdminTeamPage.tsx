@@ -6,6 +6,13 @@ import { usePermissions } from '../hooks/usePermissions';
 
 const ADMIN_ROLES = ['CEO', 'ADMIN', 'MODERATOR', 'SUPPORT'];
 
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  CEO: ['ALL'],
+  ADMIN: ['APPROVE', 'REJECT', 'SUSPEND', 'VIEW', 'REPORTS', 'STREAMS'],
+  MODERATOR: ['APPROVE', 'REJECT', 'SUSPEND', 'VIEW'],
+  SUPPORT: ['VIEW', 'REPORTS'],
+};
+
 const AdminTeamPage: React.FC = () => {
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,30 +65,40 @@ const AdminTeamPage: React.FC = () => {
             {Array.isArray(admins) && admins.map((admin) => (
               <div
                 key={admin.id}
-                className="bg-zinc-900 rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+                className="bg-zinc-900 hover:bg-zinc-800 transition-colors rounded-xl px-5 py-4 flex items-start justify-between gap-4"
               >
-                <div>
-                  <p className="font-medium">{admin.email}</p>
-                  <p className="text-zinc-400 text-sm">{admin.username ?? '—'}</p>
+                {/* Identity */}
+                <div className="min-w-0">
+                  <p className="font-medium truncate">
+                    {(admin as any).displayName || admin.email}
+                  </p>
+                  <p className="text-zinc-400 text-sm truncate">{admin.email}</p>
+                  {/* Permissions preview */}
+                  <p className="text-xs text-zinc-500 mt-1">
+                    {ROLE_PERMISSIONS[admin.adminRole ?? 'ADMIN']?.join(', ') ?? '—'}
+                  </p>
                 </div>
-                {canManage ? (
-                  <select
-                    value={admin.adminRole ?? 'ADMIN'}
-                    disabled={updating === admin.id}
-                    onChange={(e) => updateRole(admin.id, e.target.value)}
-                    className="bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500 disabled:opacity-50"
-                  >
-                    {ADMIN_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {r}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="text-zinc-400 text-sm bg-zinc-800 px-3 py-1.5 rounded-lg">
+
+                {/* Role badge / selector */}
+                <div className="flex-shrink-0 flex flex-col items-end gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide bg-purple-900/50 text-purple-300 px-2.5 py-0.5 rounded-full">
                     {admin.adminRole ?? 'ADMIN'}
                   </span>
-                )}
+                  {canManage && (
+                    <select
+                      value={admin.adminRole ?? 'ADMIN'}
+                      disabled={updating === admin.id}
+                      onChange={(e) => updateRole(admin.id, e.target.value)}
+                      className="bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-purple-500 disabled:opacity-50"
+                    >
+                      {ADMIN_ROLES.map((r) => (
+                        <option key={r} value={r}>
+                          {r}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
             ))}
           </div>

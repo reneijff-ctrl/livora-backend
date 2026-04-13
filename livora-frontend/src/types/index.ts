@@ -144,6 +144,9 @@ export interface LoginResponse {
     adminRole?: AdminRole;
     permissions?: Permission[];
   };
+  requiresTwoFactor?: boolean;
+  requiresTwoFactorSetup?: boolean;
+  preAuthToken?: string;
 }
 
 export interface CreatorEarningsDashboard {

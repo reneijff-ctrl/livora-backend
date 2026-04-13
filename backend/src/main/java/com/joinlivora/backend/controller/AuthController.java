@@ -62,6 +62,14 @@ public class AuthController {
     ) {
         LoginResponse loginResponse = authService.login(request, funnelId, httpRequest);
 
+        // 2FA gate: return pre-auth token without issuing cookies or full user data
+        if (loginResponse.isRequiresTwoFactor()) {
+            return ResponseEntity.ok(LoginApiResponse.twoFactorRequired(loginResponse.getPreAuthToken()));
+        }
+        if (loginResponse.isRequiresTwoFactorSetup()) {
+            return ResponseEntity.ok(LoginApiResponse.twoFactorSetupRequired(loginResponse.getPreAuthToken()));
+        }
+
         // Refresh Token Cookie (ONLY Refresh Token goes to Cookie)
         ResponseCookie refreshCookie = cookieUtil.createRefreshTokenCookie(loginResponse.getRefreshToken(), 7 * 24 * 60 * 60);
         response.addHeader(HttpHeaders.SET_COOKIE, refreshCookie.toString());

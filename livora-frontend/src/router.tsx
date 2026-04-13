@@ -43,6 +43,9 @@ import TokenStorePage from './pages/TokenStorePage';
 import TokenPurchaseSuccess from './pages/TokenPurchaseSuccess';
 import TokenPurchaseCancel from './pages/TokenPurchaseCancel';
 import VerifyEmailPage from './pages/VerifyEmailPage';
+import TwoFactorPage from './pages/TwoFactorPage';
+import AdminSetup2FAPage from './pages/AdminSetup2FAPage';
+import TwoFactorSetupPage from './pages/auth/TwoFactorSetupPage';
 import SettingsPage from './pages/SettingsPage';
 import FeedPage from './pages/FeedPage';
 import NotFound from './pages/NotFound';
@@ -102,6 +105,18 @@ export const router = createBrowserRouter([
           {
             path: 'explore',
             element: <ExploreCreatorsPage />,
+          },
+          {
+            path: 'auth/2fa',
+            element: <TwoFactorPage />,
+          },
+          {
+            path: 'admin/setup-2fa',
+            element: <AdminSetup2FAPage />,
+          },
+          {
+            path: 'auth/2fa/setup',
+            element: <TwoFactorSetupPage />,
           },
           {
             path: 'login',

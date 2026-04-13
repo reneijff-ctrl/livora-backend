@@ -44,6 +44,9 @@ public class AuditService {
     public static final String REFUND_CREATED = "REFUND_CREATED";
     public static final String CHARGEBACK_RECEIVED = "CHARGEBACK_RECEIVED";
     public static final String DRY_RUN_EARNING_RECORDED = "DRY_RUN_EARNING_RECORDED";
+    public static final String TOTP_ENABLED = "TOTP_ENABLED";
+    public static final String TOTP_DISABLED = "TOTP_DISABLED";
+    public static final String TOTP_VERIFY_FAILED = "TOTP_VERIFY_FAILED";
 
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper;

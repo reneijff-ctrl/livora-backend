@@ -68,6 +68,15 @@ public class User {
     @Column(name = "sessions_invalidated_at")
     private Instant sessionsInvalidatedAt;
 
+    @Column(name = "totp_secret")
+    private String totpSecret;
+
+    @Column(name = "totp_enabled", nullable = false)
+    private boolean totpEnabled = false;
+
+    @Column(name = "totp_verified_at")
+    private Instant totpVerifiedAt;
+
     @Column(name = "email_verified", nullable = false)
     private boolean emailVerified = false;
 
@@ -241,6 +250,30 @@ public class User {
 
     public void setSessionsInvalidatedAt(Instant sessionsInvalidatedAt) {
         this.sessionsInvalidatedAt = sessionsInvalidatedAt;
+    }
+
+    public String getTotpSecret() {
+        return totpSecret;
+    }
+
+    public void setTotpSecret(String totpSecret) {
+        this.totpSecret = totpSecret;
+    }
+
+    public boolean isTotpEnabled() {
+        return totpEnabled;
+    }
+
+    public void setTotpEnabled(boolean totpEnabled) {
+        this.totpEnabled = totpEnabled;
+    }
+
+    public Instant getTotpVerifiedAt() {
+        return totpVerifiedAt;
+    }
+
+    public void setTotpVerifiedAt(Instant totpVerifiedAt) {
+        this.totpVerifiedAt = totpVerifiedAt;
     }
 
     public void setEmailVerified(boolean emailVerified) {

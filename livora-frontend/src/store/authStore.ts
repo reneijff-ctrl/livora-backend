@@ -14,6 +14,9 @@ export interface AuthState {
   isLoading: boolean;
   authLoading: boolean;
   isInitialized: boolean;
+  requiresTwoFactor: boolean;
+  requiresTwoFactorSetup: boolean;
+  preAuthToken: string | null;
 }
 
 type Listener = (state: AuthState) => void;
@@ -43,6 +46,9 @@ class AuthStore {
       isLoading: true, // Always start in loading state to verify auth on startup
       authLoading: true,
       isInitialized: false,
+      requiresTwoFactor: false,
+      requiresTwoFactorSetup: false,
+      preAuthToken: null,
     };
   }
 
@@ -140,7 +146,27 @@ class AuthStore {
     try {
       // AuthService handles the API call and setting the token in localStorage via jwt.ts
       const response = await AuthService.login(email, password);
-      
+
+      // 2FA gate: if backend requires TOTP, store pre-auth token in memory only
+      if (response.requiresTwoFactor) {
+        this.setState({
+          isLoading: false,
+          requiresTwoFactor: true,
+          preAuthToken: response.preAuthToken ?? null,
+        });
+        return;
+      }
+
+      // Admin 2FA setup gate: admin must configure TOTP before first login
+      if (response.requiresTwoFactorSetup) {
+        this.setState({
+          isLoading: false,
+          requiresTwoFactorSetup: true,
+          preAuthToken: response.preAuthToken ?? null,
+        });
+        return;
+      }
+
       // Use the centralized method to set auth state from backend response
       this.setAuthFromBackend({
         accessToken: response.token,
@@ -239,6 +265,9 @@ class AuthStore {
       isLoading: false,
       authLoading: false,
       isInitialized: true,
+      requiresTwoFactor: false,
+      requiresTwoFactorSetup: false,
+      preAuthToken: null,
     });
   }
 

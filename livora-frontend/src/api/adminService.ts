@@ -279,11 +279,11 @@ const adminService = {
     await apiClient.post(`/admin/creators/${userId}/suspend-profile`, { reason });
   },
   getAdmins: async (): Promise<AdminUser[]> => {
-    const response = await apiClient.get<AdminUser[]>('/admin/users');
+    const response = await apiClient.get<AdminUser[]>('/admin/admins');
     return response.data;
   },
   updateAdminRole: async (id: number, adminRole: string): Promise<AdminUser> => {
-    const response = await apiClient.put<AdminUser>(`/admin/users/${id}/role`, { adminRole });
+    const response = await apiClient.put<AdminUser>(`/admin/admins/${id}/role`, { adminRole });
     return response.data;
   },
 };

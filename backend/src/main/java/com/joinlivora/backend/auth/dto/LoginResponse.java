@@ -13,6 +13,9 @@ public class LoginResponse {
     private String username;
     private String adminRole;
     private List<String> permissions;
+    private boolean requiresTwoFactor;
+    private boolean requiresTwoFactorSetup;
+    private String preAuthToken;
 
     public LoginResponse(String accessToken, String refreshToken, java.time.Instant expiresAt, String role, Long userId, String email, String username) {
         this.accessToken = accessToken;
@@ -70,5 +73,31 @@ public class LoginResponse {
 
     public List<String> getPermissions() {
         return permissions;
+    }
+
+    public boolean isRequiresTwoFactor() {
+        return requiresTwoFactor;
+    }
+
+    public String getPreAuthToken() {
+        return preAuthToken;
+    }
+
+    public boolean isRequiresTwoFactorSetup() {
+        return requiresTwoFactorSetup;
+    }
+
+    public static LoginResponse twoFactorRequired(String preAuthToken) {
+        LoginResponse r = new LoginResponse(null, null, null, null, null, null, null);
+        r.requiresTwoFactor = true;
+        r.preAuthToken = preAuthToken;
+        return r;
+    }
+
+    public static LoginResponse twoFactorSetupRequired(String preAuthToken) {
+        LoginResponse r = new LoginResponse(null, null, null, null, null, null, null);
+        r.requiresTwoFactorSetup = true;
+        r.preAuthToken = preAuthToken;
+        return r;
     }
 }

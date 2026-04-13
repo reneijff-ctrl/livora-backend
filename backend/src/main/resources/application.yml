@@ -226,6 +226,10 @@ livora:
         - dislike
         - no
         - stop
+  totp:
+    # AES-256 key for encrypting TOTP secrets at rest (Base64-encoded 32 bytes).
+    # MUST be overridden in production via the TOTP_ENCRYPTION_KEY environment variable.
+    encryption-key: "6uLyouu4oivlLDOr00OGQXMfRhKfj23btPfwrusggio="
   security:
     enforce-https: ${ENFORCE_HTTPS:false}
     csrf:

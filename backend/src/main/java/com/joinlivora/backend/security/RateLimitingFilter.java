@@ -105,6 +105,15 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                 sendError(httpResponse, 60, "login", clientIp);
                 return;
             }
+        } else if (path.equals("/api/auth/2fa/verify") || path.equals("/api/auth/2fa/verify-backup")) {
+            // 2FA verify: max 5 attempts per minute per IP (brute-force protection)
+            String key = "rl:endpoint:auth:2fa-verify:" + clientIp;
+            if (!tryConsume(key, 5)) {
+                log.warn("RATE LIMIT EXCEEDED: {} — 2FA verify rate limit. IP: {}, UA: {}", key, maskIp(clientIp), userAgent);
+                abuseDetectionService.trackEvent(null, clientIp, AbuseEventType.LOGIN_BRUTE_FORCE, "2FA verify rate limit exceeded");
+                sendError(httpResponse, 60, "2fa-verify", clientIp);
+                return;
+            }
         } else if (path.startsWith("/auth/register") || path.startsWith("/api/auth/register")) {
             // Register: registerLimit attempts per minute per IP
             String key = "rl:endpoint:auth:register:" + clientIp;
