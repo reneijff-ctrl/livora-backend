@@ -8,6 +8,9 @@ export interface Message {
   username?: string;
   senderUsername?: string;
   senderRole?: string;
+  senderType?: 'USER' | 'CREATOR' | 'OWNER' | 'ADMIN' | 'SYSTEM' | 'BOT';
+  isStreamOwner?: boolean;
+  creatorUserId?: number | string;
   content: string;
   timestamp?: string;
   role?: string;

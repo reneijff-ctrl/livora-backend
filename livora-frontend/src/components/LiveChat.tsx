@@ -16,6 +16,9 @@ interface LiveChatMessage {
   senderEmail?: string;
   senderUsername?: string;
   senderRole?: 'VIEWER' | 'CREATOR' | 'SYSTEM' | 'ADMIN' | 'MODERATOR';
+  senderType?: 'USER' | 'CREATOR' | 'OWNER' | 'ADMIN' | 'SYSTEM' | 'BOT';
+  isStreamOwner?: boolean;
+  creatorUserId?: number | string;
   message?: string;
   content?: string;
   timestamp?: string;
@@ -143,6 +146,9 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
             senderEmail: incoming.chatMessage?.senderEmail,
             senderUsername: incoming.senderUsername || incoming.username || incoming.chatMessage?.senderUsername || 'User',
             senderRole: incoming.chatMessage?.senderRole || 'VIEWER',
+            senderType: (incoming as any).senderType ?? (incoming.chatMessage as any)?.senderType,
+            isStreamOwner: (incoming as any).isStreamOwner ?? (incoming.chatMessage as any)?.isStreamOwner,
+            creatorUserId: (incoming as any).creatorUserId ?? (incoming.chatMessage as any)?.creatorUserId,
             message: incoming.content || incoming.message || incoming.chatMessage?.message || '',
             content: incoming.content,
             timestamp: incoming.timestamp || incoming.chatMessage?.timestamp || new Date().toISOString(),
@@ -204,7 +210,8 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
             id: `tip-${Date.now()}`,
             senderId: 'system',
             senderUsername: 'System',
-            senderRole: 'CREATOR', // Use creator role for highlight
+            senderRole: 'SYSTEM',
+            senderType: 'SYSTEM',
             message: `🪙 ${tipData.viewer} tipped ${tipData.amount} tokens!${tipData.message ? ` "${tipData.message}"` : ''}`,
             timestamp: new Date().toISOString(),
             system: true
@@ -393,9 +400,14 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
           messages.map((msg, index) => {
             const isMutedUser = msg.senderUsername ? mutedUsers.has(msg.senderUsername) : false;
             const isBannedUser = msg.senderUsername ? bannedUsers.has(msg.senderUsername) : false;
-            const isBot = msg.type === 'BOT';
-            const isMsgFromCreator = msg.senderRole === 'CREATOR';
+            const isBot = msg.type === 'BOT' || msg.senderType === 'BOT';
+            const isOwnerMsg = msg.senderType === 'OWNER';
+            const isCreatorMsg = msg.senderType === 'CREATOR';
+            const isAdminMsg = msg.senderType === 'ADMIN';
+            const isSystemMsg = msg.senderType === 'SYSTEM' || msg.system;
             const isMsgFromModerator = msg.senderRole === 'MODERATOR';
+            // isOwnerMsg already covers the owner case; no legacy fallback needed
+            const isPrivilegedSender = isOwnerMsg || isAdminMsg;
             
             return (
               <div key={index} 
@@ -409,14 +421,15 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span className={isBot ? 'chat-username chat-username-bot' : ''} style={{
                       ...styles.senderName,
-                      ...(isMsgFromCreator && !isBot ? styles.creatorHighlight : {})
+                      ...(isOwnerMsg && !isBot ? styles.creatorHighlight : {})
                     }}>
                       {isBot && <span className="mr-1.5 animate-bounce inline-block">🤖</span>}
-                      {isMsgFromCreator && !isBot && '★ '}
-                      {isMsgFromModerator && !isBot && '🛡 '}
-                      {isBot ? msg.senderUsername : (isMsgFromCreator ? 'Creator' : (msg.senderUsername || 'Someone'))}
+                      {msg.senderUsername || 'Someone'}
                     </span>
-                    {isMsgFromModerator && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#4ade80', fontWeight: 700, border: '1px solid rgba(34,197,94,0.2)' }}>MOD</span>}
+                    {isOwnerMsg && !isBot && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(103,114,229,0.25)', color: '#a5b4fc', fontWeight: 700, border: '1px solid rgba(103,114,229,0.4)' }}>⭐ HOST</span>}
+                    {isCreatorMsg && !isBot && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(63,63,70,0.5)', color: '#a1a1aa', fontWeight: 700, border: '1px solid rgba(63,63,70,0.6)' }}>CREATOR</span>}
+                    {isAdminMsg && !isBot && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(239,68,68,0.15)', color: '#f87171', fontWeight: 700, border: '1px solid rgba(239,68,68,0.3)' }}>ADMIN</span>}
+                    {isMsgFromModerator && !isOwnerMsg && !isAdminMsg && <span style={{ fontSize: '9px', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'rgba(34,197,94,0.15)', color: '#4ade80', fontWeight: 700, border: '1px solid rgba(34,197,94,0.2)' }}>MOD</span>}
                     {isMutedUser && <span title="Muted" style={styles.modIndicator}>🔇</span>}
                     {isBannedUser && <span title="Banned" style={styles.modIndicator}>🚫</span>}
                     {msg.isPaid && <span style={styles.paidBadge}>🪙 {msg.amount}</span>}
@@ -453,17 +466,17 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
                         </button>
                       </div>
                     )}
-                    {hasModPower && !isMsgFromCreator && !isMsgFromModerator && (
+                    {hasModPower && !isPrivilegedSender && !isMsgFromModerator && (
                       <div style={styles.modActions}>
                         <button onClick={() => msg.senderId && handleMute(msg.senderId)} style={styles.modButton} title="Mute User">M</button>
                         <button onClick={() => msg.senderId && handleBan(msg.senderId)} style={styles.modButton} title="Ban User">B</button>
                         <button onClick={() => msg.id && handleDeleteMessage(msg.id)} style={styles.modButton} title="Delete Message">D</button>
                       </div>
                     )}
-                    {(isCreator || isAdmin) && isMsgFromCreator && msg.id && (
+                    {(isCreator || isAdmin) && isOwnerMsg && msg.id && (
                        <button onClick={() => msg.id && handleDeleteMessage(msg.id)} style={styles.modButton} title="Delete Message">D</button>
                     )}
-                    {(isCreator || isAdmin) && isMsgFromModerator && !isMsgFromCreator && (
+                    {(isCreator || isAdmin) && isMsgFromModerator && !isOwnerMsg && (
                       <div style={styles.modActions}>
                         <button onClick={() => msg.senderId && handleMute(msg.senderId)} style={styles.modButton} title="Mute User">M</button>
                         <button onClick={() => msg.id && handleDeleteMessage(msg.id)} style={styles.modButton} title="Delete Message">D</button>

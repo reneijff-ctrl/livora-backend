@@ -223,7 +223,7 @@ const AdminLiveStreamsWidget: React.FC<AdminLiveStreamsWidgetProps> = React.memo
                   <td className="px-6 py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300 text-xs font-bold shadow-inner">
-                        {safeRender(stream.username.charAt(0).toUpperCase())}
+                        {safeRender((stream.username ?? '?').charAt(0).toUpperCase())}
                       </div>
                       <div className="flex flex-col">
                         <div className="flex items-center gap-2">

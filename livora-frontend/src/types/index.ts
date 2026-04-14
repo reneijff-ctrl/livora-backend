@@ -181,12 +181,12 @@ export interface TipEvent {
 }
 
 export interface LiveStreamInfo {
-  id: string;
-  username: string;
+  id: string;                          // mapped from backend streamId
+  username: string;                    // mapped from backend creatorUsername
+  creatorId: number;
+  userId: number;
   viewerCount: number;
   startedAt: string;
-  userId: number;
-  creatorId: number;
   slowMode?: boolean;
   fraudRiskScore?: number;
   messageRate?: number;

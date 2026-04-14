@@ -1,7 +1,7 @@
 import apiClient from './apiClient';
 import { ICreator } from '../domain/creator/ICreator';
 import { adaptCreator } from '../adapters/CreatorAdapter';
-import { MediasoupStats, FraudDashboardMetrics, FraudSignal, StreamRiskStatus } from '../types';
+import { MediasoupStats, FraudDashboardMetrics, FraudSignal, StreamRiskStatus, LiveStreamInfo } from '../types';
 
 export interface AdminCreator extends ICreator {
   email: string;
@@ -195,9 +195,13 @@ const adminService = {
     return response.data;
   },
 
-  getActiveStreams: async (): Promise<any[]> => {
-    const response = await apiClient.get('/admin/streams/active');
-    return response.data?.content ?? [];
+  getActiveStreams: async (): Promise<LiveStreamInfo[]> => {
+    const response = await apiClient.get<{ content: any[] }>('/admin/streams/active');
+    return (response.data?.content ?? []).map((s) => ({
+      ...s,
+      id: s.streamId,              // FIX: backend sends streamId, frontend expects id
+      username: s.creatorUsername, // FIX: backend sends creatorUsername, frontend expects username
+    }));
   },
 
   getRecentAuditEvents: async (type = 'CREATOR', limit = 20): Promise<any[]> => {

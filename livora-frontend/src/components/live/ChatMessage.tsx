@@ -26,12 +26,18 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, fontSize = 16, isFol
     content,
     timestamp,
     role,
+    senderType,
     type = 'CHAT',
     amount,
     giftName
   } = message;
 
-  const isBot = type === 'BOT';
+  const isBot = type === 'BOT' || senderType === 'BOT';
+  const isOwner = senderType === 'OWNER';
+  const isCreatorType = senderType === 'CREATOR';
+  const isAdminType = senderType === 'ADMIN';
+  // Backward compat: legacy role field used only when senderType is absent
+  const isLegacyCreator = !senderType && role === 'CREATOR';
   const displayName = senderUsername || username || (isBot ? 'Livora AI' : 'Someone');
 
   const soundProfile = message.payload?.soundProfile;
@@ -224,11 +230,31 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, fontSize = 16, isFol
       {/* Header: Username & Time */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 overflow-hidden">
-          {role && (
+          {isOwner && !isBot && (
+            <span className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded-sm bg-indigo-500/25 text-indigo-300 border border-indigo-500/40">
+              ⭐ HOST
+            </span>
+          )}
+          {isCreatorType && !isBot && (
+            <span className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded-sm bg-white/10 text-white/50 border border-white/10">
+              CREATOR
+            </span>
+          )}
+          {isAdminType && !isBot && (
+            <span className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded-sm bg-red-500/15 text-red-400 border border-red-500/30">
+              ADMIN
+            </span>
+          )}
+          {!senderType && role && role !== 'CREATOR' && (
             <span className={`text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded-sm ${
-              role === 'CREATOR' ? 'bg-white text-black' : role === 'MODERATOR' ? 'bg-green-500/20 text-green-400 border border-green-500/20' : 'bg-white/10 text-white/40'
+              role === 'MODERATOR' ? 'bg-green-500/20 text-green-400 border border-green-500/20' : 'bg-white/10 text-white/40'
             }`}>
               {role === 'MODERATOR' ? '🛡 MOD' : role}
+            </span>
+          )}
+          {isLegacyCreator && (
+            <span className="text-[8px] font-black uppercase tracking-tighter px-1.5 py-0.5 rounded-sm bg-white text-black">
+              CREATOR
             </span>
           )}
           {isFollower && !isBot && (

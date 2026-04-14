@@ -248,12 +248,7 @@ public class CreatorGoLiveService {
             log.error("WS: Error broadcasting go-live updates for creator {}: {}", creatorId, e.getMessage());
         }
 
-        // 5) Bot stream start announcement
-        try {
-            streamAssistantBotService.onStreamStarted(creatorUserId);
-        } catch (Exception e) {
-            log.warn("BOT: Error sending stream start message for creator {}: {}", creatorId, e.getMessage());
-        }
+        // 5) Bot stream start announcement — disabled: creator should not receive self-referential system messages
 
         return activatedRooms;
     }

@@ -32,6 +32,8 @@ public class ChatMessageDto {
     private String animationType;
     private String currency;
     private Long creatorUserId;
+    private boolean isStreamOwner;
+    private String senderType; // USER | CREATOR | OWNER | ADMIN | SYSTEM | BOT
 
     // Highlight fields for Stripe intents
     private boolean isHighlighted;

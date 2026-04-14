@@ -266,28 +266,8 @@ public class BasicStreamAssistantBotService implements StreamAssistantBotService
 
     @Override
     public void onStreamStarted(Long creatorId) {
-        String creatorUsername = resolveCreatorUsername(creatorId);
-
-        StringBuilder sb = new StringBuilder("🔥 Stream started!");
-
-        // Include tip menu hint (only if at least one category is active)
-        if (!tipMenuCategoryService.getEnabledCategories(creatorId).isEmpty()) {
-            List<TipAction> enabledActions = tipActionService.getEnabledActions(creatorId);
-            if (!enabledActions.isEmpty()) {
-                sb.append("\n💎 Tip Menu available — Type /tipmenu to see all actions.");
-            }
-        }
-
-        // Include active goal
-        Optional<TipGoal> activeGoal = tipGoalService.getActiveGoal(creatorId);
-        activeGoal.ifPresent(goal -> {
-            long remaining = goal.getTargetAmount() - goal.getCurrentAmount();
-            sb.append(String.format("\n🎯 Active Goal: %s (%d/%d tokens)", goal.getTitle(), goal.getCurrentAmount(), goal.getTargetAmount()));
-        });
-
-        broadcastBotMessage(creatorId, creatorUsername, sb.toString());
-
-        // Reset milestones for the new stream
+        // Bot message on stream start is disabled — creator should not receive self-referential messages.
+        // Only reset milestone tracking for the new stream session.
         announcedMilestones.remove(creatorId);
     }
 

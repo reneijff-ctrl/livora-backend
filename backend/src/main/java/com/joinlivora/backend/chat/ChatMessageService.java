@@ -95,10 +95,26 @@ public class ChatMessageService {
             resolvedRole = "MODERATOR";
         }
 
+        // Compute senderType for context-aware identity
+        boolean isOwner = request.getCreatorUserId() != null && request.getCreatorUserId().equals(sender.getId());
+        boolean isAdminUser = sender.getRole() == com.joinlivora.backend.user.Role.ADMIN;
+        String senderType;
+        if (isAdminUser) {
+            senderType = "ADMIN";
+        } else if (isOwner) {
+            senderType = "OWNER";
+        } else if (sender.getRole() == com.joinlivora.backend.user.Role.CREATOR) {
+            senderType = "CREATOR";
+        } else {
+            senderType = "USER";
+        }
+
         ChatMessageDto dto = ChatMessageDto.builder()
                 .content(content)
                 .message(content) // Backward compatibility
                 .creatorUserId(request.getCreatorUserId())
+                .isStreamOwner(isOwner)
+                .senderType(senderType)
                 .type(request.getType() != null ? request.getType() : "CHAT")
                 .senderId(sender.getId())
                 .senderUsername(sender.getUsername())
@@ -108,8 +124,10 @@ public class ChatMessageService {
 
         processMessage(sender.getId(), dto);
 
-        // 2. Trigger Bot Reminders (every 5 messages or random)
-        if (request.getCreatorUserId() != null) {
+        // 2. Trigger Bot Reminders (every 5 messages or random) — skip for OWNER and ADMIN
+        if (request.getCreatorUserId() != null
+                && !"OWNER".equals(senderType)
+                && !"ADMIN".equals(senderType)) {
             streamAssistantBotService.onMessageReceived(request.getCreatorUserId());
         }
     }
@@ -227,6 +245,24 @@ public class ChatMessageService {
         // Override senderRole to MODERATOR if user is a per-stream moderator for this creator
         if (senderUser != null && streamModeratorService.isModerator(creatorUserId, senderUser.getId())) {
             chatMessage.setSenderRole("MODERATOR");
+        }
+
+        // Compute and set senderType + isStreamOwner if not already set by caller
+        if (chatMessage.getSenderType() == null && senderUser != null) {
+            boolean isOwner = senderUser.getId().equals(creatorUserId);
+            boolean isAdminUser = senderUser.getRole() == com.joinlivora.backend.user.Role.ADMIN;
+            String senderType;
+            if (isAdminUser) {
+                senderType = "ADMIN";
+            } else if (isOwner) {
+                senderType = "OWNER";
+            } else if (senderUser.getRole() == com.joinlivora.backend.user.Role.CREATOR) {
+                senderType = "CREATOR";
+            } else {
+                senderType = "USER";
+            }
+            chatMessage.setSenderType(senderType);
+            chatMessage.setStreamOwner(isOwner);
         }
 
         log.info("CHAT_TOPIC_DEBUG: broadcast creatorUserId={}, topic=/exchange/amq.topic/chat.{}",

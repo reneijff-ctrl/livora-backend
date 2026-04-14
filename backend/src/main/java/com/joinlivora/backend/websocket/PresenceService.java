@@ -338,7 +338,10 @@ public class PresenceService {
                 eventOrchestrator.publishAnalyticsEvent(AnalyticsEventType.STREAM_JOIN, user, Map.of("roomId", streamId, "creator", creatorUserId));
                 
                 String botUserName = user != null ? (user.getDisplayName() != null ? user.getDisplayName() : user.getEmail().split("@")[0]) : "anonymous";
-                eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
+                boolean isViewerOnly = user == null || (user.getRole() != Role.CREATOR && user.getRole() != Role.ADMIN);
+                if (isViewerOnly) {
+                    eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
+                }
 
                 // Reintroduce "new account join clustering"
                 if (user != null && user.getCreatedAt() != null) {
@@ -359,7 +362,10 @@ public class PresenceService {
                 try {
                     User user = (principalId != null && !"anonymous".equals(principalId)) ? userService.resolveUserFromSubject(principalId).orElse(null) : null;
                     String botUserName = user != null ? (user.getDisplayName() != null ? user.getDisplayName() : user.getEmail().split("@")[0]) : "viewer";
-                    eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
+                    boolean isViewerOnly = user == null || (user.getRole() != Role.CREATOR && user.getRole() != Role.ADMIN);
+                    if (isViewerOnly) {
+                        eventOrchestrator.notifyStreamJoin(creatorUserId, botUserName, principalId);
+                    }
                 } catch (Exception e) {
                     log.debug("Error notifying stream join for creatorUserId {} (stream may have ended): {}", creatorUserId, e.getMessage());
                 }
