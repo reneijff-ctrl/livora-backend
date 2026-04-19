@@ -18,6 +18,11 @@ import com.joinlivora.backend.analytics.AnalyticsEventPublisher;
 import com.joinlivora.backend.streaming.StreamRepository;
 import com.joinlivora.backend.streaming.service.StreamAssistantBotService;
 import com.joinlivora.backend.streaming.service.StreamModerationService;
+import com.joinlivora.backend.streaming.service.StreamModeratorService;
+import com.joinlivora.backend.moderation.CreatorRoomBanService;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ListOperations;
+import com.joinlivora.backend.chat.RedisChatBatchService;
 import com.joinlivora.backend.token.TokenService;
 import com.joinlivora.backend.payout.CreatorEarningsService;
 import com.joinlivora.backend.abuse.RestrictionService;
@@ -58,6 +63,8 @@ class ChatMessageServiceV2BugTest {
     @Mock private ChatMessageRepository chatMessageRepository;
     @Mock private ChatViolationLogRepository violationLogRepository;
     @Mock private StreamModerationService streamModerationService;
+    @Mock private StreamModeratorService streamModeratorService;
+    @Mock private CreatorRoomBanService creatorRoomBanService;
     @Mock private StreamAssistantBotService streamAssistantBotService;
     @Mock private TokenService tokenService;
     @Mock private CreatorEarningsService creatorEarningsService;
@@ -71,10 +78,17 @@ class ChatMessageServiceV2BugTest {
     @Mock private PresenceService presenceService;
     @Mock private ChatRoomService chatRoomService;
     @Mock private ChatPersistenceService chatPersistenceService;
-    @Mock private ChatBatchService chatBatchService;
+    @Mock private RedisChatBatchService chatBatchService;
+    @Mock private RedisTemplate<String, Object> redisTemplate;
+    @Mock private ListOperations<String, Object> listOperations;
 
     @InjectMocks
     private ChatMessageService chatMessageService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        lenient().when(redisTemplate.opsForList()).thenReturn(listOperations);
+    }
 
     @Test
     void processIncomingMessage_WhenRoomIsPaused_ShouldThrowException() {
@@ -83,7 +97,10 @@ class ChatMessageServiceV2BugTest {
         Long creatorEntityId = 5001L; // Creator entity ID
         Long actualRoomId = 9001L; // Real room ID
 
-        ChatMessageRequest request = new ChatMessageRequest("Hello", creatorUserId, "CHAT");
+        ChatMessageRequest request = new ChatMessageRequest();
+        request.setContent("Hello");
+        request.setCreatorUserId(creatorUserId);
+        request.setType("CHAT");
         User sender = new User();
         sender.setId(2001L);
         sender.setEmail("viewer@test.com");
@@ -131,7 +148,10 @@ class ChatMessageServiceV2BugTest {
         Long creatorEntityId = 5001L;
         Long actualRoomId = 9001L;
 
-        ChatMessageRequest request = new ChatMessageRequest("Hello", creatorUserId, "CHAT");
+        ChatMessageRequest request = new ChatMessageRequest();
+        request.setContent("Hello");
+        request.setCreatorUserId(creatorUserId);
+        request.setType("CHAT");
         User sender = new User();
         sender.setId(2001L);
         sender.setEmail("viewer@test.com");

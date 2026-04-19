@@ -10,6 +10,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.UUID;
@@ -25,6 +26,8 @@ class StripeWebhookControllerTest {
     private WebhookEventRepository webhookEventRepository;
     @Mock
     private StripeWebhookService stripeWebhookService;
+    @Mock
+    private com.stripe.StripeClient stripeClient;
 
     @InjectMocks
     private StripeWebhookController controller;
@@ -43,23 +46,29 @@ class StripeWebhookControllerTest {
         mockedWebhook.close();
     }
 
+    private MockHttpServletRequest buildRequest(String payload) {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setContent(payload.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        return request;
+    }
+
     @Test
     void handleStripeWebhook_ShouldPersistAndCallService() throws Exception {
         // Given
         String payload = "{\"id\": \"evt_123\", \"type\": \"invoice.payment_failed\"}";
         String sigHeader = "t=123,v1=456";
-        
+
         Event event = com.stripe.net.ApiResource.GSON.fromJson(payload, Event.class);
         mockedWebhook.when(() -> Webhook.constructEvent(anyString(), anyString(), anyString())).thenReturn(event);
-        
+
         when(webhookEventRepository.existsByStripeEventId("evt_123")).thenReturn(false);
-        
+
         WebhookEvent savedEvent = new WebhookEvent();
         savedEvent.setId(UUID.randomUUID());
         when(webhookEventRepository.save(any(WebhookEvent.class))).thenReturn(savedEvent);
 
         // When
-        controller.handleStripeWebhook(payload, sigHeader);
+        controller.handleStripeWebhook(buildRequest(payload), sigHeader);
 
         // Then
         verify(webhookEventRepository).save(any(WebhookEvent.class));
@@ -71,25 +80,17 @@ class StripeWebhookControllerTest {
         // Given
         String payload = "{\"id\": \"evt_123\", \"type\": \"invoice.payment_failed\"}";
         String sigHeader = "t=123,v1=456";
-        
+
         Event event = com.stripe.net.ApiResource.GSON.fromJson(payload, Event.class);
         mockedWebhook.when(() -> Webhook.constructEvent(anyString(), anyString(), anyString())).thenReturn(event);
-        
+
         when(webhookEventRepository.existsByStripeEventId("evt_123")).thenReturn(true);
 
         // When
-        controller.handleStripeWebhook(payload, sigHeader);
+        controller.handleStripeWebhook(buildRequest(payload), sigHeader);
 
         // Then
         verify(webhookEventRepository, never()).save(any());
         verify(stripeWebhookService, never()).processEventAsync(any(), any());
     }
 }
-
-
-
-
-
-
-
-

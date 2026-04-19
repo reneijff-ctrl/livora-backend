@@ -56,9 +56,9 @@ management:
 
 stripe:
   api:
-    key: ${STRIPE_SECRET_KEY}
+    key: sk_test_51SweUZFPvuqGTnFGyQr15MgSnKu1Bq1t8mJrNMw7J239aaAanEP1FABhEFE25luP9w01JFsuOyxF7JL1luAyLJhF00kHHRrDly
   webhook:
-    secret: ${STRIPE_WEBHOOK_SECRET}
+    secret: whsec_31098ea02bcf7b0e5b045f3d635c16563a3582dad7f8b0866dd257917819bff2
 
 logging:
   level:

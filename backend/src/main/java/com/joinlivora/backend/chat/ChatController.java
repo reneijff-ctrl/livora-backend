@@ -57,10 +57,16 @@ public class ChatController {
             throw new RuntimeException("User not authenticated");
         }
 
+        long start = System.currentTimeMillis();
         com.joinlivora.backend.user.User user = userService.resolveUserFromSubject(principal.getName())
                 .orElseThrow(() -> new RuntimeException("User not found: " + principal.getName()));
 
         chatMessageService.processIncomingMessage(request, user);
+
+        long duration = System.currentTimeMillis() - start;
+        if (duration > 50) {
+            log.warn("SLOW_CHAT_PROCESSING: {}ms for user={}", duration, principal.getName());
+        }
     }
 
     /**

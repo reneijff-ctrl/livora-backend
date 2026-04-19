@@ -321,6 +321,9 @@ public class StreamService {
             log.info("STREAM: Updated unified Stream entity {} to isLive=false", stream.getId());
             // Clean up UUID-based Redis viewer keys (new format)
             liveViewerCounterService.resetViewerCountByStreamId(stream.getId(), userId);
+            // Evict cached StreamRoom so viewers no longer see stale "live" state
+            streamCacheService.removeStream(stream.getId());
+            log.info("STREAM: Evicted stream cache for stream {}", stream.getId());
         }
         
         // Also stop the core LiveStream (which handles notifications, chat deletion, and Redis cleanup)

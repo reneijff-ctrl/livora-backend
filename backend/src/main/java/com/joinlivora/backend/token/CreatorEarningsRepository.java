@@ -18,4 +18,7 @@ public interface CreatorEarningsRepository extends JpaRepository<CreatorEarnings
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT e FROM CreatorEarnings e WHERE e.id = :id")
     Optional<CreatorEarnings> findByIdWithLock(UUID id);
+
+    @Query("SELECT e FROM CreatorEarnings e WHERE e.user.id = :userId")
+    Optional<CreatorEarnings> findByUserId(@org.springframework.data.repository.query.Param("userId") Long userId);
 }

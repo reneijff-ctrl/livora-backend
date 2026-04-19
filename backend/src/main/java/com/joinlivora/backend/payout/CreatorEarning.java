@@ -74,6 +74,11 @@ public class CreatorEarning {
     @JoinColumn(name = "payout_request_id")
     private PayoutRequest payoutRequest;
 
+    // EUR value of netAmount at the time of the earning — stored to prevent historical recalculation errors
+    // when TOKEN_TO_EUR_RATE changes. Null for legacy rows written before this field was added.
+    @Column(name = "net_amount_eur")
+    private BigDecimal netAmountEur;
+
     @Builder.Default
     @Column(nullable = false)
     private boolean locked = false;

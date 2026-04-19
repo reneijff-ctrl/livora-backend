@@ -129,19 +129,23 @@ public class CreatorEarningsService {
         updateLiveStats(creator, netEur, 0, EarningSource.TIP);
 
         // 2. Persist history record
+        if (netEur == null) {
+            log.error("MISSING_EUR_VALUE: creatorId={}, amount={} — directTip earning will have null netAmountEur",
+                    creator.getId(), net);
+        }
         CreatorEarning earning = CreatorEarning.builder()
                 .creator(creator)
                 .user(tip.getUser())
                 .grossAmount(gross)
                 .platformFee(fee)
                 .netAmount(net)
+                .netAmountEur(netEur) // stored at write time — prevents recalculation drift
                 .currency(tip.getCurrency())
                 .sourceType(EarningSource.TIP)
                 .stripeSessionId(tip.getStripeSessionId())
                 .locked(earningsDryRun)
                 .dryRun(earningsDryRun)
                 .build();
-
         creatorEarningRepository.save(earning);
 
         if (earningsDryRun) {
@@ -217,27 +221,46 @@ public class CreatorEarningsService {
         // 1.1 Credit real-currency payout balance
         BigDecimal netEur = net.multiply(TOKEN_TO_EUR_RATE);
         creditPayoutEarnings(creator, netEur, isLocked);
-
-        // 1.2 Update platform balances (ledger)
+        // 1.2 Consistency check: token balance converted to EUR should match payout balance — log divergence only
+        try {
+            CreatorEarnings tokenEarnings = getOrCreateCreatorEarnings(creator);
+            BigDecimal tokenBalanceAsEur = BigDecimal.valueOf(tokenEarnings.getAvailableTokens()).multiply(TOKEN_TO_EUR_RATE);
+            payoutCreatorEarningsRepository.findByUserWithLock(creator).ifPresent(pe -> {
+                BigDecimal payoutBalance = pe.getAvailableBalance() != null ? pe.getAvailableBalance() : BigDecimal.ZERO;
+                if (tokenBalanceAsEur.subtract(payoutBalance).abs().compareTo(BigDecimal.ONE) > 0) {
+                    log.error("EARNINGS_MISMATCH: creatorId={}, tokenBalanceAsEur={}, payoutBalance={}, delta={}",
+                            creator.getId(), tokenBalanceAsEur, payoutBalance,
+                            tokenBalanceAsEur.subtract(payoutBalance));
+                }
+            });
+        } catch (Exception e) {
+            log.warn("EARNINGS_MISMATCH_CHECK_FAILED: creatorId={}, reason={}", creator.getId(), e.getMessage());
+        }
+        // 1.3 Update platform balances (ledger)
         updatePlatformBalances(fee, net, "TOKEN");
 
         // Update live stats
         updateLiveStats(creator, BigDecimal.ZERO, netTokens, source);
 
         // 2. Persist history record
+        BigDecimal netEurForTokenHistory = net.multiply(TOKEN_TO_EUR_RATE).setScale(4, RoundingMode.HALF_UP);
+        if (netEurForTokenHistory == null) {
+            log.error("MISSING_EUR_VALUE: creatorId={}, amount={} — tokenEarning will have null netAmountEur",
+                    creator.getId(), net);
+        }
         CreatorEarning earning = CreatorEarning.builder()
                 .creator(creator)
                 .user(viewer)
                 .grossAmount(gross)
                 .platformFee(fee)
                 .netAmount(net)
+                .netAmountEur(netEurForTokenHistory) // stored at write time — prevents recalculation drift
                 .currency("TOKEN")
                 .sourceType(source)
                 .locked(isLocked)
                 .dryRun(earningsDryRun)
                 .payoutHold(appliedHold)
                 .build();
-
         creatorEarningRepository.save(earning);
 
         if (earningsDryRun) {
@@ -295,17 +318,30 @@ public class CreatorEarningsService {
                     earning.getSourceType());
 
             // 2. Add reversal record
+            BigDecimal reversalNetAmountEur = earning.getNetAmountEur() != null
+                    ? earning.getNetAmountEur().negate()
+                    : convertToEur(earning.getNetAmount().negate(), earning.getCurrency());
+            if (reversalNetAmountEur == null) {
+                log.error("MISSING_EUR_VALUE: creatorId={}, amount={} — reversal earning will have null netAmountEur",
+                        earning.getCreator().getId(), earning.getNetAmount().negate());
+            }
             CreatorEarning reversal = CreatorEarning.builder()
                     .creator(earning.getCreator())
                     .grossAmount(earning.getGrossAmount().negate())
                     .platformFee(earning.getPlatformFee().negate())
                     .netAmount(earning.getNetAmount().negate())
+                    .netAmountEur(reversalNetAmountEur) // stored at write time
                     .currency(earning.getCurrency())
                     .sourceType(EarningSource.CHARGEBACK)
                     .stripeChargeId(earning.getStripeChargeId() + "_reversal")
                     .build();
             creatorEarningRepository.save(reversal);
         });
+        // Orphan reversal: no matching earning found for this Stripe charge ID — log only, cannot write
+        // a history row because creator_id is NOT NULL. This surfaces the gap for manual investigation.
+        if (creatorEarningRepository.findByStripeChargeId(stripeId).isEmpty()) {
+            log.error("ORPHAN_REVERSAL: stripeId={} — no matching earning row found; balance NOT adjusted. Manual review required.", stripeId);
+        }
     }
 
     private void processEarning(Payment payment, User creator, EarningSource source) {
@@ -346,12 +382,18 @@ public class CreatorEarningsService {
         updateLiveStats(creator, net, 0, source);
 
         // 2. Persist history record
+        BigDecimal netEurForHistory = convertToEur(net, payment.getCurrency());
+        if (netEurForHistory == null) {
+            log.error("MISSING_EUR_VALUE: creatorId={}, amount={} — processEarning will have null netAmountEur",
+                    creator.getId(), net);
+        }
         CreatorEarning earning = CreatorEarning.builder()
                 .creator(creator)
                 .user(payment.getUser())
                 .grossAmount(gross)
                 .platformFee(fee)
                 .netAmount(net)
+                .netAmountEur(netEurForHistory) // stored at write time — prevents recalculation drift
                 .currency(payment.getCurrency())
                 .sourceType(source)
                 .stripeChargeId(payment.getStripePaymentIntentId())
@@ -360,7 +402,6 @@ public class CreatorEarningsService {
                 .dryRun(earningsDryRun)
                 .payoutHold(appliedHold)
                 .build();
-
         creatorEarningRepository.save(earning);
 
         if (earningsDryRun) {
@@ -417,9 +458,15 @@ public class CreatorEarningsService {
 
     public void creditCreatorBalance(User creator, long tokens) {
         CreatorEarnings earnings = getOrCreateCreatorEarnings(creator);
-        
+
         earnings.setTotalEarnedTokens(earnings.getTotalEarnedTokens() + tokens);
-        earnings.setAvailableTokens(earnings.getAvailableTokens() + tokens);
+        long newBalance = earnings.getAvailableTokens() + tokens;
+        if (newBalance < 0) {
+            log.warn("MONETIZATION: Token balance would go negative for creator {} (current={}, delta={}) — clamping to 0",
+                    creator.getId(), earnings.getAvailableTokens(), tokens);
+            newBalance = 0;
+        }
+        earnings.setAvailableTokens(newBalance);
         creatorEarningsRepository.save(earnings);
     }
 
@@ -513,6 +560,8 @@ public class CreatorEarningsService {
             BigDecimal totalEurForNewBalance = BigDecimal.ZERO;
 
             for (CreatorEarning e : earnings) {
+                log.warn("LOCK_STATE_MUTATION: earningId={}, creatorId={}, old=true, new=false (unlockExpiredEarnings)",
+                        e.getId(), creator.getId());
                 e.setLocked(false);
                 BigDecimal eurValue = convertToEur(e.getNetAmount(), e.getCurrency());
                 totalEurForNewBalance = totalEurForNewBalance.add(eurValue);
@@ -529,7 +578,29 @@ public class CreatorEarningsService {
             }
 
             creatorEarningRepository.saveAll(earnings);
-            
+
+            // Write ADJUSTMENT history row so the ledger reflects the unlock balance transfer
+            final BigDecimal totalEurForAdjustment = totalEurForNewBalance;
+            final long totalTokensForAdjustment = totalTokens;
+            BigDecimal adjustmentNetAmount = BigDecimal.valueOf(totalTokensForAdjustment);
+            BigDecimal adjustmentNetAmountEur = totalEurForAdjustment.setScale(4, RoundingMode.HALF_UP);
+            if (adjustmentNetAmountEur == null) {
+                log.error("MISSING_EUR_VALUE: creatorId={}, amount={} — ADJUSTMENT row for unlock will have null netAmountEur",
+                        creator.getId(), adjustmentNetAmount);
+            }
+            CreatorEarning unlockAdjustment = CreatorEarning.builder()
+                    .creator(creator)
+                    .grossAmount(adjustmentNetAmount)
+                    .platformFee(BigDecimal.ZERO)
+                    .netAmount(adjustmentNetAmount)
+                    .netAmountEur(adjustmentNetAmountEur)
+                    .currency("TOKEN")
+                    .sourceType(EarningSource.ADJUSTMENT)
+                    .locked(false)
+                    .dryRun(false)
+                    .build();
+            creatorEarningRepository.save(unlockAdjustment);
+
             // Update summary table
             final long tokensToUnlock = totalTokens;
             final BigDecimal revenueToUnlock = totalRevenue;

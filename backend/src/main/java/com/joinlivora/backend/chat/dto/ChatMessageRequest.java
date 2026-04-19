@@ -11,4 +11,5 @@ public class ChatMessageRequest {
     private String content;
     private Long creatorUserId;
     private String type;
+    private String streamId;
 }

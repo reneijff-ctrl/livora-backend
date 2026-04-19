@@ -64,6 +64,10 @@ public class AutoFreezePolicyService {
     }
 
     public void validateUserStatus(User user) {
+        validateUserStatus(user, false);
+    }
+
+    public void validateUserStatus(User user, boolean skipPayoutsDisabledCheck) {
         if (user.getStatus() == UserStatus.SUSPENDED) {
             log.warn("SECURITY: Action blocked for SUSPENDED creator: {}", user.getEmail());
             throw new org.springframework.security.access.AccessDeniedException("Account is suspended.");
@@ -76,7 +80,7 @@ public class AutoFreezePolicyService {
             log.warn("SECURITY: Action blocked for creator with FROZEN payouts: {}", user.getEmail());
             throw new org.springframework.security.access.AccessDeniedException("Account is restricted. Payments and payouts are frozen.");
         }
-        if (user.getRole() == Role.CREATOR && !user.isPayoutsEnabled()) {
+        if (!skipPayoutsDisabledCheck && user.getRole() == Role.CREATOR && !user.isPayoutsEnabled()) {
             log.warn("SECURITY: Action blocked for creator with disabled payouts: {}", user.getEmail());
             throw new org.springframework.security.access.AccessDeniedException("Payouts are disabled for your account.");
         }

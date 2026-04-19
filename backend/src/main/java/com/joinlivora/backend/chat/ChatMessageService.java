@@ -95,14 +95,28 @@ public class ChatMessageService {
             resolvedRole = "MODERATOR";
         }
 
-        // Compute senderType for context-aware identity
-        boolean isOwner = request.getCreatorUserId() != null && request.getCreatorUserId().equals(sender.getId());
+        // Resolve creatorUserId from backend stream context — never trust frontend input for ownership
+        Long resolvedCreatorUserId = request.getCreatorUserId();
+        if (request.getStreamId() != null) {
+            try {
+                java.util.UUID streamUuid = java.util.UUID.fromString(request.getStreamId());
+                com.joinlivora.backend.streaming.StreamRoom room = streamService.getRoom(streamUuid);
+                if (room != null && room.getCreator() != null) {
+                    resolvedCreatorUserId = room.getCreator().getId();
+                }
+            } catch (Exception e) {
+                log.warn("CHAT: Could not resolve creatorUserId from streamId '{}': {}", request.getStreamId(), e.getMessage());
+            }
+        }
+
+        // Compute senderType — OWNER must be checked before CREATOR
+        boolean isOwner = resolvedCreatorUserId != null && resolvedCreatorUserId.equals(sender.getId());
         boolean isAdminUser = sender.getRole() == com.joinlivora.backend.user.Role.ADMIN;
         String senderType;
-        if (isAdminUser) {
-            senderType = "ADMIN";
-        } else if (isOwner) {
+        if (isOwner) {
             senderType = "OWNER";
+        } else if (isAdminUser) {
+            senderType = "ADMIN";
         } else if (sender.getRole() == com.joinlivora.backend.user.Role.CREATOR) {
             senderType = "CREATOR";
         } else {
@@ -110,9 +124,10 @@ public class ChatMessageService {
         }
 
         ChatMessageDto dto = ChatMessageDto.builder()
+                .messageId(java.util.UUID.randomUUID().toString())
                 .content(content)
                 .message(content) // Backward compatibility
-                .creatorUserId(request.getCreatorUserId())
+                .creatorUserId(resolvedCreatorUserId)
                 .isStreamOwner(isOwner)
                 .senderType(senderType)
                 .type(request.getType() != null ? request.getType() : "CHAT")
@@ -125,10 +140,10 @@ public class ChatMessageService {
         processMessage(sender.getId(), dto);
 
         // 2. Trigger Bot Reminders (every 5 messages or random) — skip for OWNER and ADMIN
-        if (request.getCreatorUserId() != null
+        if (resolvedCreatorUserId != null
                 && !"OWNER".equals(senderType)
                 && !"ADMIN".equals(senderType)) {
-            streamAssistantBotService.onMessageReceived(request.getCreatorUserId());
+            streamAssistantBotService.onMessageReceived(resolvedCreatorUserId);
         }
     }
 
@@ -252,10 +267,10 @@ public class ChatMessageService {
             boolean isOwner = senderUser.getId().equals(creatorUserId);
             boolean isAdminUser = senderUser.getRole() == com.joinlivora.backend.user.Role.ADMIN;
             String senderType;
-            if (isAdminUser) {
-                senderType = "ADMIN";
-            } else if (isOwner) {
+            if (isOwner) {
                 senderType = "OWNER";
+            } else if (isAdminUser) {
+                senderType = "ADMIN";
             } else if (senderUser.getRole() == com.joinlivora.backend.user.Role.CREATOR) {
                 senderType = "CREATOR";
             } else {

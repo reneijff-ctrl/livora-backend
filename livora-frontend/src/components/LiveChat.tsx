@@ -67,6 +67,7 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
   const [reportModal, setReportModal] = useState<{isOpen: boolean, targetId: string, targetType: ReportTargetType, targetLabel?: string, reportedUserId: number} | null>(null);
   const [isModerator, setIsModerator] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const seenMessageIds = useRef<Set<string>>(new Set());
 
   const isCreator = user && Number(user.id) === Number(userId);
   const isAdmin = user && user.role === 'ADMIN';
@@ -140,6 +141,10 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
           incoming.type === 'SYSTEM' ||
           incoming.type === 'SUPER_TIP'
         ) {
+          const incomingMessageId: string | undefined = (incoming as any).messageId ?? (incoming.chatMessage as any)?.messageId;
+          if (incomingMessageId && seenMessageIds.current.has(incomingMessageId)) return;
+          if (incomingMessageId) seenMessageIds.current.add(incomingMessageId);
+
           const normalized: LiveChatMessage = {
             id: incoming.chatMessage?.id || String(Date.now()),
             senderId: incoming.chatMessage?.senderId || '0',
@@ -281,8 +286,9 @@ const LiveChat: React.FC<LiveChatProps> = ({ streamId, userId, isPaid, pricePerM
     const isPaidMessage = isPaid && !hasModPower;
 
     // Send message to the backend mapping
+    // streamId is used by the backend to resolve the stream owner — do not send creatorUserId
     send("/app/chat.send", {
-      creatorUserId: userId,
+      streamId: streamId,
       content: input,
       type: "CHAT",
       isPaid: isPaidMessage,

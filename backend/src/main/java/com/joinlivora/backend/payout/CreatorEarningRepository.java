@@ -84,6 +84,32 @@ public interface CreatorEarningRepository extends JpaRepository<CreatorEarning, 
     @Query("SELECT SUM(e.netAmount) FROM CreatorEarning e WHERE e.creator = :creator AND e.locked = false AND e.payout IS NULL")
     BigDecimal sumAvailableEarningsByCreator(@Param("creator") User creator);
 
+    @Query("""
+            SELECT COALESCE(SUM(e.netAmount), 0)
+            FROM CreatorEarning e
+            WHERE e.creator.id = :creatorId
+            AND e.currency = 'TOKEN'
+            AND e.locked = false
+            AND e.dryRun = false
+            """)
+    BigDecimal sumAvailableTokens(@Param("creatorId") Long creatorId);
+
+    @Query("""
+            SELECT COALESCE(SUM(COALESCE(e.netAmountEur, 0)), 0)
+            FROM CreatorEarning e
+            WHERE e.creator.id = :creatorId
+            AND e.locked = false
+            AND e.dryRun = false
+            """)
+    BigDecimal sumAvailableEur(@Param("creatorId") Long creatorId);
+
+    @Query("""
+            SELECT DISTINCT e.creator.id
+            FROM CreatorEarning e
+            WHERE e.createdAt >= :since
+            """)
+    List<Long> findRecentlyActiveCreatorIds(@Param("since") Instant since);
+
     Optional<CreatorEarning> findByStripeChargeId(String stripeChargeId);
 
     List<CreatorEarning> findAllByPayout(CreatorPayout payout);

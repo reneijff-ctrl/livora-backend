@@ -88,7 +88,8 @@ public class PaymentService {
 
     public String createTokenCheckoutSession(User user, String stripePriceId, UUID packageId, String ipAddress, String country, String userAgent, String fingerprintHash) throws StripeException {
         // We should ideally fetch the amount from the package, but for now we'll pass null or default
-        com.joinlivora.backend.fraud.model.RiskLevel riskLevel = checkPaymentLock(user, null, ipAddress, country, userAgent, fingerprintHash);
+        // Token purchases are always allowed even if creator payouts are disabled
+        com.joinlivora.backend.fraud.model.RiskLevel riskLevel = checkPaymentLock(user, null, ipAddress, country, userAgent, fingerprintHash, true);
         evaluateTrust(user, ipAddress, fingerprintHash);
         velocityTrackerService.trackAction(user.getId(), VelocityActionType.PAYMENT);
         log.info("SECURITY: Creating Stripe token checkout session for creator: {} package: {}", user.getEmail(), packageId);
@@ -235,7 +236,11 @@ public class PaymentService {
     }
 
     public com.joinlivora.backend.fraud.model.RiskLevel checkPaymentLock(User user, java.math.BigDecimal amount, String ipAddress, String country, String userAgent, String fingerprintHash) {
-        autoFreezePolicyService.validateUserStatus(user);
+        return checkPaymentLock(user, amount, ipAddress, country, userAgent, fingerprintHash, false);
+    }
+
+    public com.joinlivora.backend.fraud.model.RiskLevel checkPaymentLock(User user, java.math.BigDecimal amount, String ipAddress, String country, String userAgent, String fingerprintHash, boolean skipPayoutsDisabledCheck) {
+        autoFreezePolicyService.validateUserStatus(user, skipPayoutsDisabledCheck);
 
         com.joinlivora.backend.fraud.model.FraudRiskAssessment assessment = fraudRiskService.calculateRisk(user, amount, ipAddress, country, fingerprintHash);
         com.joinlivora.backend.fraud.model.RiskLevel riskLevel = assessment.getRiskLevel();

@@ -34,6 +34,7 @@ public class ChatMessageDto {
     private Long creatorUserId;
     private boolean isStreamOwner;
     private String senderType; // USER | CREATOR | OWNER | ADMIN | SYSTEM | BOT
+    private String messageId; // Server-generated UUID for client-side deduplication
 
     // Highlight fields for Stripe intents
     private boolean isHighlighted;

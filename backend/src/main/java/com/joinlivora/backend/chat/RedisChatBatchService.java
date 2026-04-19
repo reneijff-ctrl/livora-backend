@@ -30,7 +30,7 @@ public class RedisChatBatchService {
     private static final String LOCK_KEY_PREFIX = "chat:batch:lock:";
     private static final String ACTIVE_CREATORS_KEY = "chat:batch:active";
     private static final Duration BATCH_TTL = Duration.ofSeconds(5);
-    private static final Duration LOCK_TTL = Duration.ofMillis(200);
+    private static final Duration LOCK_TTL = Duration.ofMillis(500);
     /** How many consecutive broker failures before switching to Redis-only mode. */
     private static final int BROKER_FAILURE_THRESHOLD = 3;
     /** How long to stay in Redis-only mode before probing RabbitMQ again (ms). */
@@ -92,6 +92,7 @@ public class RedisChatBatchService {
             String batchKey = BATCH_KEY_PREFIX + creatorUserId;
 
             redisTemplate.opsForList().rightPush(batchKey, json);
+            redisTemplate.opsForList().trim(batchKey, -500, -1); // cap list at 500 to prevent unbounded O(N) reads
             redisTemplate.expire(batchKey, BATCH_TTL);
 
             // Track this creator as having pending messages (avoids SCAN)

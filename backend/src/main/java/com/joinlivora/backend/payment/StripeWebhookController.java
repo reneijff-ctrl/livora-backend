@@ -7,6 +7,7 @@ import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.Webhook;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -32,7 +33,7 @@ public class StripeWebhookController {
 
     @PostMapping("/api/stripe/webhook")
     public ResponseEntity<String> handleStripeWebhook(
-            @RequestBody String payload,
+            HttpServletRequest request,
             @RequestHeader(value = "Stripe-Signature", required = false) String sigHeader
     ) {
         if (!stripeEnabled) {
@@ -47,6 +48,14 @@ public class StripeWebhookController {
         if (endpointSecret == null || endpointSecret.trim().isEmpty()) {
             log.error("SECURITY: Stripe webhook secret is missing! Webhook processing aborted.");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Webhook secret misconfigured");
+        }
+
+        String payload;
+        try {
+            payload = new String(request.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            log.error("SECURITY: Failed to read webhook request body", e);
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Failed to read body");
         }
 
         Event event;

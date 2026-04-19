@@ -70,7 +70,10 @@ class ChatControllerTest {
     @Test
     void sendChatMessage_ShouldDelegateToService() {
         // Arrange
-        ChatMessageRequest request = new ChatMessageRequest("Hello", 999L, "CHAT");
+        ChatMessageRequest request = new ChatMessageRequest();
+        request.setContent("Hello");
+        request.setCreatorUserId(999L);
+        request.setType("CHAT");
         User user = new User();
         user.setId(123L);
         user.setEmail("test@creator.com");
