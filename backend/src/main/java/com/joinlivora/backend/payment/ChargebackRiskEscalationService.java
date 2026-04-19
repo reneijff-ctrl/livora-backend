@@ -1,5 +1,7 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
+import com.joinlivora.backend.chargeback.repository.ChargebackCaseRepository;
 import com.joinlivora.backend.fraud.model.RiskLevel;
 import com.joinlivora.backend.payment.dto.RiskEscalationResult;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +17,7 @@ import java.util.List;
 @Slf4j
 public class ChargebackRiskEscalationService {
 
-    private final ChargebackRepository chargebackRepository;
+    private final ChargebackCaseRepository chargebackCaseRepository;
 
     public RiskEscalationResult evaluateEscalation(Long creatorId) {
         if (creatorId == null) {
@@ -25,7 +27,7 @@ public class ChargebackRiskEscalationService {
                     .build();
         }
 
-        List<Chargeback> chargebacks = chargebackRepository.findAllByCreatorId(creatorId);
+        List<ChargebackCase> chargebacks = chargebackCaseRepository.findAllByCreatorId(creatorId);
         
         if (chargebacks.isEmpty()) {
             return RiskEscalationResult.builder()

@@ -2,12 +2,8 @@ package com.joinlivora.backend.chargeback;
 
 import com.joinlivora.backend.chargeback.model.ChargebackCase;
 import com.joinlivora.backend.chargeback.model.ChargebackStatus;
-import com.joinlivora.backend.chargeback.repository.ChargebackCaseRepository;
-import com.joinlivora.backend.fraud.model.FraudDecision;
-import com.joinlivora.backend.fraud.repository.FraudDecisionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -16,14 +12,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Service for managing chargeback cases.
- */
-/**
  * @deprecated Use com.joinlivora.backend.chargeback.ChargebackService instead.
  * TODO(livora-security): Remove in the next refactor stage.
  */
 @Deprecated
-@Service("internalChargebackService")
 @RequiredArgsConstructor
 @Slf4j
 public class InternalChargebackService {

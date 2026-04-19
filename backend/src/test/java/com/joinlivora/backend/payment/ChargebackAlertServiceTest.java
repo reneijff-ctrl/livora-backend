@@ -1,5 +1,7 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
+import com.joinlivora.backend.chargeback.model.ChargebackStatus;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,16 +30,18 @@ class ChargebackAlertServiceTest {
     @InjectMocks
     private ChargebackAlertService chargebackAlertService;
 
-    private Chargeback chargeback;
+    private ChargebackCase chargeback;
 
     @BeforeEach
     void setUp() {
-        chargeback = Chargeback.builder()
+        chargeback = ChargebackCase.builder()
                 .id(UUID.randomUUID())
                 .userId(new UUID(0L, 1L))
                 .amount(new BigDecimal("50.00"))
                 .currency("USD")
                 .reason("fraudulent")
+                .status(ChargebackStatus.OPEN)
+                .fraudScoreAtTime(0)
                 .build();
 
         when(meterRegistry.counter(anyString(), anyString(), anyString(), anyString(), anyString())).thenReturn(counter);

@@ -1,36 +1,24 @@
 package com.joinlivora.backend.payment;
 
-import com.joinlivora.backend.audit.service.AuditService;
-import com.joinlivora.backend.fraud.service.FraudDetectionService;
-import com.joinlivora.backend.payment.dto.RiskEscalationResult;
-import com.joinlivora.backend.reputation.model.ReputationEventSource;
-import com.joinlivora.backend.reputation.model.ReputationEventType;
-import com.joinlivora.backend.reputation.service.ReputationEventService;
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
 import com.joinlivora.backend.user.User;
 import com.stripe.model.Dispute;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.List;
 
 /**
  * @deprecated Use com.joinlivora.backend.chargeback.ChargebackService instead.
  * TODO(livora-security): Remove in the next refactor stage.
  */
 @Deprecated
-@Service("paymentChargebackService")
 @RequiredArgsConstructor
 @Slf4j
 public class PaymentChargebackService {
 
     private final com.joinlivora.backend.chargeback.ChargebackService canonicalChargebackService;
-    private final ChargebackRepository chargebackRepository;
-    private final ChargebackCorrelationService chargebackCorrelationService;
 
     @Transactional
     public void processChargeback(User user, String paymentIntentId, Dispute dispute) {
@@ -52,24 +40,14 @@ public class PaymentChargebackService {
         return status == ChargebackStatus.WON || status == ChargebackStatus.LOST;
     }
 
+    /**
+     * @deprecated AdminChargebackController now reads correlated cases directly from chargeback_cases
+     * via {@link com.joinlivora.backend.chargeback.ChargebackService#findCorrelatedCasesByUserId(Long)}.
+     * This method is retained for compatibility only and delegates to the canonical service.
+     */
+    @Deprecated
     @Transactional(readOnly = true)
-    public List<Chargeback> findCorrelatedChargebacksForUser(Long userId) {
-        List<Chargeback> userChargebacks = chargebackRepository.findAllByUserId(new UUID(0L, userId));
-        if (userChargebacks.isEmpty()) {
-            return List.of();
-        }
-
-        Set<UUID> allCorrelatedIds = new HashSet<>();
-        for (Chargeback cb : userChargebacks) {
-            allCorrelatedIds.addAll(chargebackCorrelationService.findCorrelatedChargebacks(cb).stream()
-                    .map(Chargeback::getId)
-                    .collect(Collectors.toSet()));
-        }
-
-        // Remove the creator's own chargebacks from the results
-        Set<UUID> userChargebackIds = userChargebacks.stream().map(Chargeback::getId).collect(Collectors.toSet());
-        allCorrelatedIds.removeAll(userChargebackIds);
-
-        return chargebackRepository.findAllById(allCorrelatedIds);
+    public List<ChargebackCase> findCorrelatedChargebacksForUser(Long userId) {
+        return canonicalChargebackService.findCorrelatedCasesByUserId(userId);
     }
 }

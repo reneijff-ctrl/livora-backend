@@ -46,8 +46,8 @@ public class TippingWebhookFlowIntegrationTest {
     private LegacyCreatorProfileRepository creatorProfileRepository;
 
     @Autowired
-    @org.springframework.beans.factory.annotation.Qualifier("paymentsStripeWebhookService")
-    private com.joinlivora.backend.payments.webhook.StripeWebhookService stripeWebhookService;
+    @org.springframework.beans.factory.annotation.Qualifier("paymentStripeWebhookService")
+    private com.joinlivora.backend.payment.StripeWebhookService stripeWebhookService;
 
     private User viewer;
     private User creator;
@@ -132,7 +132,7 @@ public class TippingWebhookFlowIntegrationTest {
         com.stripe.model.PaymentIntent intent = com.stripe.net.ApiResource.GSON.fromJson(intentJson, com.stripe.model.PaymentIntent.class);
 
         // 3. Call service directly
-        stripeWebhookService.handlePaymentIntentSucceeded(intent, "evt_test_id");
+        stripeWebhookService.handlePaymentIntentSucceeded(intent);
 
         // 4. Verify Tip status is COMPLETED
         Tip updatedTip = tipRepository.findById(tip.getId()).orElseThrow();

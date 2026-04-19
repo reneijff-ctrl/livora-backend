@@ -1,5 +1,7 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
+import com.joinlivora.backend.chargeback.repository.ChargebackCaseRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,73 +18,31 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ChargebackCorrelationService {
 
-    private final ChargebackRepository chargebackRepository;
+    private final ChargebackCaseRepository chargebackCaseRepository;
     private final PaymentRepository paymentRepository;
 
-    public int analyze(Chargeback chargeback) {
+    public int analyze(ChargebackCase chargeback) {
         if (chargeback == null) return 0;
-
         log.info("Analyzing correlation for chargeback: {}", chargeback.getId());
-        Set<UUID> correlatedIds = findCorrelatedChargebacks(chargeback).stream()
-                .map(Chargeback::getId)
-                .collect(Collectors.toSet());
-
-        int score = 0;
-        // Logic should match AutoFreezePolicyService/historical scores
-        // Shared Device Fingerprint: +30
-        // Shared IP Address: +20
-        // Shared Payment Method (Card Fingerprint): +40
-        // Same Creator Tipped: +10
-
-        // We need to know WHICH signal triggered it.
-        // Actually, the previous implementation did it one by one.
-
-        if (chargeback.getDeviceFingerprint() != null) {
-            if (chargebackRepository.findAllByDeviceFingerprint(chargeback.getDeviceFingerprint()).size() > 1) {
-                score += 30;
-            }
-        }
-        if (chargeback.getIpAddress() != null) {
-            if (chargebackRepository.findAllByIpAddress(chargeback.getIpAddress()).size() > 1) {
-                score += 20;
-            }
-        }
-        if (chargeback.getPaymentMethodFingerprint() != null) {
-            if (chargebackRepository.findAllByPaymentMethodFingerprint(chargeback.getPaymentMethodFingerprint()).size() > 1) {
-                score += 40;
-            }
-        }
-        if (chargeback.getTransactionId() != null) {
-            paymentRepository.findById(chargeback.getTransactionId()).ifPresent(p -> {
-                if (p.getCreator() != null) {
-                    if (chargebackRepository.findAllByCreatorId(p.getCreator().getId()).size() > 1) {
-                        // score += 10;
-                    }
-                }
-            });
-            // Re-evaluating based on original code
-        }
-
-        // To keep it simple and exactly as before:
         return analyzeOriginal(chargeback);
     }
 
-    private int analyzeOriginal(Chargeback chargeback) {
+    private int analyzeOriginal(ChargebackCase chargeback) {
         int score = 0;
         if (chargeback.getDeviceFingerprint() != null) {
-            long count = chargebackRepository.findAllByDeviceFingerprint(chargeback.getDeviceFingerprint()).stream()
+            long count = chargebackCaseRepository.findAllByDeviceFingerprint(chargeback.getDeviceFingerprint()).stream()
                     .filter(c -> !c.getId().equals(chargeback.getId()))
                     .count();
             if (count > 0) score += 30;
         }
         if (chargeback.getIpAddress() != null) {
-            long count = chargebackRepository.findAllByIpAddress(chargeback.getIpAddress()).stream()
+            long count = chargebackCaseRepository.findAllByIpAddress(chargeback.getIpAddress()).stream()
                     .filter(c -> !c.getId().equals(chargeback.getId()))
                     .count();
             if (count > 0) score += 20;
         }
         if (chargeback.getPaymentMethodFingerprint() != null) {
-            long count = chargebackRepository.findAllByPaymentMethodFingerprint(chargeback.getPaymentMethodFingerprint()).stream()
+            long count = chargebackCaseRepository.findAllByPaymentMethodFingerprint(chargeback.getPaymentMethodFingerprint()).stream()
                     .filter(c -> !c.getId().equals(chargeback.getId()))
                     .count();
             if (count > 0) score += 40;
@@ -91,7 +51,7 @@ public class ChargebackCorrelationService {
             Optional<Payment> paymentOpt = paymentRepository.findById(chargeback.getTransactionId());
             if (paymentOpt.isPresent() && paymentOpt.get().getCreator() != null) {
                 Long creatorId = paymentOpt.get().getCreator().getId();
-                long count = chargebackRepository.findAllByCreatorId(creatorId).stream()
+                long count = chargebackCaseRepository.findAllByCreatorId(creatorId).stream()
                         .filter(c -> !c.getId().equals(chargeback.getId()))
                         .count();
                 if (count > 0) score += 10;
@@ -100,38 +60,38 @@ public class ChargebackCorrelationService {
         return Math.min(score, 100);
     }
 
-    public List<Chargeback> findCorrelatedChargebacks(Chargeback chargeback) {
+    public List<ChargebackCase> findCorrelatedChargebacks(ChargebackCase chargeback) {
         Set<UUID> ids = new HashSet<>();
 
         if (chargeback.getDeviceFingerprint() != null) {
-            ids.addAll(chargebackRepository.findAllByDeviceFingerprint(chargeback.getDeviceFingerprint()).stream()
-                    .map(Chargeback::getId)
+            ids.addAll(chargebackCaseRepository.findAllByDeviceFingerprint(chargeback.getDeviceFingerprint()).stream()
+                    .map(ChargebackCase::getId)
                     .collect(Collectors.toSet()));
         }
 
         if (chargeback.getIpAddress() != null) {
-            ids.addAll(chargebackRepository.findAllByIpAddress(chargeback.getIpAddress()).stream()
-                    .map(Chargeback::getId)
+            ids.addAll(chargebackCaseRepository.findAllByIpAddress(chargeback.getIpAddress()).stream()
+                    .map(ChargebackCase::getId)
                     .collect(Collectors.toSet()));
         }
 
         if (chargeback.getPaymentMethodFingerprint() != null) {
-            ids.addAll(chargebackRepository.findAllByPaymentMethodFingerprint(chargeback.getPaymentMethodFingerprint()).stream()
-                    .map(Chargeback::getId)
+            ids.addAll(chargebackCaseRepository.findAllByPaymentMethodFingerprint(chargeback.getPaymentMethodFingerprint()).stream()
+                    .map(ChargebackCase::getId)
                     .collect(Collectors.toSet()));
         }
 
         if (chargeback.getTransactionId() != null) {
             paymentRepository.findById(chargeback.getTransactionId()).ifPresent(payment -> {
                 if (payment.getCreator() != null) {
-                    ids.addAll(chargebackRepository.findAllByCreatorId(payment.getCreator().getId()).stream()
-                            .map(Chargeback::getId)
+                    ids.addAll(chargebackCaseRepository.findAllByCreatorId(payment.getCreator().getId()).stream()
+                            .map(ChargebackCase::getId)
                             .collect(Collectors.toSet()));
                 }
             });
         }
 
         ids.remove(chargeback.getId());
-        return chargebackRepository.findAllById(ids);
+        return chargebackCaseRepository.findAllById(ids);
     }
 }

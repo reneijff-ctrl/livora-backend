@@ -31,6 +31,11 @@ public class WebhookEvent {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(nullable = false)
+    private int retryCount = 0;
+
+    private Instant lastRetryAt;
+
     @PrePersist
     protected void onCreate() {
         createdAt = Instant.now();
@@ -91,5 +96,21 @@ public class WebhookEvent {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public Instant getLastRetryAt() {
+        return lastRetryAt;
+    }
+
+    public void setLastRetryAt(Instant lastRetryAt) {
+        this.lastRetryAt = lastRetryAt;
     }
 }

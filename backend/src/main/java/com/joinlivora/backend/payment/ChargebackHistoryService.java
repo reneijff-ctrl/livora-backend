@@ -1,5 +1,7 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
+import com.joinlivora.backend.chargeback.repository.ChargebackCaseRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -13,21 +15,21 @@ import java.util.UUID;
 @Slf4j
 public class ChargebackHistoryService {
 
-    private final ChargebackRepository chargebackRepository;
+    private final ChargebackCaseRepository chargebackCaseRepository;
 
     @Transactional(readOnly = true)
-    public List<Chargeback> getHistory(Long userId) {
+    public List<ChargebackCase> getHistory(Long userId) {
         log.info("Fetching chargeback history for creator: {}", userId);
-        return chargebackRepository.findAllByUserId(new UUID(0L, userId));
+        return chargebackCaseRepository.findAllByUserId(new UUID(0L, userId));
     }
 
     @Transactional(readOnly = true)
     public int getChargebackRiskScore(Long userId) {
-        List<Chargeback> history = getHistory(userId);
+        List<ChargebackCase> history = getHistory(userId);
         if (history.isEmpty()) {
             return 0;
         }
-        
+
         // Scoring logic: 20 points per chargeback, capped at 100.
         int score = history.size() * 20;
         return Math.min(score, 100);

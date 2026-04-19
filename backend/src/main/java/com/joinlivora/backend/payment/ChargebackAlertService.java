@@ -1,5 +1,6 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,7 +13,7 @@ public class ChargebackAlertService {
 
     private final MeterRegistry meterRegistry;
 
-    public void alert(Chargeback chargeback, int clusterSize) {
+    public void alert(ChargebackCase chargeback, int clusterSize) {
         log.warn("SECURITY ALERT: Chargeback received. ID: {}, UserID: {}, Amount: {} {}, Cluster Size: {}",
                 chargeback.getId(),
                 chargeback.getUserId(),

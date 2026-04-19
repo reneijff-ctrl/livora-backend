@@ -1,5 +1,7 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
+import com.joinlivora.backend.chargeback.model.ChargebackStatus;
 import com.joinlivora.backend.fraud.model.FraudDecisionLevel;
 import com.joinlivora.backend.fraud.model.FraudSignalType;
 import com.joinlivora.backend.fraud.model.FraudSource;
@@ -43,7 +45,7 @@ class AutoFreezePolicyServiceTest {
     private AutoFreezePolicyService autoFreezePolicyService;
 
     private User user;
-    private Chargeback chargeback;
+    private ChargebackCase chargeback;
     private UUID chargebackId = UUID.randomUUID();
     private Long userId = 1L;
 
@@ -54,12 +56,14 @@ class AutoFreezePolicyServiceTest {
         user.setEmail("test@test.com");
         user.setStatus(UserStatus.ACTIVE);
 
-        chargeback = Chargeback.builder()
+        chargeback = ChargebackCase.builder()
                 .id(chargebackId)
                 .userId(new UUID(0L, userId))
                 .deviceFingerprint("fp_123")
                 .ipAddress("1.1.1.1")
                 .paymentMethodFingerprint("pm_123")
+                .status(ChargebackStatus.OPEN)
+                .fraudScoreAtTime(0)
                 .build();
         
         // Default mock for risk escalation (LOW)

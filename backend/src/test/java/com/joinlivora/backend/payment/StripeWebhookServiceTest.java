@@ -15,9 +15,12 @@ import com.stripe.model.Dispute;
 import com.stripe.model.Invoice;
 import com.stripe.model.StripeError;
 import com.stripe.model.PaymentIntent;
+import com.stripe.model.Subscription;
 import com.stripe.model.Event;
 import com.stripe.net.Webhook;
 import com.stripe.model.checkout.Session;
+// com.stripe.service.SubscriptionService is referenced by full name below; use the Spring service here
+import com.joinlivora.backend.payment.SubscriptionService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,11 +33,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
@@ -57,7 +62,7 @@ class StripeWebhookServiceTest {
     @Mock
     private WebhookEventRepository webhookEventRepository;
     @Mock
-    private SubscriptionService subscriptionService;
+    private SubscriptionService subscriptionService; // com.joinlivora.backend.payment.SubscriptionService
     @Mock
     private io.micrometer.core.instrument.MeterRegistry meterRegistry;
     @Mock
@@ -104,6 +109,10 @@ class StripeWebhookServiceTest {
     private com.stripe.StripeClient stripeClient;
     @Mock
     private org.springframework.beans.factory.ObjectProvider<StripeWebhookService> selfProvider;
+    @Mock
+    private PaymentService paymentService;
+    @Mock
+    private com.joinlivora.backend.admin.service.AdminRealtimeEventService adminRealtimeEventService;
 
     @InjectMocks
     private StripeWebhookService service;
@@ -335,7 +344,7 @@ class StripeWebhookServiceTest {
     }
 
     @Test
-    void handleCheckoutSession_ShouldPersistPaymentAndEarningsWithCamelCaseMetadata() {
+    void handleCheckoutSession_ShouldPersistPaymentAndEarningsWithCamelCaseMetadata() throws Exception {
         // Given
         String email = "user@example.com";
         Session session = mock(Session.class);
@@ -355,19 +364,31 @@ class StripeWebhookServiceTest {
         creator.setId(456L);
         when(userService.getById(456L)).thenReturn(creator);
 
+        // Mock Stripe subscriptions to return a valid subscription with known period
+        long expectedPeriodEnd = Instant.now().plusSeconds(2592000).getEpochSecond(); // ~30 days from now
+        Subscription stripeSub = mock(Subscription.class);
+        lenient().when(stripeSub.getCurrentPeriodStart()).thenReturn(Instant.now().getEpochSecond());
+        lenient().when(stripeSub.getCurrentPeriodEnd()).thenReturn(expectedPeriodEnd);
+        com.stripe.service.SubscriptionService stripeSubService = mock(com.stripe.service.SubscriptionService.class);
+        lenient().when(stripeClient.subscriptions()).thenReturn(stripeSubService);
+        lenient().when(stripeSubService.retrieve("sub_123")).thenReturn(stripeSub);
+
+        when(subscriptionRepository.findByStripeSubscriptionId("sub_123")).thenReturn(Optional.empty());
+
         // Prepare Stripe client mocks to avoid NPE when fetching payment method details
         com.stripe.service.PaymentIntentService piService = mock(com.stripe.service.PaymentIntentService.class);
         when(stripeClient.paymentIntents()).thenReturn(piService);
-        try {
-            when(piService.retrieve(anyString())).thenReturn(new PaymentIntent());
-        } catch (com.stripe.exception.StripeException e) {
-            throw new RuntimeException(e);
-        }
+        when(piService.retrieve(anyString())).thenReturn(new PaymentIntent());
 
         // When
         service.handleCheckoutSession(session);
 
         // Then
+        ArgumentCaptor<UserSubscription> subCaptor = ArgumentCaptor.forClass(UserSubscription.class);
+        verify(subscriptionRepository).save(subCaptor.capture());
+        UserSubscription savedSub = subCaptor.getValue();
+        assertEquals(Instant.ofEpochSecond(expectedPeriodEnd), savedSub.getCurrentPeriodEnd());
+
         ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
         verify(paymentRepository, atLeastOnce()).save(paymentCaptor.capture());
         Payment savedPayment = paymentCaptor.getValue();
@@ -375,6 +396,95 @@ class StripeWebhookServiceTest {
         assertEquals(creator, savedPayment.getCreator());
 
         verify(creatorEarningsService).recordSubscriptionEarning(eq(savedPayment), eq(creator));
+    }
+
+    @Test
+    void handleCheckoutSession_ShouldUpdateExistingSubscription_WhenIdempotentReplay() throws Exception {
+        // Given: same stripeSubscriptionId already exists in DB (idempotent replay)
+        String email = "user@example.com";
+        Session session = mock(Session.class);
+        when(session.getCustomerEmail()).thenReturn(email);
+        when(session.getAmountTotal()).thenReturn(1000L);
+        when(session.getCurrency()).thenReturn("usd");
+        when(session.getPaymentIntent()).thenReturn("pi_456");
+        when(session.getSubscription()).thenReturn("sub_existing");
+        when(session.getMetadata()).thenReturn(Map.of());
+
+        User user = new User();
+        user.setId(1L);
+        user.setEmail(email);
+        when(userService.getByEmail(email)).thenReturn(user);
+
+        long periodEnd = Instant.now().plusSeconds(31536000).getEpochSecond(); // yearly
+        Subscription stripeSub = mock(Subscription.class);
+        lenient().when(stripeSub.getCurrentPeriodStart()).thenReturn(Instant.now().getEpochSecond());
+        lenient().when(stripeSub.getCurrentPeriodEnd()).thenReturn(periodEnd);
+        com.stripe.service.SubscriptionService stripeSubService = mock(com.stripe.service.SubscriptionService.class);
+        lenient().when(stripeClient.subscriptions()).thenReturn(stripeSubService);
+        lenient().when(stripeSubService.retrieve("sub_existing")).thenReturn(stripeSub);
+
+        // Existing subscription record already in DB
+        UserSubscription existingSub = new UserSubscription();
+        existingSub.setStripeSubscriptionId("sub_existing");
+        when(subscriptionRepository.findByStripeSubscriptionId("sub_existing")).thenReturn(Optional.of(existingSub));
+
+        com.stripe.service.PaymentIntentService piService = mock(com.stripe.service.PaymentIntentService.class);
+        when(stripeClient.paymentIntents()).thenReturn(piService);
+        when(piService.retrieve(anyString())).thenReturn(new PaymentIntent());
+
+        // When
+        service.handleCheckoutSession(session);
+
+        // Then: save is called on the EXISTING subscription object (not a new one)
+        ArgumentCaptor<UserSubscription> subCaptor = ArgumentCaptor.forClass(UserSubscription.class);
+        verify(subscriptionRepository).save(subCaptor.capture());
+        UserSubscription saved = subCaptor.getValue();
+        // Should be the same object (update, not insert)
+        assertEquals("sub_existing", saved.getStripeSubscriptionId());
+        assertEquals(Instant.ofEpochSecond(periodEnd), saved.getCurrentPeriodEnd());
+    }
+
+    @Test
+    void handleCheckoutSession_ShouldFallbackTo30Days_WhenStripeCallFails() throws Exception {
+        // Given: Stripe subscription retrieval throws an exception
+        String email = "user@example.com";
+        Session session = mock(Session.class);
+        when(session.getCustomerEmail()).thenReturn(email);
+        when(session.getAmountTotal()).thenReturn(1000L);
+        when(session.getCurrency()).thenReturn("usd");
+        when(session.getPaymentIntent()).thenReturn("pi_789");
+        when(session.getSubscription()).thenReturn("sub_error");
+        when(session.getMetadata()).thenReturn(Map.of());
+
+        User user = new User();
+        user.setId(2L);
+        user.setEmail(email);
+        when(userService.getByEmail(email)).thenReturn(user);
+
+        com.stripe.service.SubscriptionService stripeSubService = mock(com.stripe.service.SubscriptionService.class);
+        lenient().when(stripeClient.subscriptions()).thenReturn(stripeSubService);
+        lenient().when(stripeSubService.retrieve("sub_error")).thenThrow(new com.stripe.exception.ApiConnectionException("network error", null));
+
+        when(subscriptionRepository.findByStripeSubscriptionId("sub_error")).thenReturn(Optional.empty());
+
+        com.stripe.service.PaymentIntentService piService = mock(com.stripe.service.PaymentIntentService.class);
+        when(stripeClient.paymentIntents()).thenReturn(piService);
+        when(piService.retrieve(anyString())).thenReturn(new PaymentIntent());
+
+        Instant before = Instant.now();
+
+        // When — must NOT throw
+        service.handleCheckoutSession(session);
+
+        // Then: subscription is still saved with a fallback ~30-day period end
+        ArgumentCaptor<UserSubscription> subCaptor = ArgumentCaptor.forClass(UserSubscription.class);
+        verify(subscriptionRepository).save(subCaptor.capture());
+        UserSubscription saved = subCaptor.getValue();
+        // Period end should be approximately 30 days from now (within a 1-minute tolerance)
+        long expectedSeconds = before.plusSeconds(30L * 24 * 3600).getEpochSecond();
+        long actualSeconds = saved.getCurrentPeriodEnd().getEpochSecond();
+        assertTrue(Math.abs(actualSeconds - expectedSeconds) < 60,
+                "Fallback period end should be ~30 days from now");
     }
 
     @Test
@@ -465,6 +575,9 @@ class StripeWebhookServiceTest {
         when(session.getPaymentIntent()).thenReturn("pi_token_123");
         when(session.getId()).thenReturn("cs_token_123");
 
+        // No existing payment — first-time processing
+        when(paymentRepository.findByStripeSessionId("cs_token_123")).thenReturn(Optional.empty());
+
         User user = new User();
         user.setId(1L);
         user.setEmail(email);
@@ -482,9 +595,9 @@ class StripeWebhookServiceTest {
         // When
         service.handleTokenCheckoutSession(session);
 
-        // Then
+        // Then — save called twice: initial payment save + tokensCredited=true update
         verify(tokenService).creditTokens(user, 100, "Stripe Session: cs_token_123");
-        verify(paymentRepository).save(any(Payment.class));
+        verify(paymentRepository, times(2)).save(any(Payment.class));
         verify(auditService).logEvent(
                 eq(new UUID(0L, 1L)),
                 eq("TOKENS_PURCHASED"),
@@ -510,6 +623,9 @@ class StripeWebhookServiceTest {
         when(session.getPaymentIntent()).thenReturn("pi_token_123");
         when(session.getId()).thenReturn("cs_token_123");
 
+        // No existing payment — first-time processing
+        when(paymentRepository.findByStripeSessionId("cs_token_123")).thenReturn(Optional.empty());
+
         User user = new User();
         user.setId(userId);
         user.setEmail(email);
@@ -530,22 +646,56 @@ class StripeWebhookServiceTest {
         // Then
         verify(userService).getById(userId);
         verify(tokenService).creditTokens(user, 500, "Stripe Session: cs_token_123");
-        verify(paymentRepository).save(any(Payment.class));
+        // save called twice: initial payment save + tokensCredited=true update
+        verify(paymentRepository, times(2)).save(any(Payment.class));
     }
 
     @Test
     void handleTokenCheckoutSession_ShouldReturnIfAlreadyProcessed() {
-        // Given
+        // Given — payment exists and tokens already credited
         Session session = mock(Session.class);
         when(session.getId()).thenReturn("cs_token_123");
-        when(paymentRepository.existsByStripeSessionId("cs_token_123")).thenReturn(true);
+
+        Payment existingPayment = new Payment();
+        existingPayment.setTokensCredited(true);
+        when(paymentRepository.findByStripeSessionId("cs_token_123")).thenReturn(Optional.of(existingPayment));
 
         // When
         service.handleTokenCheckoutSession(session);
 
-        // Then
+        // Then — no new save, no token credit
         verify(paymentRepository, never()).save(any(Payment.class));
         verify(tokenService, never()).creditTokens(any(), anyInt(), any());
+    }
+
+    @Test
+    void handleTokenCheckoutSession_ShouldCreditTokens_WhenPaymentExistsButTokensNotCredited() {
+        // Covers crash-recovery path: Payment row exists but tokensCredited=false
+        UUID packageId = UUID.randomUUID();
+        Session session = mock(Session.class);
+        when(session.getId()).thenReturn("cs_recovery_123");
+        when(session.getMetadata()).thenReturn(Map.of("package_id", packageId.toString()));
+
+        User user = new User();
+        user.setId(99L);
+        user.setEmail("recovery@test.com");
+
+        Payment existingPayment = new Payment();
+        existingPayment.setTokensCredited(false);
+        existingPayment.setUser(user);
+        when(paymentRepository.findByStripeSessionId("cs_recovery_123")).thenReturn(Optional.of(existingPayment));
+
+        com.joinlivora.backend.token.TokenPackage tokenPackage = new com.joinlivora.backend.token.TokenPackage();
+        tokenPackage.setTokenAmount(200);
+        when(tokenPackageRepository.findById(packageId)).thenReturn(Optional.of(tokenPackage));
+
+        // When
+        service.handleTokenCheckoutSession(session);
+
+        // Then — tokens credited once and flag set
+        verify(tokenService).creditTokens(user, 200, "Stripe Session (recovery): cs_recovery_123");
+        verify(paymentRepository).save(existingPayment);
+        assertTrue(existingPayment.isTokensCredited());
     }
 
     // ---- Transfer webhook tests for payoutId (CreatorPayout) and payoutRequestId (PayoutRequest) ----

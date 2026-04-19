@@ -621,13 +621,37 @@ public class StripeWebhookService {
 
         userService.upgradeToPremium(customerEmail);
 
-        UserSubscription subscription = new UserSubscription();
+        // Determine the correct subscription period from Stripe, with a safe fallback.
+        Instant periodStart = Instant.now();
+        Instant periodEnd = Instant.now().plus(java.time.Duration.ofDays(30)); // fallback
+
+        String stripeSubId = session.getSubscription();
+        if (stripeSubId != null) {
+            try {
+                Subscription stripeSub = stripeClient.subscriptions().retrieve(stripeSubId);
+                if (stripeSub.getCurrentPeriodStart() != null) {
+                    periodStart = Instant.ofEpochSecond(stripeSub.getCurrentPeriodStart());
+                }
+                if (stripeSub.getCurrentPeriodEnd() != null) {
+                    periodEnd = Instant.ofEpochSecond(stripeSub.getCurrentPeriodEnd());
+                }
+            } catch (Exception e) {
+                log.error("Failed to retrieve Stripe subscription {} for period calculation; falling back to 30-day default: {}",
+                        stripeSubId, e.getMessage());
+            }
+        }
+
+        // Idempotency guard: update existing subscription if already present, otherwise create new.
+        UserSubscription subscription = (stripeSubId != null)
+                ? subscriptionRepository.findByStripeSubscriptionId(stripeSubId).orElse(new UserSubscription())
+                : new UserSubscription();
+
         subscription.setUser(user);
         subscription.setStatus(SubscriptionStatus.ACTIVE);
-        subscription.setStripeSubscriptionId(session.getSubscription());
-        subscription.setCurrentPeriodStart(Instant.now());
-        subscription.setCurrentPeriodEnd(Instant.now().plus(java.time.Duration.ofDays(30))); 
-        
+        subscription.setStripeSubscriptionId(stripeSubId);
+        subscription.setCurrentPeriodStart(periodStart);
+        subscription.setCurrentPeriodEnd(periodEnd);
+
         subscriptionRepository.save(subscription);
 
         Payment payment = new Payment();
@@ -918,8 +942,35 @@ public class StripeWebhookService {
     @Transactional
     public void handleTokenCheckoutSession(Session session) {
         log.debug("WEBHOOK_DEBUG: handleTokenCheckoutSession ENTERED for session={}", session.getId());
-        if (paymentRepository.existsByStripeSessionId(session.getId())) {
-            log.info("SECURITY: Token purchase already processed for session: {}", session.getId());
+
+        // Idempotency: check if a Payment already exists for this session
+        java.util.Optional<Payment> existingPaymentOpt = paymentRepository.findByStripeSessionId(session.getId());
+        if (existingPaymentOpt.isPresent()) {
+            Payment existingPayment = existingPaymentOpt.get();
+            if (existingPayment.isTokensCredited()) {
+                log.info("Skipping token credit for already processed session {}", session.getId());
+                return;
+            }
+            // Payment saved but tokens not yet credited (e.g. prior crash) — credit now and mark
+            log.warn("SECURITY: Payment exists but tokensCredited=false for session {}; crediting tokens now", session.getId());
+            com.joinlivora.backend.token.TokenPackage tokenPackage = null;
+            String packageIdStr = null;
+            if (session.getMetadata() != null) {
+                packageIdStr = session.getMetadata().get("packageId");
+                if (packageIdStr == null) packageIdStr = session.getMetadata().get("package_id");
+            }
+            if (packageIdStr != null) {
+                tokenPackage = tokenPackageRepository.findById(UUID.fromString(packageIdStr)).orElse(null);
+            }
+            if (tokenPackage != null) {
+                tokenService.creditTokens(existingPayment.getUser(), tokenPackage.getTokenAmount(),
+                        "Stripe Session (recovery): " + session.getId());
+                existingPayment.setTokensCredited(true);
+                paymentRepository.save(existingPayment);
+                log.info("SECURITY: Token credit recovered for session {}", session.getId());
+            } else {
+                log.error("SECURITY: Cannot recover token credit — package not found for session {}", session.getId());
+            }
             return;
         }
 
@@ -990,7 +1041,9 @@ public class StripeWebhookService {
 
         log.info("SECURITY: Crediting {} tokens to user {} after successful payment", tokenPackage.getTokenAmount(), user.getEmail());
         tokenService.creditTokens(user, tokenPackage.getTokenAmount(), "Stripe Session: " + session.getId());
-        
+        payment.setTokensCredited(true);
+        paymentRepository.save(payment);
+
         invoiceService.createInvoice(
                 user,
                 payment.getAmount(),

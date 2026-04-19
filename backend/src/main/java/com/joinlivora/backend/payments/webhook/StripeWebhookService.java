@@ -17,7 +17,6 @@ import com.stripe.model.StripeObject;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -25,7 +24,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-@Service("paymentsStripeWebhookService")
+// NOTE: This class is NOT registered as a Spring bean (@Service removed).
+// It has no production callers. The active webhook service is payment.StripeWebhookService
+// (bean name "paymentStripeWebhookService"), wired by StripeWebhookController.
+// This file is retained for reference only. See: payment/StripeWebhookService.java
 @RequiredArgsConstructor
 @Slf4j
 public class StripeWebhookService {

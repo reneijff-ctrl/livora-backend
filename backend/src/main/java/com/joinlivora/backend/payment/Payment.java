@@ -73,6 +73,9 @@ public class Payment {
     @Column(name = "risk_level")
     private com.joinlivora.backend.fraud.model.RiskLevel riskLevel;
 
+    @Column(name = "tokens_credited", nullable = false)
+    private boolean tokensCredited = false;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -240,6 +243,14 @@ public class Payment {
 
     public void setRiskLevel(com.joinlivora.backend.fraud.model.RiskLevel riskLevel) {
         this.riskLevel = riskLevel;
+    }
+
+    public boolean isTokensCredited() {
+        return tokensCredited;
+    }
+
+    public void setTokensCredited(boolean tokensCredited) {
+        this.tokensCredited = tokensCredited;
     }
 
     public Instant getCreatedAt() {

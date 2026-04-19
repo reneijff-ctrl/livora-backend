@@ -1,5 +1,6 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
 import com.joinlivora.backend.fraud.model.RiskLevel;
 import com.joinlivora.backend.payment.dto.RiskEscalationResult;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +19,7 @@ public class ChargebackAuditService {
     private final ChargebackAuditRepository auditRepository;
 
     @Transactional
-    public void audit(Chargeback chargeback, int clusterSize, RiskEscalationResult escalation) {
+    public void audit(ChargebackCase chargeback, int clusterSize, RiskEscalationResult escalation) {
         List<String> actions = new ArrayList<>(escalation.getActions());
         if (clusterSize >= 3) {
             actions.add("PAYER_SUSPENDED");
@@ -43,7 +44,7 @@ public class ChargebackAuditService {
     }
 
     @Transactional
-    public void recordAction(Chargeback chargeback, String action, String reason) {
+    public void recordAction(ChargebackCase chargeback, String action, String reason) {
         ChargebackAudit audit = ChargebackAudit.builder()
                 .chargebackId(chargeback.getId())
                 .userId(chargeback.getUserId())

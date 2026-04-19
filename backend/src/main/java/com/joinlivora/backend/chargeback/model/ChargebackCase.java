@@ -54,6 +54,34 @@ public class ChargebackCase {
     @Column(name = "fraud_score_at_time", nullable = false)
     private int fraudScoreAtTime;
 
+    // Forensic and Stripe reference fields — all nullable for backward compatibility
+    @Column(name = "stripe_charge_id")
+    private String stripeChargeId;
+
+    @Column(name = "stripe_dispute_id")
+    private String stripeDisputeId;
+
+    @Column(name = "transaction_id")
+    private UUID transactionId;
+
+    @Column(name = "creator_id")
+    private Long creatorId;
+
+    @Column(name = "device_fingerprint")
+    private String deviceFingerprint;
+
+    @Column(name = "ip_address")
+    private String ipAddress;
+
+    @Column(name = "payment_method_fingerprint")
+    private String paymentMethodFingerprint;
+
+    @Column(name = "payment_method_brand")
+    private String paymentMethodBrand;
+
+    @Column(name = "payment_method_last4")
+    private String paymentMethodLast4;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

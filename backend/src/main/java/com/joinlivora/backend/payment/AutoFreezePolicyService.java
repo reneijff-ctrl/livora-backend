@@ -1,5 +1,6 @@
 package com.joinlivora.backend.payment;
 
+import com.joinlivora.backend.chargeback.model.ChargebackCase;
 import com.joinlivora.backend.exception.ResourceNotFoundException;
 import com.joinlivora.backend.fraud.model.FraudDecisionLevel;
 import com.joinlivora.backend.fraud.model.FraudSignalType;
@@ -42,7 +43,7 @@ public class AutoFreezePolicyService {
     }
 
     @Transactional
-    public void applyCreatorEscalation(Chargeback chargeback, RiskEscalationResult result) {
+    public void applyCreatorEscalation(ChargebackCase chargeback, RiskEscalationResult result) {
         if (chargeback.getCreatorId() == null || result.getRiskLevel() != RiskLevel.HIGH) {
             return;
         }

@@ -26,6 +26,7 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
     long countPayingUsers(@Param("since") Instant since);
 
     java.util.Optional<Payment> findByStripePaymentIntentId(String stripePaymentIntentId);
+    java.util.Optional<Payment> findByStripeSessionId(String stripeSessionId);
     boolean existsByStripePaymentIntentId(String stripePaymentIntentId);
     boolean existsByStripeSessionId(String stripeSessionId);
     boolean existsByStripeInvoiceId(String stripeInvoiceId);

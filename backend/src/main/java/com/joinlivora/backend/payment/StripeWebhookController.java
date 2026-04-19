@@ -1,6 +1,8 @@
 package com.joinlivora.backend.payment;
 
 import com.joinlivora.backend.payment.dto.StripeVerificationResponse;
+import com.joinlivora.backend.user.User;
+import com.joinlivora.backend.user.UserService;
 import com.stripe.StripeClient;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
@@ -14,6 +16,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController("paymentStripeWebhookController")
@@ -24,6 +29,8 @@ public class StripeWebhookController {
     private final WebhookEventRepository webhookEventRepository;
     private final StripeWebhookService stripeWebhookService;
     private final StripeClient stripeClient;
+    private final PaymentRepository paymentRepository;
+    private final UserService userService;
 
     @Value("${stripe.webhook.secret}")
     private String endpointSecret;
@@ -98,12 +105,31 @@ public class StripeWebhookController {
     }
 
     @GetMapping("/api/payments/verify")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<StripeVerificationResponse> verifySession(@RequestParam("session_id") String sessionId) throws StripeException {
         if (!stripeEnabled) {
             log.info("Stripe disabled: verifySession short-circuited");
             return ResponseEntity.ok(StripeVerificationResponse.failed());
         }
-        
+
+        if (sessionId == null || sessionId.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // Ownership check: verify the session belongs to the authenticated user
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        User currentUser = userService.getByEmail(authentication.getName());
+
+        Payment payment = paymentRepository.findByStripeSessionId(sessionId).orElse(null);
+        if (payment == null) {
+            // Session not found in our DB — do not reveal whether it exists; return 404
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+        if (!payment.getUser().getId().equals(currentUser.getId())) {
+            // Session belongs to a different user — return 403 without leaking details
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
         Session session = stripeClient.checkout().sessions().retrieve(sessionId);
 
         if ("paid".equals(session.getPaymentStatus()) && "payment".equals(session.getMode())) {
